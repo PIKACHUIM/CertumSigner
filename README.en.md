@@ -44,12 +44,11 @@ Click **Deploy to Cloudflare Workers** above, authorize and create the KV namesp
 password. The account lives in KV with only a PBKDF2 hash; the session key is generated during setup, so no
 manual secret is needed.
 
-The old way (setting an `ADMIN_PASSWORD` secret) still works — use one or the other:
+Set a session secret only if you want to pin it (optional; otherwise the value generated at setup is used):
 
 | Secret | Purpose |
 | --- | --- |
-| `ADMIN_PASSWORD` | legacy `/admin` password; ignored once a KV account exists |
-| `SESSION_SECRET` | optional HMAC key for cookies; falls back to the key generated at setup |
+| `SESSION_SECRET` | optional HMAC key for session cookies |
 
 For registration / password reset, also configure email (optional; both toggles stay unusable without it):
 
@@ -81,8 +80,8 @@ Then open `https://<your-domain>/`:
   Several accounts/cards can live side by side, each with its own cached login session and card info.
 - **Admin console** (`/admin`): overview metrics, 7-day chart, recent signatures with a detail dialog,
   user/credential/key management (create, edit, enable, disable, delete), forced re-login,
-  certificate refresh, import from environment variables, and a **Settings** page for the sign-in
-  captcha, self-registration, password reset and email captcha.
+  certificate refresh, and a **Settings** page for service addresses plus the sign-in captcha,
+  self-registration, password reset and email captcha.
 - **Home page** (`/`): feature overview plus Windows / Linux × x64 / arm64 × GUI / CLI downloads,
   built by GitHub Actions and published to the latest release.
 - **User portal** (`/user`): log in with username/password, create a key from the certificates the admin
@@ -233,7 +232,7 @@ Use `--tsa worker` to force the proxy.
 ```bash
 cd worker
 npm install
-cp .dev.vars.example .dev.vars   # optional CERTUM_* for import; ADMIN_PASSWORD can stay empty
+cp .dev.vars.example .dev.vars   # optional: only needed for local email testing
 npx wrangler kv namespace create CERTUM_KV   # put the returned id into wrangler.jsonc
 npm run dev                      # http://127.0.0.1:8787 ; /admin opens the setup page first
 npm test                         # TOTP / multipart / encoding / KV / admin-account unit tests
@@ -248,7 +247,6 @@ npm run deploy
 npx wrangler secret put RESEND_API_KEY   # optional, needed for registration/reset
 ```
 
-To keep the legacy flow, set `ADMIN_PASSWORD` before deploying instead; neither secret is mandatory.
 
 Pushing a `v*` tag or running `.github/workflows/release.yml` manually builds eight artifacts
 (Windows / Linux × x64 / arm64 × GUI / CLI) and publishes them to the `latest` release; the home page
@@ -262,15 +260,12 @@ Only two optional secrets remain; everything else lives under **Settings → Ser
 | --- | --- | --- |
 | `SESSION_SECRET` | secret | optional cookie HMAC key; defaults to the random value generated at setup |
 | `RESEND_API_KEY` | secret | optional Resend key; registration/reset stay disabled without it |
-| `ADMIN_PASSWORD` | secret | optional legacy `/admin` password; ignored when a KV account exists |
-| `CERTUM_EMAIL` / `CERTUM_OTP_URI` / `CERTUM_OTP_SECRET` / `CERTUM_CERTIFICATE_SHA1` | var / secret | optional, only for "import from environment" |
 
 Runtime settings editable in the console: base URL, Certum API base, TSA upstream, Resend sender,
-intermediate PEM, per-request logging. The matching env vars (`PUBLIC_BASE_URL`, `CERTUM_API_BASE`,
-`TSA_UPSTREAM`, `RESEND_FROM`, `CERTUM_CHAIN_PEM`, `LOG_SIGNATURES`) still work as fallbacks but are not
-needed on a fresh deployment.
+intermediate PEM, per-request logging. `wrangler.jsonc` has no `vars`; the Certum email and TOTP seed come
+from the KV credential records.
 
-At runtime the email and seed come from the KV credential, so `CERTUM_*` is no longer required.
+At runtime the Certum email and TOTP seed come from the KV credential; no `CERTUM_*` env var is read.
 
 ## Security
 
@@ -284,8 +279,7 @@ At runtime the email and seed come from the KV credential, so `CERTUM_*` is no l
   PBKDF2 hash too (10+ characters). User sessions last 7 days, admin sessions 12 hours, both revocable in
   KV. Writes check CSRF, logins are rate limited per IP (8 failures per 10 minutes; 8 per 10 minutes for
   the client API). `/admin/setup` closes itself once the account exists — **before that, whoever opens
-  `/admin` first can create the account**, so finish setup right after deploying (or set an
-  `ADMIN_PASSWORD` secret first to hold the door).
+  `/admin` first can create the account**, so finish setup right after deploying.
 - The signing API is strict: digest length must match the algorithm (40 / 64 / 96 / 128 hex chars), at
   most 16 digests per call, with per-key and per-user daily quotas.
 - The client verifies the returned signature with the certificate's public key before writing the file.
@@ -306,9 +300,9 @@ At runtime the email and seed come from the KV credential, so `CERTUM_*` is no l
 
 ## Verification
 
-- Worker: `npx tsc --noEmit` clean; `npm test` 34 passing (TOTP against RFC 6238 vectors, multipart,
+- Worker: `npx tsc --noEmit` clean; `npm test` 33 passing (TOTP against RFC 6238 vectors, multipart,
   encoding/hashing, KV storage, password hashing, admin account setup/password change, runtime config
-  defaults / env fallback / KV override).
+  defaults / save and read back).
 - New features exercised under `wrangler dev` (Nov 2026): home page downloads, two-column sign-in with
   captcha (wrong code → 401 and a new image, refresh button issues a new id, password show/hide),
   persisted settings toggles, registration reporting a clear error without Resend, email verification
@@ -323,15 +317,17 @@ At runtime the email and seed come from the KV credential, so `CERTUM_*` is no l
 - Admin setup flow (Nov 2026, fresh KV under `wrangler dev`): `/admin` and `/admin/login` both 302 to
   `/admin/setup` while unconfigured; short password, mismatched confirmation and invalid username each
   render their own message; creating the account 302s to `/admin?ok=…` already signed in; once configured
-  `/admin/setup` 302s back to the login page; wrong username/password 401, and a legacy `ADMIN_PASSWORD`
-  is ignored once a KV account exists (401); the settings page password change was checked for wrong
-  current password, short new password, mismatch and success, with the old password then 401 and the new
-  one 302, with other browser sessions revoked (302 back to sign-in) while the current browser receives a
-  fresh cookie; env-only mode hides the username field and the password form.
+  `/admin/setup` 302s back to the login page; wrong username/password 401; the settings page password
+  change was checked for wrong current password, short new password, mismatch and success, with the old
+  password then 401 and the new one 302, other browser sessions revoked (302 back to sign-in) while the
+  current browser receives a fresh cookie.
 - Runtime config (Nov 2026, `wrangler dev`): saving base URL / Certum API / TSA / sender / PEM / log
   switch under Settings echoes back correctly (trailing slash normalised, sender escaped), `ftp://` URLs
   and a non-PEM chain are rejected with a message on the settings page, and clearing a field falls back to
   the default or env var.
+- Legacy compatibility removed (Nov 2026): the `ADMIN_PASSWORD` login path, env-var fallbacks for
+  runtime settings and `/admin/credentials/import-env` (now 404) are gone; `/admin/setup` is the only
+  entry before the account exists.
 - Exercised under `wrangler dev`: admin login, overview, user create/password/expiry/disable/enable,
   credential create (with non-ASCII label)/edit/disable/enable/delete/force login/refresh certificate,
   key create (secret shown once)/disable/delete, log page, stats JSON; user login, portal, self-service

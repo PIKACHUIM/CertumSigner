@@ -43,12 +43,11 @@ docs/          Certum 云签名协议逆向记录
 `https://<你的域名>/admin`，会直接进入**初始化页**：设置管理员用户名与口令，提交后自动登录控制台。
 账号存在 KV 里，口令只保存 PBKDF2 哈希；会话密钥在初始化时自动生成，不需要再手动设 secret。
 
-旧版部署方式（直接设 `ADMIN_PASSWORD` secret）仍然有效，两者只能二选一：
+想显式指定会话密钥时再设一个 secret（可选，不设就用初始化时生成的值）：
 
 | Secret | 说明 |
 | --- | --- |
-| `ADMIN_PASSWORD` | 旧版 `/admin` 登录口令；已经建了 KV 账号后不再使用 |
-| `SESSION_SECRET` | 可选，cookie 的 HMAC 密钥；不填则用 KV 里自动生成的密钥 |
+| `SESSION_SECRET` | 可选，会话 cookie 的 HMAC 密钥 |
 
 需要「注册 / 找回密码」时再配置邮件（可选，不配置则这两个开关不可用）：
 
@@ -79,8 +78,7 @@ docs/          Certum 云签名协议逆向记录
 - **管理员后台**（`/admin`）：
   - 概览：请求量、成功/失败、按算法分布、近 7 天曲线、最近签名（每条可看详情）。
   - 用户：弹窗新建/编辑用户，设置有效期、用户级每日限额、邮箱与可用证书（多选），可停用/删除。
-  - 凭据：弹窗新增/编辑（标签、邮箱、TOTP 种子、证书指纹），启用/停用、强制重新登录、刷新证书、
-    从环境变量一次性导入。
+  - 凭据：弹窗新增/编辑（标签、邮箱、TOTP 种子、证书指纹），启用/停用、强制重新登录、刷新证书。
   - Key：查看全部 Key 的归属用户、绑定凭据、用量，可停用/删除。
   - 记录：`/admin/logs` 是完整明细页（侧边栏有「签名记录」入口，概览的「查看全部记录」也能进），
     每条都能打开弹窗看时间、Key、凭据、摘要前缀、结果、耗时、IP、UA 与错误信息。
@@ -235,7 +233,7 @@ HTTP 403 + `检测到风险软件的网络连接`。客户端的处理是：直�
 ```bash
 cd worker
 npm install
-cp .dev.vars.example .dev.vars   # 可选的 CERTUM_* 导入用；ADMIN_PASSWORD 不填也能在 /admin/setup 建账号
+cp .dev.vars.example .dev.vars   # 可选：本地要用发信等功能时再填
 npx wrangler kv namespace create CERTUM_KV   # 把返回的 id 填进 wrangler.jsonc
 npm run dev                      # http://127.0.0.1:8787 ，首次打开 /admin 进初始化页
 npm test                         # TOTP / multipart / 编码 / KV 存储 / 管理员账号的单元测试
@@ -250,27 +248,21 @@ npm run deploy
 npx wrangler secret put RESEND_API_KEY   # 可选，开启注册/找回密码时再配
 ```
 
-只想沿用旧方式（不建 KV 账号）时，部署前设 `ADMIN_PASSWORD` 即可，两个 secret 都不是必填。
 
 推 `v*` tag 或手动运行 `.github/workflows/release.yml`，会构建 Windows / Linux × x64 / arm64
 的 GUI 与 CLI 共 8 个产物，并发布到 tag 为 `latest` 的 release；主页下载链接直接指向这些文件。
 
 ## 环境变量
 
-只保留跑起来必须的两个 secret，其余都在后台「系统设置 → 服务与地址」里配（存 KV）：
+只保留两个可选 secret；其余配置全部在后台「系统设置 → 服务与地址」里改（存 KV）：
 
 | 名称 | 类型 | 说明 |
 | --- | --- | --- |
 | `SESSION_SECRET` | secret | 可选，会话 cookie 的 HMAC 密钥；不设则用初始化时生成并存 KV 的随机值 |
 | `RESEND_API_KEY` | secret | 可选，Resend 发信 Key；不填则注册 / 找回密码不可用 |
-| `ADMIN_PASSWORD` | secret | 可选，旧版 `/admin` 登录口令；有 KV 管理员账号时忽略 |
-| `CERTUM_EMAIL` / `CERTUM_OTP_URI` / `CERTUM_OTP_SECRET` / `CERTUM_CERTIFICATE_SHA1` | var / secret | 可选，仅「从环境变量导入」凭据时用 |
 
 后台可改的运行时配置：基础地址、Certum API 根地址、TSA 上游、Resend 发件人、中间证书 PEM、
-签名明细日志开关。对应的环境变量（`PUBLIC_BASE_URL`、`CERTUM_API_BASE`、`TSA_UPSTREAM`、
-`RESEND_FROM`、`CERTUM_CHAIN_PEM`、`LOG_SIGNATURES`）仍作为回退保留，新部署不需要设置。
-
-正常运行时登录用的邮箱和种子来自 KV 里的凭据，`CERTUM_*` 不再是必需品。
+签名明细日志开关。`wrangler.jsonc` 里没有 `vars`，登录用的邮箱与 TOTP 种子来自 KV 里的凭据。
 
 ## 安全设计
 
@@ -283,7 +275,7 @@ npx wrangler secret put RESEND_API_KEY   # 可选，开启注册/找回密码时
   （口令至少 10 位），会话 7 天 / 12 小时，都记在 KV 里可吊销，写操作校验 CSRF，
   登录失败按 IP 限速（10 分钟 8 次，客户端登录接口 8 次/10 分钟）。
   管理员账号建好后 `/admin/setup` 会自动关闭；**未初始化之前谁先打开 `/admin` 谁就能建账号**，
-  所以部署完请立刻完成初始化（或先设 `ADMIN_PASSWORD` secret 占住）。
+  所以部署完请立刻完成初始化。
 - 签名接口不放任任何字节：摘要长度必须精确匹配算法（40 / 64 / 96 / 128 位十六进制），
   单次最多 16 条，Key 级与用户级每日限额同时生效。
 - 云端返回的签名在客户端本地会用证书公钥验一遍再写文件，防止摘要错位。
@@ -302,9 +294,9 @@ npx wrangler secret put RESEND_API_KEY   # 可选，开启注册/找回密码时
 
 ## 验证状态
 
-- Worker：`npx tsc --noEmit` 通过；`npm test` 34 项通过（TOTP 命中 RFC 6238 向量、
+- Worker：`npx tsc --noEmit` 通过；`npm test` 33 项通过（TOTP 命中 RFC 6238 向量、
   multipart 解析、编码/哈希、KV 存储与口令哈希、管理员账号初始化/改口令、运行时配置的默认值/
-  环境变量回退/KV 覆盖）。
+  保存与回读）。
 - 新增功能实测（`wrangler dev`，2026-11）：主页下载区、双栏登录页与图形验证码
   （错误验证码 401 且换图、刷新按钮换 id、口令显示/隐藏）、系统设置开关持久化、
   注册在未配置 Resend 时给出明确错误、邮箱验证令牌（未验证登录 401 → 验证后登录 302）、
@@ -325,13 +317,15 @@ npx wrangler secret put RESEND_API_KEY   # 可选，开启注册/找回密码时
 - 管理员初始化流程（2026-11，`wrangler dev` 全新 KV）：未初始化时 `/admin` 与 `/admin/login`
   都 302 到 `/admin/setup`；短口令 / 两次不一致 / 非法用户名分别回显提示；创建成功后 302 到
   `/admin?ok=管理员账号已创建` 并直接登录；已初始化后 `/admin/setup` 302 回登录页；
-  用户名或口令错误 401，旧版 `ADMIN_PASSWORD` 在有 KV 账号时被忽略（401）；
+  用户名或口令错误 401；
   设置页改口令（当前口令错 / 新口令过短 / 两次不一致 / 成功）逐项验证，改完旧口令 401、新口令 302，
-  其他浏览器上的旧会话被注销（302 回登录页），当前浏览器拿到新 cookie 继续可用；
-  旧版只有 `ADMIN_PASSWORD` 时登录页不显示用户名框、设置页显示「环境变量」并隐藏改口令表单。
+  其他浏览器上的旧会话被注销（302 回登录页），当前浏览器拿到新 cookie 继续可用。
 - 运行时可配置（2026-11，`wrangler dev`）：系统设置「服务与地址」保存基础地址 / Certum API / TSA /
   发件人 / PEM / 日志开关后回显正确（尾部斜杠被归一化、发件人转义正常），`ftp://` 之类地址与不是 PEM 的
-  证书链分别被拒绝并回到设置页提示；清空字段即回落到默认值或环境变量。
+  证书链分别被拒绝并回到设置页提示；清空字段即回落到默认值。
+- 旧版兼容已移除（2026-11）：`ADMIN_PASSWORD` 登录、运行时配置的环境变量回退、
+  「从环境变量导入凭据」全部删掉，`/admin/credentials/import-env` 现在返回 404；
+  未初始化时 `/admin/setup` 是唯一入口。
 - 界面逐项实测：四套主题 × 明暗切换、`/prefs` 写 cookie 后 302 回原页、中英文切换
   （含登录失败、CSRF、表单校验等提示）、新建/编辑弹窗、记录详情弹窗、
   900px 与手机宽度下侧边栏不换行错位、页面无横向滚动。
