@@ -12,3 +12,6 @@ out/
 # 编辑器
 .vs/
 .idea/
+
+# Windows 设备名残留（重定向 2>nul 时误建，系统 API 删不掉），不要提交
+client/NUL
