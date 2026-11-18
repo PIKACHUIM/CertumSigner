@@ -1,6 +1,9 @@
 /** 服务端渲染的公共外壳：主题变量、明暗模式、多语言、弹窗组件（无前端构建） */
 import type { Translate } from "./i18n";
+import type { CaptchaView } from "../lib/captcha";
 import { MODES, THEMES, prefsHref, type Mode, type Prefs, type ThemeId } from "./prefs";
+
+export type { CaptchaView };
 
 export function escapeHtml(text: string): string {
   return text
@@ -247,6 +250,7 @@ html[data-mode="dark"] .side { border-right-color: var(--line); }
 /* --------------------------------- 卡片 --------------------------------- */
 .grid { display: grid; gap: 16px; }
 .cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .card {
   background: var(--panel); border: 1px solid var(--line); border-radius: 16px;
@@ -468,11 +472,17 @@ textarea { min-height: 82px; resize: vertical; font-family: ui-monospace, Menlo,
   font: inherit; font-size: 12px; font-weight: 600; padding: 0 13px; cursor: pointer; flex: none;
 }
 .auth__peek:hover { color: var(--brand); }
-.auth__captcha { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.auth__captcha .cap { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; line-height: 0; background: #f4f5f9; flex: none; }
+.auth__captcha { display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; }
+.auth__captcha .cap {
+  border: 1px solid var(--line); border-radius: 8px; overflow: hidden; line-height: 0;
+  background: #f4f5f9; flex: none; padding: 0; cursor: pointer;
+}
 .auth__captcha .cap svg { display: block; }
-.auth__captcha input[type=text] { width: 96px; flex: none; text-align: center; letter-spacing: .22em; font-weight: 650; }
-.auth__captcha .refresh { flex: none; height: 40px; padding: 0 12px; font-size: 12px; }
+.auth__captcha input[type=text] {
+  flex: 1 1 auto; min-width: 0; text-align: center; letter-spacing: .18em; font-weight: 650;
+}
+.auth__captcha .refresh { flex: none; width: 38px; height: 40px; padding: 0; font-size: 15px; line-height: 1; }
+.auth__turnstile { min-height: 65px; }
 .auth__hint { margin: -2px 0 16px; font-size: 11.5px; line-height: 1.6; color: var(--muted-2); }
 .auth__submit { width: 100%; height: 44px; justify-content: space-between; padding: 0 16px; margin-top: 8px; border-radius: 9px; }
 .auth__submit .arrow { font-size: 16px; line-height: 1; opacity: .9; }
@@ -508,6 +518,7 @@ textarea { min-height: 82px; resize: vertical; font-family: ui-monospace, Menlo,
   .head { flex-direction: column; }
   .hide-sm { display: none; }
   .cols-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .cols-3 { grid-template-columns: 1fr; }
   .cols-2 { grid-template-columns: 1fr; }
   .form-grid { grid-template-columns: 1fr; }
   .kv, .dl { grid-template-columns: 1fr; gap: 4px 0; }
@@ -657,6 +668,15 @@ const SCRIPT = `<script>
   document.querySelectorAll('dialog').forEach((dialog) => {
     dialog.addEventListener('close', () => { dialog.removeAttribute('open'); });
   });
+  // 新 Key 默认只显示前几位，点「显示完整」才把完整明文填回去（只显示一次，刷新即失效）
+  document.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-reveal-full]');
+    if (!button) return;
+    const box = button.parentElement;
+    const code = box && box.querySelector('code[data-full]');
+    if (code) { code.textContent = code.getAttribute('data-full') || ''; }
+    button.remove();
+  });
 })();
 </script>`;
 
@@ -723,22 +743,41 @@ ${SCRIPT}
 </html>`;
 }
 
-export interface CaptchaView {
-  id: string;
-  svg: string;
+/** 新 Key 提示条：默认只露前几位，点「显示完整」才把完整明文展开（依旧只此一次） */
+export function revealBanner(plaintext: string, t: Translate): string {
+  return `<div class="reveal">${escapeHtml(t("keys.reveal"))}
+      <div class="row" style="margin-top:8px">
+        <code data-full="${escapeHtml(plaintext)}">${escapeHtml(plaintext.slice(0, 12))}…</code>
+        <button type="button" class="btn btn--sm btn--ghost" data-reveal-full>${escapeHtml(
+          t("keys.revealShow"),
+        )}</button>
+      </div>
+    </div>`;
 }
 
 /** 登录 / 注册 / 找回密码共用的验证码字段 */
 export function captchaField(captcha: CaptchaView, t: Translate): string {
+  if (captcha.mode === "turnstile") {
+    return `<div class="auth__field">${escapeHtml(t("login.captcha"))}
+      <div class="auth__turnstile">
+        <div class="cf-turnstile" data-sitekey="${escapeHtml(captcha.siteKey)}" data-theme="auto"></div>
+      </div>
+    </div>
+    <p class="auth__hint">${escapeHtml(t("login.captchaCfHint"))}</p>
+    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>`;
+  }
   return `<div class="auth__field">${escapeHtml(t("login.captcha"))}
       <div class="auth__captcha">
-        <span class="cap" data-captcha-img>${captcha.svg}</span>
         <input type="hidden" name="captchaId" value="${escapeHtml(captcha.id)}" data-captcha-id>
+        <button type="button" class="cap" data-captcha-img data-captcha-refresh
+          title="${escapeHtml(t("login.captchaRefresh"))}" aria-label="${escapeHtml(
+            t("login.captchaRefresh"),
+          )}">${captcha.svg}</button>
         <input type="text" name="captcha" inputmode="numeric" autocomplete="off" maxlength="4" required
           aria-label="${escapeHtml(t("login.captcha"))}">
-        <button type="button" class="btn btn--sm refresh" data-captcha-refresh>${escapeHtml(
+        <button type="button" class="btn btn--sm refresh" data-captcha-refresh aria-label="${escapeHtml(
           t("login.captchaRefresh"),
-        )}</button>
+        )}">↻</button>
       </div>
     </div>
     <p class="auth__hint">${escapeHtml(t("login.captchaHint"))}</p>`;

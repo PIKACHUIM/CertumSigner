@@ -13,6 +13,7 @@ import {
   loginShell,
   navIcon,
   pill,
+  revealBanner,
   shell,
   statCard,
   type CaptchaView,
@@ -395,6 +396,9 @@ export function adminUserPage(data: UserDetailData): string {
         <td class="small">${key.totalSigns}</td>
         <td class="small muted">${key.lastUsedAt ? fmtTime(key.lastUsedAt) : escapeHtml(t("common.never"))}</td>
         <td><div class="row">
+          <button class="btn btn--sm" type="button" data-open="keyedit-${escapeHtml(key.id)}">${escapeHtml(
+            t("keys.edit"),
+          )}</button>
           <form class="inline" method="post" action="/admin/keys/${escapeHtml(key.id)}/toggle">
             <input type="hidden" name="csrf" value="${escapeHtml(data.csrf)}">
             <input type="hidden" name="enabled" value="${key.enabled ? "0" : "1"}">
@@ -466,18 +470,52 @@ export function adminUserPage(data: UserDetailData): string {
       </div>`,
   });
 
+  const keyEditDialogs = data.keys
+    .map((key) => {
+      const certOptions = assigned
+        .map(
+          (cred) =>
+            `<option value="${escapeHtml(cred.id)}"${cred.id === key.credentialId ? " selected" : ""}>${escapeHtml(
+              cred.label,
+            )} · ${escapeHtml(cred.email)}</option>`,
+        )
+        .join("");
+      return formModal({
+        id: `keyedit-${key.id}`,
+        title: t("keys.editTitle"),
+        hint: t("keys.editHint"),
+        action: `/admin/keys/${key.id}/update`,
+        csrf: data.csrf,
+        submit: t("common.save"),
+        cancel: t("common.cancel"),
+        body: `<input type="hidden" name="backTo" value="/admin/users/${escapeHtml(user.id)}">
+          <input type="hidden" name="userId" value="${escapeHtml(user.id)}">
+          <div class="form-grid">
+            <label class="field wide">${escapeHtml(t("keys.prefix"))}
+              <input type="text" value="${escapeHtml(key.prefix)}…" readonly>
+            </label>
+            <label class="field">${escapeHtml(t("keys.name"))}
+              <input type="text" name="name" value="${escapeHtml(key.name)}" maxlength="64" required>
+            </label>
+            <label class="field">${escapeHtml(t("keys.quota"))}
+              <input type="number" name="dailyQuota" min="0" value="${key.dailyQuota}">
+            </label>
+            <label class="field wide">${escapeHtml(t("keys.cert"))}
+              <select name="credentialId" required>${
+                certOptions || `<option value="">${escapeHtml(t("users.noCredits"))}</option>`
+              }</select>
+            </label>
+          </div>`,
+      });
+    })
+    .join("");
+
   return page(
     "/admin/users",
     t("users.detailTitle", { name: user.email }),
     t("users.detailSubtitle"),
     data,
-    `${
-      data.revealedKey
-        ? `<div class="reveal">${escapeHtml(t("keys.reveal"))}<div style="margin-top:8px"><code>${escapeHtml(
-            data.revealedKey,
-          )}</code></div></div>`
-        : ""
-    }
+    `${data.revealedKey ? revealBanner(data.revealedKey, t) : ""}
     <div class="grid cols-2">
       <div class="card">
         <div class="row" style="justify-content:space-between;margin-bottom:10px">
@@ -546,7 +584,7 @@ export function adminUserPage(data: UserDetailData): string {
         </div>
       </div>
     </div>
-    ${editDialog}${keyDialog}`,
+    ${editDialog}${keyDialog}${keyEditDialogs}`,
   );
 }
 
@@ -713,6 +751,9 @@ export function adminKeysPage(data: KeysPageData): string {
         <td class="small hide-xs">${key.totalSigns}</td>
         <td class="small muted hide-xs">${key.lastUsedAt ? fmtTime(key.lastUsedAt) : escapeHtml(t("common.never"))}</td>
         <td><div class="row">
+          <button class="btn btn--sm" type="button" data-open="keyedit-${escapeHtml(key.id)}">${escapeHtml(
+            t("keys.edit"),
+          )}</button>
           <form class="inline" method="post" action="/admin/keys/${escapeHtml(key.id)}/toggle">
             <input type="hidden" name="csrf" value="${escapeHtml(data.csrf)}">
             <input type="hidden" name="enabled" value="${key.enabled ? "0" : "1"}">
@@ -758,18 +799,63 @@ export function adminKeysPage(data: KeysPageData): string {
     </div>`,
   });
 
+  const editDialogs = data.keys
+    .map((key) => {
+      const ownerOptions = [`<option value="">${escapeHtml(t("keys.platformKey"))}</option>`]
+        .concat(
+          data.users.map(
+            (user) =>
+              `<option value="${escapeHtml(user.id)}"${user.id === key.userId ? " selected" : ""}>${escapeHtml(
+                user.email,
+              )}</option>`,
+          ),
+        )
+        .join("");
+      const certOptions = data.credentials
+        .map(
+          (cred) =>
+            `<option value="${escapeHtml(cred.id)}"${cred.id === key.credentialId ? " selected" : ""}>${escapeHtml(
+              cred.label,
+            )}（${escapeHtml(cred.email)}）</option>`,
+        )
+        .join("");
+      return formModal({
+        id: `keyedit-${key.id}`,
+        title: t("keys.editTitle"),
+        hint: t("keys.editHint"),
+        action: `/admin/keys/${key.id}/update`,
+        csrf: data.csrf,
+        submit: t("common.save"),
+        cancel: t("common.cancel"),
+        body: `<div class="form-grid">
+          <label class="field wide">${escapeHtml(t("keys.prefix"))}
+            <input type="text" value="${escapeHtml(key.prefix)}…" readonly>
+          </label>
+          <label class="field">${escapeHtml(t("keys.name"))}
+            <input type="text" name="name" value="${escapeHtml(key.name)}" maxlength="64" required>
+          </label>
+          <label class="field">${escapeHtml(t("keys.quota"))}
+            <input type="number" name="dailyQuota" min="0" value="${key.dailyQuota}">
+          </label>
+          <label class="field">${escapeHtml(t("keys.ownerField"))}
+            <select name="userId">${ownerOptions}</select>
+          </label>
+          <label class="field">${escapeHtml(t("keys.cert"))}
+            <select name="credentialId" required>${
+              certOptions || `<option value="">${escapeHtml(t("keys.noCred"))}</option>`
+            }</select>
+          </label>
+        </div>`,
+      });
+    })
+    .join("");
+
   return page(
     "/admin/keys",
     t("keys.title"),
     t("keys.subtitle"),
     data,
-    `${
-      data.revealedKey
-        ? `<div class="reveal">${escapeHtml(t("keys.reveal"))}<div style="margin-top:8px"><code>${escapeHtml(
-            data.revealedKey,
-          )}</code></div></div>`
-        : ""
-    }
+    `${data.revealedKey ? revealBanner(data.revealedKey, t) : ""}
     <div class="card">
       <div class="row" style="justify-content:space-between;margin-bottom:6px">
         <h2 style="margin:0">${escapeHtml(t("keys.all"))}</h2>
@@ -788,7 +874,7 @@ export function adminKeysPage(data: KeysPageData): string {
         </table>
       </div>
     </div>
-    ${dialog}`,
+    ${dialog}${editDialogs}`,
   );
 }
 
@@ -883,6 +969,7 @@ export interface SettingsPageData extends AdminNavData {
   config: RuntimeConfig;
   /** 只暴露「有没有填过」，密钥本身不回传 */
   hasResendApiKey: boolean;
+  hasTurnstileSecret: boolean;
   mailReady: boolean;
   adminUsername?: string;
 }
@@ -898,6 +985,18 @@ function toggle(name: string, label: string, hint: string, checked: boolean): st
 
 export function adminSettingsPage(data: SettingsPageData): string {
   const { t, settings } = data;
+  const modes: Array<[string, string]> = [
+    ["off", t("settings.captchaOff")],
+    ["svg", t("settings.captchaSvg")],
+    ["turnstile", t("settings.captchaTurnstile")],
+  ];
+  const modeOptions = modes
+    .map(
+      ([value, label]) =>
+        `<option value="${value}"${settings.captchaMode === value ? " selected" : ""}>${escapeHtml(label)}</option>`,
+    )
+    .join("");
+
   return page(
     "/admin/settings",
     t("settings.title"),
@@ -907,25 +1006,80 @@ export function adminSettingsPage(data: SettingsPageData): string {
       <input type="hidden" name="csrf" value="${escapeHtml(data.csrf)}">
       <div class="grid cols-2" style="margin-bottom:16px">
         <div class="card">
-          <h2>${escapeHtml(t("settings.security"))}</h2>
-          ${toggle("loginCaptcha", t("settings.loginCaptcha"), t("settings.loginCaptchaHint"), settings.loginCaptcha)}
-        </div>
-        <div class="card">
           <h2>${escapeHtml(t("settings.accounts"))}</h2>
+          <label class="field" style="margin-bottom:14px">${escapeHtml(t("settings.captchaMode"))}
+            <select name="captchaMode">${modeOptions}</select>
+            <span class="small muted">${escapeHtml(t("settings.captchaModeHint"))}</span>
+          </label>
+          <div class="form-grid" style="margin-bottom:14px">
+            <label class="field">${escapeHtml(t("settings.turnstileSiteKey"))}
+              <input type="text" name="turnstileSiteKey" value="${escapeHtml(data.config.turnstileSiteKey)}"
+                placeholder="0x4AAAAAAA…" spellcheck="false">
+              <span class="small muted">${escapeHtml(t("settings.turnstileSiteKeyHint"))}</span>
+            </label>
+            <label class="field">${escapeHtml(t("settings.turnstileSecretKey"))}
+              <input type="password" name="turnstileSecretKey" autocomplete="new-password" spellcheck="false"
+                placeholder="${escapeHtml(
+                  data.hasTurnstileSecret ? t("settings.turnstileSecretKeySet") : "0x4AAAAAAA…",
+                )}">
+              <span class="small muted">${escapeHtml(t("settings.turnstileSecretKeyHint"))}</span>
+            </label>
+          </div>
+          ${
+            data.hasTurnstileSecret
+              ? `<div class="checks" style="margin-bottom:12px">
+                  <label><input type="checkbox" name="clearTurnstileSecret" value="1"> ${escapeHtml(
+                    t("settings.clearTurnstileSecret"),
+                  )}</label>
+                </div>`
+              : ""
+          }
           ${toggle("registerEnabled", t("settings.register"), t("settings.registerHint"), settings.registerEnabled)}
           ${toggle("resetEnabled", t("settings.reset"), t("settings.resetHint"), settings.resetEnabled)}
-          ${toggle("emailCaptcha", t("settings.emailCaptcha"), t("settings.emailCaptchaHint"), settings.emailCaptcha)}
+        </div>
+        <div class="card">
+          <h2>${escapeHtml(t("settings.email"))} ${
+            data.mailReady ? pill(t("settings.mailReady"), "ok") : pill(t("settings.mailOff"), "warn")
+          }</h2>
+          <p class="small muted" style="margin:0 0 12px">${escapeHtml(t("settings.emailHint"))}</p>
+          <div class="form-grid">
+            <label class="field">${escapeHtml(t("settings.publicBaseUrl"))}
+              <input type="url" name="publicBaseUrl" value="${escapeHtml(data.config.publicBaseUrl)}"
+                placeholder="https://certum.example.com">
+              <span class="small muted">${escapeHtml(t("settings.publicBaseUrlHint"))}</span>
+            </label>
+            <label class="field">${escapeHtml(t("settings.resendFrom"))}
+              <input type="text" name="resendFrom" value="${escapeHtml(data.config.resendFrom)}"
+                placeholder="CertumSigner &lt;noreply@example.com&gt;">
+              <span class="small muted">${escapeHtml(t("settings.resendFromHint"))}</span>
+            </label>
+            <label class="field wide">${escapeHtml(t("settings.resendApiKey"))}
+              <input type="password" name="resendApiKey" autocomplete="new-password" spellcheck="false"
+                placeholder="${escapeHtml(data.hasResendApiKey ? t("settings.resendApiKeySet") : "re_…")}">
+              <span class="small muted">${escapeHtml(t("settings.resendApiKeyHint"))}</span>
+            </label>
+          </div>
+          ${
+            data.hasResendApiKey
+              ? `<div class="checks" style="margin-top:10px">
+                  <label><input type="checkbox" name="clearResendApiKey" value="1"> ${escapeHtml(
+                    t("settings.clearResendApiKey"),
+                  )}</label>
+                </div>`
+              : ""
+          }
+          <p class="small muted" style="margin:10px 0 0">${escapeHtml(
+            data.mailReady ? t("settings.mailReadyHint") : t("settings.mailMissing"),
+          )}</p>
+          <div style="margin-top:14px">
+            ${toggle("emailCaptcha", t("settings.emailCaptcha"), t("settings.emailCaptchaHint"), settings.emailCaptcha)}
+          </div>
         </div>
       </div>
       <div class="card" style="margin-bottom:16px">
         <h2>${escapeHtml(t("settings.services"))}</h2>
         <p class="small muted" style="margin:0 0 12px">${escapeHtml(t("settings.servicesHint"))}</p>
         <div class="form-grid">
-          <label class="field">${escapeHtml(t("settings.publicBaseUrl"))}
-            <input type="url" name="publicBaseUrl" value="${escapeHtml(data.config.publicBaseUrl)}"
-              placeholder="https://certum.example.com">
-            <span class="small muted">${escapeHtml(t("settings.publicBaseUrlHint"))}</span>
-          </label>
           <label class="field">${escapeHtml(t("settings.certumApiBase"))}
             <input type="url" name="certumApiBase" value="${escapeHtml(data.config.certumApiBase)}"
               placeholder="https://cloudsign.webnotarius.pl">
@@ -935,16 +1089,6 @@ export function adminSettingsPage(data: SettingsPageData): string {
             <input type="url" name="tsaUpstream" value="${escapeHtml(data.config.tsaUpstream)}"
               placeholder="http://time.certum.pl/">
             <span class="small muted">${escapeHtml(t("settings.tsaUpstreamHint"))}</span>
-          </label>
-          <label class="field">${escapeHtml(t("settings.resendFrom"))}
-            <input type="text" name="resendFrom" value="${escapeHtml(data.config.resendFrom)}"
-              placeholder="CertumSigner &lt;noreply@example.com&gt;">
-            <span class="small muted">${escapeHtml(t("settings.resendFromHint"))}</span>
-          </label>
-          <label class="field">${escapeHtml(t("settings.resendApiKey"))}
-            <input type="password" name="resendApiKey" autocomplete="new-password" spellcheck="false"
-              placeholder="${escapeHtml(data.hasResendApiKey ? t("settings.resendApiKeySet") : "re_…")}">
-            <span class="small muted">${escapeHtml(t("settings.resendApiKeyHint"))}</span>
           </label>
           <label class="field wide">${escapeHtml(t("settings.chainPem"))}
             <textarea name="certumChainPem" rows="4" spellcheck="false"
@@ -956,23 +1100,8 @@ export function adminSettingsPage(data: SettingsPageData): string {
           <label><input type="checkbox" name="logSignatures" value="1" ${
             data.config.logSignatures ? "checked" : ""
           }> ${escapeHtml(t("settings.logSignatures"))}</label>
-          ${
-            data.hasResendApiKey
-              ? `<label><input type="checkbox" name="clearResendApiKey" value="1"> ${escapeHtml(
-                  t("settings.clearResendApiKey"),
-                )}</label>`
-              : ""
-          }
         </div>
         <p class="small muted" style="margin:6px 0 0">${escapeHtml(t("settings.logSignaturesHint"))}</p>
-      </div>
-      <div class="card" style="margin-bottom:16px">
-        <h2>${escapeHtml(t("settings.mail"))} ${
-          data.mailReady ? pill(t("settings.mailReady"), "ok") : pill(t("settings.mailOff"), "warn")
-        }</h2>
-        <p class="small muted" style="margin:0">${escapeHtml(
-          data.mailReady ? t("settings.mailReadyHint") : t("settings.mailMissing"),
-        )}</p>
         ${
           settings.updatedAt
             ? `<p class="small muted" style="margin:8px 0 0">${escapeHtml(t("settings.updatedAt"))}：${fmtTime(
@@ -999,7 +1128,7 @@ function adminAccountCard(data: SettingsPageData): string {
     )}</p>
     <form method="post" action="/admin/settings/password">
       <input type="hidden" name="csrf" value="${escapeHtml(data.csrf)}">
-      <div class="grid cols-2">
+      <div class="grid cols-3">
         <label class="field">${escapeHtml(t("settings.currentPassword"))}
           <input type="password" name="current" autocomplete="current-password" required>
         </label>

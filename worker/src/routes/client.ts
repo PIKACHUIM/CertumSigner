@@ -11,6 +11,8 @@ import { authenticateUser, getUser, userExpired } from "../store/users";
 import { listCredentials } from "../store/credentials";
 import { createApiKey, findApiKeyById, listKeysOfUser, rotateApiKey } from "../store/keys";
 import { createUserSession, readUserSession, revokeUserSession } from "../store/user-sessions";
+import { captchaAllowed, createCaptcha, verifyCaptcha } from "../lib/captcha";
+import { readSettings } from "../store/settings";
 
 export type ClientEnv = {
   Bindings: Env;
@@ -105,6 +107,30 @@ function bearer(c: Context<ClientEnv>): string {
 
 export const clientApi = new Hono<ClientEnv>();
 
+/* -------------------------------- 验证码 --------------------------------- */
+
+/** 桌面端专用的验证码视图：始终是 4 位数字图形码，不用 Turnstile */
+async function captchaPayload(env: Env) {
+  const captcha = await createCaptcha(env);
+  return {
+    id: captcha.id,
+    svg: captcha.svg,
+    /** 直接丢给能渲染图片的控件用 */
+    dataUrl: `data:image/svg+xml;base64,${btoa(captcha.svg)}`,
+    digits: 4,
+  };
+}
+
+/** 登录前取一张验证码；开启验证码时客户端应当先调这个接口 */
+clientApi.get("/captcha", async (c) => {
+  const ip = clientIp(c);
+  if (!(await captchaAllowed(c.env, ip))) {
+    return c.json({ ok: false, error: { code: "too_many", message: "验证码请求过于频繁" } }, 429);
+  }
+  c.header("cache-control", "no-store");
+  return c.json({ ok: true, ...(await captchaPayload(c.env)) });
+});
+
 /* --------------------------------- 登录 ---------------------------------- */
 
 clientApi.post("/login", async (c) => {
@@ -117,6 +143,28 @@ clientApi.post("/login", async (c) => {
   // 登录名就是邮箱；username 只为兼容 v1.1.1 及更早的桌面客户端
   const email = body.email ?? body.username ?? "";
   const password = body.password ?? "";
+
+  // 客户端登录固定用数字图形码：Turnstile 挂在桌面端不现实
+  const settings = await readSettings(c.env);
+  if (settings.captchaMode !== "off") {
+    const passed = await verifyCaptcha(c.env, body.captchaId ?? "", body.captcha ?? "");
+    if (!passed) {
+      await bumpFailure(c.env, ip);
+      const code = body.captcha && body.captchaId ? "captcha_invalid" : "captcha_required";
+      return c.json(
+        {
+          ok: false,
+          error: {
+            code,
+            message: code === "captcha_invalid" ? "验证码不正确或已过期，请用返回的新验证码重试" : "请先获取并输入验证码",
+          },
+          captcha: await captchaPayload(c.env),
+        },
+        401,
+      );
+    }
+  }
+
   if (!email || !password) {
     return fail(c, 400, "missing_fields", "请填写邮箱和口令");
   }

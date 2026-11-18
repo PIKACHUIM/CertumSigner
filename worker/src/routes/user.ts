@@ -20,10 +20,11 @@ import {
 } from "../store/keys";
 import { readUserLogs } from "../store/stats";
 import { constantTimeEqual } from "../lib/encoding";
-import { createCaptcha, verifyCaptcha } from "../lib/captcha";
+import { issueCaptcha, verifyCaptchaFor } from "../lib/captcha";
 import { mailConfigured, mailTemplate, sendMail, siteBase } from "../lib/mail";
 import { createEmailToken, peekEmailToken, consumeEmailToken, RESET_TTL_MS, VERIFY_TTL_MS } from "../store/email-tokens";
 import { readSettings } from "../store/settings";
+import type { CaptchaMode, SystemSettings } from "../store/settings";
 import {
   USER_COOKIE,
   createUserSession,
@@ -184,15 +185,16 @@ async function authView(c: Context<UserEnv>) {
   return {
     settings,
     context: pageContext(c),
-    captcha: settings.loginCaptcha ? await createCaptcha(c.env) : undefined,
+    captcha: await issueCaptcha(c.env, settings.captchaMode),
     canRegister: settings.registerEnabled,
     canReset: settings.resetEnabled,
   };
 }
 
-async function captchaPassed(c: Context<UserEnv>, form: Record<string, FormValue>, enabled: boolean): Promise<boolean> {
-  if (!enabled) return true;
-  return verifyCaptcha(c.env, one(form, "captchaId"), one(form, "captcha"));
+/** 注册 / 找回密码的发信验证码：开关关闭就不校验，全局方式是「关闭」时退回图形码 */
+function emailCaptchaMode(settings: SystemSettings): CaptchaMode {
+  if (!settings.emailCaptcha) return "off";
+  return settings.captchaMode === "off" ? "svg" : settings.captchaMode;
 }
 
 function passwordProblem(password: string, password2: string, t: Translate): string | null {
@@ -261,7 +263,7 @@ user.post("/user/login", async (c) => {
       userLoginPage({
         ...context,
         error,
-        captcha: settings.loginCaptcha ? await createCaptcha(c.env) : undefined,
+        captcha: await issueCaptcha(c.env, settings.captchaMode),
         canRegister: settings.registerEnabled,
         canReset: settings.resetEnabled,
       }),
@@ -274,7 +276,13 @@ user.post("/user/login", async (c) => {
   }
 
   const form = await readForm(c);
-  if (!(await captchaPassed(c, form, settings.loginCaptcha))) {
+  const captchaOk = await verifyCaptchaFor(c.env, settings.captchaMode, {
+    id: one(form, "captchaId"),
+    answer: one(form, "captcha"),
+    token: one(form, "cf-turnstile-response"),
+    ip,
+  });
+  if (!captchaOk) {
     await bumpFailure(c.env, ip);
     return loginPage(t("login.errCaptcha"), 401);
   }
@@ -326,7 +334,7 @@ user.get("/user/register", async (c) => {
     userRegisterPage({
       ...context,
       error: (await mailConfigured(c.env)) ? undefined : context.t("settings.mailMissing"),
-      captcha: settings.emailCaptcha ? await createCaptcha(c.env) : undefined,
+      captcha: await issueCaptcha(c.env, emailCaptchaMode(settings)),
     }),
   );
 });
@@ -350,34 +358,32 @@ user.post("/user/register", async (c) => {
   }
 
   const form = await readForm(c);
+  const registerCaptcha = emailCaptchaMode(settings);
   const registerPage = async (error: string) =>
     c.html(
       userRegisterPage({
         ...context,
         error,
-        captcha: settings.emailCaptcha ? await createCaptcha(c.env) : undefined,
+        captcha: await issueCaptcha(c.env, registerCaptcha),
       }),
       400,
     );
 
-  if (!(await captchaPassed(c, form, settings.emailCaptcha))) {
-    return c.html(
-      userRegisterPage({
-        ...context,
-        error: t("login.errCaptcha"),
-        captcha: await createCaptcha(c.env),
-      }),
-      400,
-    );
+  if (
+    !(await verifyCaptchaFor(c.env, registerCaptcha, {
+      id: one(form, "captchaId"),
+      answer: one(form, "captcha"),
+      token: one(form, "cf-turnstile-response"),
+      ip: c.req.header("cf-connecting-ip") ?? "unknown",
+    }))
+  ) {
+    return registerPage(t("login.errCaptcha"));
   }
 
   const password = one(form, "password");
   const problem = passwordProblem(password, one(form, "password2"), t);
   if (problem) {
-    return c.html(
-      userRegisterPage({ ...context, error: problem, captcha: settings.emailCaptcha ? await createCaptcha(c.env) : undefined }),
-      400,
-    );
+    return registerPage(problem);
   }
 
   if (!(await mailConfigured(c.env))) {
@@ -479,7 +485,7 @@ user.get("/user/reset", async (c) => {
   return c.html(
     userResetPage({
       ...context,
-      captcha: settings.emailCaptcha ? await createCaptcha(c.env) : undefined,
+      captcha: await issueCaptcha(c.env, emailCaptchaMode(settings)),
     }),
   );
 });
@@ -503,12 +509,19 @@ user.post("/user/reset", async (c) => {
   }
 
   const form = await readForm(c);
-  if (!(await captchaPassed(c, form, settings.emailCaptcha))) {
+  if (
+    !(await verifyCaptchaFor(c.env, emailCaptchaMode(settings), {
+      id: one(form, "captchaId"),
+      answer: one(form, "captcha"),
+      token: one(form, "cf-turnstile-response"),
+      ip: c.req.header("cf-connecting-ip") ?? "unknown",
+    }))
+  ) {
     return c.html(
       userResetPage({
         ...context,
         error: t("login.errCaptcha"),
-        captcha: await createCaptcha(c.env),
+        captcha: await issueCaptcha(c.env, emailCaptchaMode(settings)),
       }),
       400,
     );
@@ -673,15 +686,22 @@ secure.post("/keys/:id/toggle", async (c) => {
   return backWith(c, "/user", "ok", enabled ? tr(c)("msg.keyEnabled") : tr(c)("msg.keyDisabled"));
 });
 
-secure.post("/keys/:id/quota", async (c) => {
+secure.post("/keys/:id/update", async (c) => {
   const form = await readForm(c);
   if (!(await checkCsrf(c, form))) return c.html(`<h1>${tr(c)("msg.csrf")}</h1>`, 403);
 
   const key = await ownKey(c, c.req.param("id"));
   if (!key) return backWith(c, "/user", "error", tr(c)("msg.notFoundKey"));
   const quota = Number(one(form, "dailyQuota") || "0");
-  await updateApiKey(c.env, key.id, { dailyQuota: Number.isFinite(quota) ? quota : 0 });
-  return backWith(c, "/user", "ok", tr(c)("keys.quotaUpdated"));
+  try {
+    await updateApiKey(c.env, key.id, {
+      name: one(form, "name") || key.name,
+      dailyQuota: Number.isFinite(quota) ? quota : 0,
+    });
+    return backWith(c, "/user", "ok", tr(c)("msg.keyUpdated"));
+  } catch (error) {
+    return backWith(c, "/user", "error", localizeError(tr(c), error instanceof Error ? error.message : String(error)));
+  }
 });
 
 secure.post("/keys/:id/delete", async (c) => {

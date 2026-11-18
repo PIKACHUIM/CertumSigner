@@ -1,17 +1,35 @@
 /**
- * 图形验证码：Workers 里没有 canvas，这里直接拼一张 SVG。
- * 答案单独存 KV（5 分钟、一次性），页面上只出现图片和随机 id。
+ * 验证码：两种方式，自绘 SVG 数字图（答案存 KV）或 Cloudflare Turnstile。
+ * 选哪种由后台设置决定，Turnstile 密钥缺失时自动退回 SVG，避免把登录锁死。
  */
 import type { Env } from "../types";
+import type { CaptchaMode } from "../store/settings";
+import { readConfig } from "../store/config";
 import { randomBytes, randomToken, constantTimeEqual } from "./encoding";
 
 const PREFIX = "captcha:";
 const TTL_SECONDS = 300;
+const TURNSTILE_VERIFY = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
 
 export interface Captcha {
   id: string;
   svg: string;
 }
+
+/** 登录页要渲染的东西：要么是一张图 + 一次性 id，要么是 Turnstile 挂件 */
+export type CaptchaView =
+  | { mode: "svg"; id: string; svg: string }
+  | { mode: "turnstile"; siteKey: string };
+
+/** 校验时要用到的表单值（不同验证码方式取不同字段） */
+export interface CaptchaInput {
+  id?: string;
+  answer?: string;
+  /** Turnstile 挂件写入的 cf-turnstile-response */
+  token?: string;
+  ip?: string;
+}
+
 
 function randomInt(max: number): number {
   const bytes = randomBytes(4);
@@ -93,3 +111,53 @@ export async function captchaAllowed(env: Env, ip: string): Promise<boolean> {
   await env.CERTUM_KV.put(key, JSON.stringify(bucket), { expirationTtl: Math.floor(windowMs / 1000) });
   return bucket.count <= 60;
 }
+
+/** Turnstile 服务端校验：secret + 前端拿到的 token，一次有效 */
+async function verifyTurnstile(secret: string, token: string, ip?: string): Promise<boolean> {
+  if (!secret || !token) return false;
+  const body = new URLSearchParams({ secret, response: token });
+  if (ip && ip !== "unknown") body.set("remoteip", ip);
+  try {
+    const response = await fetch(TURNSTILE_VERIFY, { method: "POST", body });
+    if (!response.ok) return false;
+    const data = (await response.json()) as { success?: boolean } | null;
+    return data?.success === true;
+  } catch {
+    // 校验服务不可达时按失败处理：宁可让用户重试，也不放行未经验证的请求
+    return false;
+  }
+}
+
+/**
+ * 实际生效的方式：选了 Turnstile 但站点密钥 / 服务端密钥没配齐时退回图形验证码，
+ * 免得上线后把所有登录都锁死。
+ */
+export async function resolveCaptchaMode(env: Env, mode: CaptchaMode): Promise<CaptchaMode> {
+  if (mode !== "turnstile") return mode;
+  const config = await readConfig(env);
+  return config.turnstileSiteKey && config.turnstileSecretKey ? "turnstile" : "svg";
+}
+
+/** 生成登录页要用的验证码视图；off 时返回 undefined，页面不渲染该字段 */
+export async function issueCaptcha(env: Env, mode: CaptchaMode): Promise<CaptchaView | undefined> {
+  const effective = await resolveCaptchaMode(env, mode);
+  if (effective === "off") return undefined;
+  if (effective === "turnstile") {
+    const config = await readConfig(env);
+    return { mode: "turnstile", siteKey: config.turnstileSiteKey };
+  }
+  const captcha = await createCaptcha(env);
+  return { mode: "svg", id: captcha.id, svg: captcha.svg };
+}
+
+/** 统一校验入口：off 直接放行，其余按当前生效的方式校验 */
+export async function verifyCaptchaFor(env: Env, mode: CaptchaMode, input: CaptchaInput): Promise<boolean> {
+  const effective = await resolveCaptchaMode(env, mode);
+  if (effective === "off") return true;
+  if (effective === "turnstile") {
+    const config = await readConfig(env);
+    return verifyTurnstile(config.turnstileSecretKey, input.token ?? "", input.ip);
+  }
+  return verifyCaptcha(env, input.id ?? "", input.answer ?? "");
+}
+

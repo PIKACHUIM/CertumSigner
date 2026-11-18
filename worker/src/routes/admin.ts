@@ -9,7 +9,7 @@ import type { AdminSessionRecord, ApiKeyRecord, CredentialRecord, Env, UserRecor
 import { CertumError } from "../certum/errors";
 import { getCardFor, getSessionFor, peekCard, peekSession, refreshCardFor } from "../certum/session";
 import { constantTimeEqual } from "../lib/encoding";
-import { createCaptcha, verifyCaptcha } from "../lib/captcha";
+import { issueCaptcha, verifyCaptchaFor } from "../lib/captcha";
 import { mailConfigured } from "../lib/mail";
 import { ADMIN_COOKIE, createAdminSession, readAdminSession, revokeAdminSession, revokeAllAdminSessions } from "../store/admin";
 import {
@@ -22,7 +22,16 @@ import {
 } from "../store/admin-account";
 import { readSettings, writeSettings } from "../store/settings";
 import { readConfig, writeConfig } from "../store/config";
-import { createApiKey, deleteApiKey, deleteKeysOfUser, listApiKeys, listKeysOfUser, setApiKeyEnabled } from "../store/keys";
+import {
+  createApiKey,
+  deleteApiKey,
+  deleteKeysOfUser,
+  findApiKeyById,
+  listApiKeys,
+  listKeysOfUser,
+  setApiKeyEnabled,
+  updateApiKey,
+} from "../store/keys";
 import {
   createCredential,
   deleteCredential,
@@ -149,6 +158,11 @@ function backWith(c: Context<AdminEnv>, path: string, kind: "ok" | "error", mess
   return c.redirect(`${path}?${kind}=${encodeURIComponent(message)}`);
 }
 
+/** 表单里的验证码方式：只接受三个合法值，其他一律当关闭 */
+function captchaModeOf(raw: string): "off" | "svg" | "turnstile" {
+  return raw === "svg" || raw === "turnstile" ? raw : "off";
+}
+
 async function credentialStatuses(env: Env, credentials: CredentialRecord[]): Promise<Record<string, CredentialStatus>> {
   const out: Record<string, CredentialStatus> = {};
   for (const cred of credentials) {
@@ -254,7 +268,7 @@ admin.get("/admin/login", async (c) => {
       t: context.t,
       self: context.self,
       useUsername: state.mode === "account",
-      captcha: settings.loginCaptcha ? await createCaptcha(c.env) : undefined,
+      captcha: await issueCaptcha(c.env, settings.captchaMode),
     }),
   );
 });
@@ -276,7 +290,7 @@ admin.post("/admin/login", async (c) => {
         error,
         username,
         useUsername: state.mode === "account",
-        captcha: settings.loginCaptcha ? await createCaptcha(c.env) : undefined,
+        captcha: await issueCaptcha(c.env, settings.captchaMode),
       }),
       status,
     );
@@ -287,7 +301,13 @@ admin.post("/admin/login", async (c) => {
   }
 
   const form = await readForm(c);
-  if (settings.loginCaptcha && !(await verifyCaptcha(c.env, one(form, "captchaId"), one(form, "captcha")))) {
+  const captchaOk = await verifyCaptchaFor(c.env, settings.captchaMode, {
+    id: one(form, "captchaId"),
+    answer: one(form, "captcha"),
+    token: one(form, "cf-turnstile-response"),
+    ip,
+  });
+  if (!captchaOk) {
     await bumpLoginFailure(c.env, "admin", ip);
     return loginPage(t("login.errCaptcha"), 401, one(form, "username"));
   }
@@ -334,6 +354,10 @@ secure.use("*", async (c, next) => {
 });
 
 secure.get("/", async (c) => {
+  // 新建 Key 的明文只在密钥列表里展示一次，概览页不重复消费这条记录
+  const revealId = new URL(c.req.url).searchParams.get("reveal");
+  if (revealId) return c.redirect(`/admin/keys?reveal=${encodeURIComponent(revealId)}`);
+
   const [users, credentials, keys, stats, logs] = await Promise.all([
     listUsers(c.env),
     listCredentials(c.env),
@@ -342,9 +366,7 @@ secure.get("/", async (c) => {
     readRecentLogs(c.env, 20),
   ]);
   const messages = queryMessages(c);
-  const revealedKey = await consumeReveal(c);
   const ctx = pageContext(c);
-  const { t } = ctx;
 
   return c.html(
     adminDashboardPage({
@@ -359,7 +381,6 @@ secure.get("/", async (c) => {
       logs,
       userName: new Map(users.map((user) => [user.id, user.email])),
       credName: new Map(credentials.map((cred) => [cred.id, cred.label])),
-      ...(revealedKey ? { notice: t("msg.newKey", { key: revealedKey.plaintext }) } : {}),
     }),
   );
 });
@@ -652,6 +673,43 @@ secure.post("/keys/:id/toggle", async (c) => {
   return backWith(c, "/admin/keys", ok ? "ok" : "error", ok ? (enabled ? tr(c)("msg.keyEnabled") : tr(c)("msg.keyDisabled")) : tr(c)("msg.notFoundKey"));
 });
 
+/** 编辑 Key：名称、限额、归属用户、绑定凭据；Key 明文不可改，只能换发 */
+secure.post("/keys/:id/update", async (c) => {
+  const form = await readForm(c);
+  if (!(await checkCsrf(c, form))) return csrfFail(c);
+
+  const id = c.req.param("id");
+  const key = await findApiKeyById(c.env, id);
+  if (!key) return backWith(c, "/admin/keys", "error", tr(c)("msg.notFoundKey"));
+
+  // 从用户详情页提交的表单回到用户详情页
+  const backTo = one(form, "backTo");
+  const backPath = /^\/admin\/users\/[A-Za-z0-9_-]+$/.test(backTo) ? backTo : "/admin/keys";
+
+  try {
+    const credentialId = one(form, "credentialId") || key.credentialId;
+    if (!(await getCredential(c.env, credentialId))) throw new Error(tr(c)("msg.notFoundCred"));
+
+    const userId = one(form, "userId") || null;
+    if (userId) {
+      const owner = await getUser(c.env, userId);
+      if (!owner) throw new Error(tr(c)("msg.notFoundUser"));
+      if (!owner.credentialIds.includes(credentialId)) throw new Error(tr(c)("msg.ownerNoCred"));
+    }
+
+    const quota = Number(one(form, "dailyQuota") || "0");
+    const ok = await updateApiKey(c.env, id, {
+      name: one(form, "name") || key.name,
+      dailyQuota: Number.isFinite(quota) ? quota : 0,
+      userId,
+      credentialId,
+    });
+    return backWith(c, backPath, ok ? "ok" : "error", ok ? tr(c)("msg.keyUpdated") : tr(c)("msg.notFoundKey"));
+  } catch (error) {
+    return backWith(c, backPath, "error", localizeError(tr(c), error instanceof Error ? error.message : String(error)));
+  }
+});
+
 secure.post("/keys/:id/delete", async (c) => {
   const form = await readForm(c);
   if (!(await checkCsrf(c, form))) return csrfFail(c);
@@ -674,8 +732,9 @@ secure.get("/settings", async (c) => {
       csrf: c.get("adminSession").csrf,
       settings,
       // 密钥不回传给浏览器，页面只显示「已配置/未配置」
-      config: { ...config, resendApiKey: "" },
+      config: { ...config, resendApiKey: "", turnstileSecretKey: "" },
       hasResendApiKey: !!config.resendApiKey,
+      hasTurnstileSecret: !!config.turnstileSecretKey,
       mailReady: (await mailConfigured(c.env)),
       adminUsername: state.account?.username,
     }),
@@ -704,7 +763,7 @@ secure.post("/settings", async (c) => {
   if (certumChainPem && !certumChainPem.includes("BEGIN CERTIFICATE")) return fail(tr(c)("settings.badPem"));
 
   await writeSettings(c.env, {
-    loginCaptcha: on("loginCaptcha"),
+    captchaMode: captchaModeOf(one(form, "captchaMode")),
     registerEnabled: on("registerEnabled"),
     resetEnabled: on("resetEnabled"),
     emailCaptcha: on("emailCaptcha"),
@@ -714,12 +773,18 @@ secure.post("/settings", async (c) => {
     certumApiBase,
     tsaUpstream,
     resendFrom: one(form, "resendFrom"),
+    turnstileSiteKey: one(form, "turnstileSiteKey"),
     certumChainPem,
     logSignatures: on("logSignatures"),
     ...(on("clearResendApiKey")
       ? { resendApiKey: "" }
       : one(form, "resendApiKey").trim()
         ? { resendApiKey: one(form, "resendApiKey").trim() }
+        : {}),
+    ...(on("clearTurnstileSecret")
+      ? { turnstileSecretKey: "" }
+      : one(form, "turnstileSecretKey").trim()
+        ? { turnstileSecretKey: one(form, "turnstileSecretKey").trim() }
         : {}),
   });
   return backWith(c, "/admin/settings", "ok", tr(c)("settings.saved"));

@@ -20,6 +20,10 @@ export interface RuntimeConfig {
   resendApiKey: string;
   /** 发件人，例如 "CertumSigner <noreply@example.com>" */
   resendFrom: string;
+  /** Turnstile 站点密钥（公开，渲染到登录页） */
+  turnstileSiteKey: string;
+  /** Turnstile 服务端密钥（不回传浏览器） */
+  turnstileSecretKey: string;
   /** /v1/timestamp 转发的 RFC3161 服务 */
   tsaUpstream: string;
   /** 是否记录签名明细日志（关掉只留统计） */
@@ -42,6 +46,8 @@ export async function readConfig(env: Env): Promise<RuntimeConfig> {
     certumChainPem: text(stored.certumChainPem),
     resendApiKey: text(stored.resendApiKey),
     resendFrom: text(stored.resendFrom),
+    turnstileSiteKey: text(stored.turnstileSiteKey),
+    turnstileSecretKey: text(stored.turnstileSecretKey),
     tsaUpstream: (text(stored.tsaUpstream) || DEFAULT_TSA_UPSTREAM).replace(/\/+$/, ""),
     logSignatures: typeof stored.logSignatures === "boolean" ? stored.logSignatures : true,
     updatedAt: stored.updatedAt,
@@ -53,7 +59,16 @@ export async function writeConfig(env: Env, patch: Partial<Omit<RuntimeConfig, "
   const stored = (await env.CERTUM_KV.get<StoredConfig>(CONFIG_KEY, "json")) ?? {};
   const next: StoredConfig = { ...stored, ...patch, updatedAt: Date.now() };
   // 空值不必落盘，交给默认值兜底
-  for (const key of ["publicBaseUrl", "certumApiBase", "certumChainPem", "resendApiKey", "resendFrom", "tsaUpstream"] as const) {
+  for (const key of [
+    "publicBaseUrl",
+    "certumApiBase",
+    "certumChainPem",
+    "resendApiKey",
+    "resendFrom",
+    "turnstileSiteKey",
+    "turnstileSecretKey",
+    "tsaUpstream",
+  ] as const) {
     if (typeof next[key] === "string" && !next[key]!.trim()) delete next[key];
   }
   await env.CERTUM_KV.put(CONFIG_KEY, JSON.stringify(next));

@@ -119,11 +119,11 @@ export async function setApiKeyEnabled(env: Env, id: string, enabled: boolean): 
   return true;
 }
 
-/** 用户自助改名称 / 每日限额（0 = 不限） */
+/** 改名称 / 每日限额（0 = 不限） / 归属 / 绑定凭据；不传的字段保持不变 */
 export async function updateApiKey(
   env: Env,
   id: string,
-  patch: { name?: string; dailyQuota?: number },
+  patch: { name?: string; dailyQuota?: number; userId?: string | null; credentialId?: string },
 ): Promise<boolean> {
   const record = await findApiKeyById(env, id);
   if (!record) return false;
@@ -134,6 +134,9 @@ export async function updateApiKey(
     record.name = name;
   }
   if (patch.dailyQuota !== undefined) record.dailyQuota = Math.max(0, Math.floor(patch.dailyQuota));
+  // null 表示收回归属，变回平台密钥
+  if (patch.userId !== undefined) record.userId = patch.userId || undefined;
+  if (patch.credentialId !== undefined) record.credentialId = patch.credentialId;
   await saveApiKey(env, record);
   return true;
 }

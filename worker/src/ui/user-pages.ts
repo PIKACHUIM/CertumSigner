@@ -12,6 +12,7 @@ import {
   loginShell,
   navIcon,
   pill,
+  revealBanner,
   shell,
   statCard,
   type CaptchaView,
@@ -401,8 +402,8 @@ export function userDashboardPage(data: UserPageData): string {
         <td class="small hide-xs">${key.totalSigns}</td>
         <td class="small muted">${key.lastUsedAt ? fmtTime(key.lastUsedAt) : escapeHtml(t("common.never"))}</td>
         <td><div class="row">
-          <button class="btn btn--sm btn--ghost" type="button" data-open="quota-${escapeHtml(key.id)}">${escapeHtml(
-            t("keys.editQuota"),
+          <button class="btn btn--sm btn--ghost" type="button" data-open="keyedit-${escapeHtml(key.id)}">${escapeHtml(
+            t("keys.edit"),
           )}</button>
           <form class="inline" method="post" action="/user/keys/${escapeHtml(key.id)}/toggle">
             <input type="hidden" name="csrf" value="${escapeHtml(data.csrf)}">
@@ -461,18 +462,27 @@ export function userDashboardPage(data: UserPageData): string {
     </div>`,
   });
 
-  const quotaDialogs = data.keys
+  const editDialogs = data.keys
     .map((key) =>
       formModal({
-        id: `quota-${key.id}`,
-        title: t("keys.editQuotaTitle"),
-        hint: key.name,
-        action: `/user/keys/${key.id}/quota`,
+        id: `keyedit-${key.id}`,
+        title: t("keys.editTitle"),
+        hint: t("keys.editHint"),
+        action: `/user/keys/${key.id}/update`,
         csrf: data.csrf,
         submit: t("common.save"),
         cancel: t("common.cancel"),
-        body: `<label class="field">${escapeHtml(t("keys.quota"))}
-          <input type="number" name="dailyQuota" min="0" value="${key.dailyQuota}"></label>`,
+        body: `<div class="form-grid">
+          <label class="field wide">${escapeHtml(t("keys.prefix"))}
+            <input type="text" value="${escapeHtml(key.prefix)}…" readonly>
+          </label>
+          <label class="field wide">${escapeHtml(t("keys.name"))}
+            <input type="text" name="name" value="${escapeHtml(key.name)}" maxlength="64" required>
+          </label>
+          <label class="field wide">${escapeHtml(t("keys.quota"))}
+            <input type="number" name="dailyQuota" min="0" value="${key.dailyQuota}">
+          </label>
+        </div>`,
       }),
     )
     .join("");
@@ -486,13 +496,7 @@ export function userDashboardPage(data: UserPageData): string {
     t("me.title"),
     t("me.subtitle"),
     data,
-    `${
-      data.revealedKey
-        ? `<div class="reveal">${escapeHtml(t("keys.reveal"))}<div style="margin-top:8px"><code>${escapeHtml(
-            data.revealedKey,
-          )}</code></div></div>`
-        : ""
-    }
+    `${data.revealedKey ? revealBanner(data.revealedKey, t) : ""}
     <div class="grid cols-4" style="margin-bottom:16px">
       ${statCard(t("me.todaySigns"), todaySigns, t("me.todayHint"))}
       ${statCard(t("me.totalSigns"), totalSigns, t("me.totalHint"))}
@@ -538,7 +542,7 @@ export function userDashboardPage(data: UserPageData): string {
       </div>
     </div>
     ${dialog}
-    ${quotaDialogs}
+    ${editDialogs}
     ${recent.map((log) => logDetailDialog(log, t)).join("")}`,
   );
 }

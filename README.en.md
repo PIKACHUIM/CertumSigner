@@ -69,10 +69,11 @@ Then open `https://<your-domain>/`:
 3. **Users → New user**: enter the email (it *is* the login name) and a password (PBKDF2-SHA256), plus
    an optional expiry, a user-level daily quota and the certificates this user may sign with. Emails are
    unique globally; there is no separate username field.
-4. **Settings → Services and addresses**: set the base URL used in email links (for example
-   `https://sign.example.com`), Certum API base, TSA upstream, sender, intermediate PEM and whether to
-   keep per-request logs. Values live in KV and apply immediately — no `wrangler.jsonc` edit or redeploy.
-   The lower cards toggle the captcha, self-registration, password reset and email captcha.
+4. **Settings**: the left card (**Self-service accounts**) picks the sign-in captcha (off / 4-digit image /
+   Cloudflare Turnstile with its site and secret keys) and toggles self-registration and password reset;
+   the right card (**Email delivery**) holds the base URL used in email links, the sender, the Resend key
+   and the email-captcha switch; **Services and addresses** below has the Certum API base, TSA upstream,
+   intermediate PEM and log switch. Values live in KV and apply immediately — no redeploy needed.
 5. Users sign in at `/user/login` to create their own keys; admins can also create keys from **Keys**.
 
 ## Features
@@ -81,21 +82,24 @@ Then open `https://<your-domain>/`:
   Several accounts/cards can live side by side, each with its own cached login session and card info.
 - **Admin console** (`/admin`): overview metrics, 7-day chart, recent signatures with a detail dialog,
   user/credential/key management (create, edit, enable, disable, delete), forced re-login,
-  certificate refresh, and a **Settings** page for service addresses plus the sign-in captcha,
-  self-registration, password reset and email captcha.
+  certificate refresh, key editing (name, quota, owner, certificate — dialogs only ever show the prefix),
+  and a **Settings** page split into self-service accounts, email delivery and service addresses.
 - **Home page** (`/`): feature overview plus Windows / Linux × x64 / arm64 × GUI / CLI downloads,
   built by GitHub Actions and published to the latest release.
 - **User portal** (`/user`): log in with email + password, create a key from the certificates the admin
-  assigned to you (the secret is shown once, for 5 minutes), adjust each key's daily limit, disable or
-  delete it later, and inspect your own call history.
+  assigned to you (the secret is shown once, for 5 minutes, and stays masked to its prefix until you
+  click "Show full key"), rename or re-limit each key, disable or delete it later, and inspect your own
+  call history.
 - **Quotas**: per-key and per-user daily limits apply together (0 = unlimited). Users can change their
   own key limits; admins can change the account-wide limit. `/v1/sign` rejects over-quota calls with
   `429 quota_exceeded` before contacting the cloud.
 - **Registration / password reset** (off by default): can be enabled in Settings. Registration requires
   email verification before sign-in; reset links are sent through Resend and are valid for one hour.
   Both flows can additionally require a captcha.
-- **Sign-in captcha**: a server-rendered, single-use SVG captcha (5-minute TTL) shared by user and
-  admin sign-in, controlled by a Settings toggle.
+- **Sign-in captcha**: off, a server-rendered single-use image captcha of 4 digits (5-minute TTL), or
+  Cloudflare Turnstile (falls back to the image captcha when its keys are missing). User, admin and
+  desktop-client sign-in share this switch; the image and its input sit on one line, and clicking the
+  image (or ↻) issues a new code.
 - **UI preferences**: language (中文 / English), light/dark (system/dark/light) and four accent themes,
   picked from the browser on first visit and remembered in cookies (`cs_lang` / `cs_mode` / `cs_theme`)
   for a year. Server rendered, native `<dialog>` modals, no frontend build step.
@@ -201,7 +205,8 @@ Errors are `{"ok":false,"error":{"code":"...","message":"..."}}` with codes such
 
 | Endpoint | Purpose |
 | --- | --- |
-| `POST /api/client/login` | email + password → session token, plus the available keys and certificates; the body also accepts the legacy `username` field |
+| `POST /api/client/login` | email + password → session token, plus the available keys and certificates; the body also accepts the legacy `username` field; when the sign-in captcha is on, send `captchaId` + `captcha` (always the numeric image captcha) |
+| `GET /api/client/captcha` | fetch a 4-digit image captcha (`id` + `svg` + `dataUrl`); call it before signing in when the captcha is on |
 | `GET /api/client/session` | validate the token |
 | `POST /api/client/logout` | revoke the token |
 | `GET /api/client/keys` | list keys of the account |
@@ -264,7 +269,8 @@ Only one optional secret remains; everything else lives under **Settings → Ser
 | Resend API key, sender | Settings → Services and addresses | registration/reset stay disabled without them |
 
 Runtime settings editable in the console: base URL, Certum API base, TSA upstream, Resend API key and
-sender, intermediate PEM, per-request logging. The captcha toggles (sign-in / email) live there too. `wrangler.jsonc` has no `vars`; the Certum email and TOTP seed come
+sender, intermediate PEM, per-request logging and the Turnstile keys. The captcha mode and the email
+captcha switch live there too. `wrangler.jsonc` has no `vars`; the Certum email and TOTP seed come
 from the KV credential records.
 
 At runtime the Certum email and TOTP seed come from the KV credential; no `CERTUM_*` env var is read.
