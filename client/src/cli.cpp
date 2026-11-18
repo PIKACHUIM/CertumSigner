@@ -224,7 +224,7 @@ int run_config(const ParsedArgs &args) {
 
     std::cout << "服务地址: " << settings.server << "\n";
     std::cout << "API Key : " << (settings.api_key.empty() ? "(未设置)" : settings.api_key.substr(0, 12) + "…") << "\n";
-    std::cout << "时间戳  : " << (settings.tsa_url.empty() ? "http://time.certum.pl/（默认）" : settings.tsa_url) << "\n";
+    std::cout << "时间戳  : " << effective_tsa(settings) << "（" << settings.tsa_name << "）" << "\n";
     return 0;
 }
 
@@ -384,12 +384,8 @@ int run_sign(const ParsedArgs &args) {
     signer.options.algorithm = args.sha1 ? "sha1" : "sha256";
     signer.options.timestamp = !args.no_timestamp;
     signer.options.backup = args.backup;
-    // 优先级：命令行 --tsa > 配置文件 tsa_url > 内置默认
-    if (!args.tsa_url.empty()) {
-        signer.options.tsa_url = args.tsa_url;
-    } else if (!settings.tsa_url.empty()) {
-        signer.options.tsa_url = settings.tsa_url;
-    }
+    // 优先级：命令行 --tsa > 配置文件 tsa_url > 内置时间戳服务（默认 DigiCert）
+    signer.options.tsa_url = args.tsa_url.empty() ? effective_tsa(settings) : args.tsa_url;
     signer.log = [&args](const std::string &message) {
         if (!args.quiet) std::cout << "  " << message << "\n";
     };
@@ -422,6 +418,14 @@ int run_sign(const ParsedArgs &args) {
 
 int cli_main(int argc, char **argv) {
     if (argc <= 1 && gui_available()) return gui_main(argc, argv);
+
+    // 桌面场景：把文件拖到 exe 上或“打开方式”时，第一个参数就是路径，直接进 GUI 排队
+    if (gui_available() && argc > 1) {
+        const std::string first = argv[1] ? argv[1] : "";
+        if (!first.empty() && first[0] != '-' && (file_exists(first) || is_directory(first))) {
+            return gui_main(argc, argv);
+        }
+    }
 
     ParsedArgs args;
     std::string err;

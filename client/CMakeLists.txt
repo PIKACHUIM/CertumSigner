@@ -1,5 +1,11 @@
 cmake_minimum_required(VERSION 3.16)
-project(CertumSigner VERSION 1.0.0 LANGUAGES CXX)
+project(CertumSigner
+    VERSION 1.0.0
+    DESCRIPTION "Cloud code signing client for Certum SimplySign via Cloudflare Workers"
+    HOMEPAGE_URL "https://github.com/PIKACHUIM/CertumSigner"
+    LANGUAGES CXX
+)
+# License: AGPL-3.0-only — see ../LICENSE
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

@@ -64,6 +64,25 @@ sudo cmake --install build
 
 ## 使用
 
+### 0. 图形界面（Windows / Linux）
+
+双击 `certumsigner.exe`（等价于 `certumsigner --gui`）打开图形界面，第一次用走三步：
+
+1. **登录**：填平台地址（你的 Worker 域名，例如 `https://certum.example.workers.dev`）、
+   用户名、口令；口令框里按回车也能提交。
+2. **选择 API Key**：列出账号下的 Key（带每日额度）。选已有 Key 会**换发新明文**、
+   旧值立即失效（点之前会先确认）；也可以填名称 + 选证书直接新建一把。
+3. **签名**：拖文件进窗口或点上传，队列里逐条可删，`开始签名` 批量跑，
+   每行显示等待 / 签名中 / 成功 / 失败，签完点 `验证签名` 调 `WinVerifyTrust`。
+
+登录后的 Key 与偏好写进配置文件，下次启动直接进签名页；Key 失效会自动退回登录页。
+把文件拖到 `certumsigner.exe` 图标上、或用「打开方式」选它，文件会直接进队列。
+
+**设置页**：平台地址、API Key（可显示/隐藏）、SHA-256/SHA-1、是否加时间戳 +
+内置 TSA 下拉（DigiCert / Symantec / GeoTrust / Comodo / WoSign / GlobalSign / Entrust /
+GoDaddy / Certum，默认 DigiCert）、是否备份原文件、语言（中文 / English / 跟随系统）、
+主题（跟随系统 / 暗色 / 亮色）、软件许可、项目地址、重新登录。
+
 ### 1. 配置（只做一次）
 
 ```bash
@@ -76,6 +95,20 @@ certumsigner config --server https://sign.example.com --api-key csk_xxxxxxxx
 - Linux：`$XDG_CONFIG_HOME/certumsigner/config.json` 或 `~/.config/certumsigner/config.json`
 
 环境变量 `CERTUM_SIGNER_SERVER` / `CERTUM_SIGNER_API_KEY` 优先级更高，适合 CI。
+
+配置文件字段（GUI 和 CLI 共用一份）：
+
+| 字段 | 说明 |
+| --- | --- |
+| `server` / `api_key` | 平台地址与 API Key |
+| `username` / `key_name` | 上次登录的账号与 Key 名，只用于界面显示 |
+| `algorithm` | `sha256`（默认）或 `sha1` |
+| `timestamp` | 是否加 RFC3161 时间戳，默认 `true` |
+| `tsa_name` | 内置 TSA 名字，默认 `DigiCert` |
+| `tsa_url` | 自定义 TSA 地址，非空时优先于 `tsa_name`（也支持 `worker` / `auto`） |
+| `backup` | 是否留一份 `.orig` 备份，默认 `false` |
+| `lang` | `zh` / `en`；空 = 跟随系统 |
+| `theme` | `auto` / `dark` / `light` |
 
 ### 2. 签名
 
@@ -106,7 +139,8 @@ certumsigner sign app.exe --tsa worker                    # 强制走 Worker 的
 
 直连 TSA 失败时（企业网安全软件常返回 403「检测到风险软件的网络连接」），客户端会**自动**
 改走 Worker 的 `/v1/timestamp` 再试一次，日志里会写明切换原因；只有两条路都失败才降级成
-不带时间戳的签名。TSA 地址的优先级是：`--tsa` > 配置文件 `tsa_url` > `CERTUM_SIGNER_TSA` > 内置默认。
+不带时间戳的签名。TSA 地址的优先级是：`--tsa` > `CERTUM_SIGNER_TSA` > 配置文件 `tsa_url` >
+内置 `tsa_name`（默认 DigiCert）。
 
 ### 3. 校验与排查
 
@@ -116,14 +150,17 @@ certumsigner verify app.exe        # Windows：WinVerifyTrust；Linux 提示用 
 certumsigner --gui                 # 打开图形界面
 ```
 
-GUI 是自绘的深色界面（Win32 手写绘制，不依赖任何 UI 框架）：
+GUI 是自绘的 Win32 界面（手写绘制，不依赖任何 UI 框架），侧边栏两页（签名 / 设置），
+登录与选 Key 各占一页：
 
-- 顶部品牌条 + 右侧状态胶囊（就绪/进行中/完成/失败），签名时有一条流动进度条。
-- 「连接」卡片填 Worker 地址和 API Key，会写到上面的配置文件；Key 用圆点遮挡显示。
-- 「目标文件」卡片可以点 `浏览…`，也可以直接把 `.exe / .dll` **拖进窗口**。
-- 「签名选项」是分段按钮 + 复选框：SHA-256 / SHA-1、添加时间戳、备份原文件。
-- `开始签名` 走后台线程（界面不卡），`验证签名` 直接调 `WinVerifyTrust` 显示结果。
-- 底部日志面板带等宽字体记录每一步；窗口按显示器 DPI 缩放（125% / 150% 下布局一致）。
+- 侧边栏带 logo、导航、底部语言（中文 / EN）与主题按钮；账号名显示在左下角。
+- 登录页是居中卡片，平台地址 / 用户名 / 口令三个输入框，错误提示在按钮上方。
+- 选 Key 页用自绘列表（名称 + 前缀 + 每日额度），下面是新建区（名称 + 证书下拉）。
+- 签名页：虚线拖拽区、队列（自绘状态胶囊 + × 删除）、`开始签名` / `验证签名`、
+  等宽字体的日志面板；签名走后台线程，界面不卡。
+- 设置页用卡片分区（连接 / 签名选项 / 界面 / 关于），改完立即落盘。
+- 全部文案内置中英两套，主题有明暗两套（`auto` 读系统的 `AppsUseLightTheme`），
+  窗口按显示器 DPI 缩放（125% / 150% 下布局一致）。
 
 ### 中文路径 / 含空格路径
 
@@ -209,3 +246,19 @@ GUI 是自绘的深色界面（Win32 手写绘制，不依赖任何 UI 框架）
 
 注意：本机装了腾讯 iOA，未签名的 `certumsigner.exe` 直连 `time.certum.pl` 会被拦（HTTP 403，
 响应体提示“检测到风险软件的网络连接”），与签名逻辑无关；把 exe 加白名单或改用可访问的时间戳源即可。
+
+新版 GUI 的实测记录（同一台机器，`wrangler dev` 本地 Worker）：
+
+| 项 | 结果 |
+| --- | --- |
+| 登录 | 正确口令进入选 Key 页；错口令/缺字段显示错误提示；口令框回车可提交 |
+| 选 Key | 列表显示 `alice-cli` 与每日额度；换发前弹确认框，换发后弹窗显示新明文并落盘 |
+| 批量签名 | 命令行带 3 个文件参数启动，队列 3 条，全部 `成功`，日志含 DigiCert 时间戳 |
+| 验证 | `WinVerifyTrust` 返回 `签名有效`，日志列出文件名 |
+| 设置页 | SHA-256/SHA-1、TSA 下拉（默认 DigiCert）、备份开关、语言、主题切换均即时生效并写盘 |
+| 界面 | 明/暗 × 中/英 逐屏截图核对，125% 缩放下无裁切、无控件重叠 |
+| 重新登录 | 清空本地 Key、回到登录页，配置文件里 `api_key` 变空 |
+
+## 许可
+
+[GNU Affero General Public License v3.0](../LICENSE)（AGPL-3.0）。
