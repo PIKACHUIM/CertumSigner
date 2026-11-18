@@ -55,8 +55,10 @@ docs/          Certum 云签名协议逆向记录
 | 名称 | 说明 |
 | --- | --- |
 | `RESEND_API_KEY` | secret，Resend 的 API Key |
-| `RESEND_FROM` | var，已验证的发件人，例如 `CertumSigner <noreply@example.com>` |
-| `PUBLIC_BASE_URL` | var，可选，邮件链接里的站点地址；留空按请求推导 |
+| 发件人 | 在后台「系统设置 → 服务与地址」填，例如 `CertumSigner <noreply@example.com>` |
+
+自定义域名在 `worker/wrangler.jsonc` 的 `routes` 里改（本仓库写的是 `sign.example.com`），
+部署后把同一个地址填进「系统设置 → 基础地址」，邮件里的链接就会用它。
 
 部署完成后打开 `https://<你的域名>/`：
 
@@ -65,7 +67,9 @@ docs/          Certum 云签名协议逆向记录
    （`otpauth://` URI 或裸 Base32），需要选卡片时再填证书 SHA-1；保存后点「登录测试」。
 3. **用户** → 新建用户：设口令（PBKDF2-SHA256）、有效期（留空 = 永久）、用户级每日限额、
    可选的邮箱与可用凭据。
-4. **系统设置** → 按需开启登录图形验证码、自助注册、找回密码、发信验证码。
+4. **系统设置**：先在「服务与地址」填基础地址（邮件链接用，例如 `https://sign.example.com`）、
+   Certum API、TSA、发件人、中间证书 PEM、是否记录签名明细；下面再按需开启登录图形验证码、
+   自助注册、找回密码、发信验证码。这些值存在 KV，保存即生效，不必改 `wrangler.jsonc` 或重部署。
 5. 用户访问 `/user/login` 登录后自己建 Key；管理员也可以在 **Key** 页面替用户建。
 
 ## 能做什么
@@ -253,21 +257,18 @@ npx wrangler secret put RESEND_API_KEY   # 可选，开启注册/找回密码时
 
 ## 环境变量
 
+只保留跑起来必须的两个 secret，其余都在后台「系统设置 → 服务与地址」里配（存 KV）：
+
 | 名称 | 类型 | 说明 |
 | --- | --- | --- |
-| `ADMIN_PASSWORD` | secret | 可选，旧版 `/admin` 登录口令；有 KV 管理员账号时忽略 |
-| `SESSION_SECRET` | secret | 可选，cookie 的 HMAC 密钥；缺省用初始化时生成的 KV 密钥 |
-| `CERTUM_EMAIL` | var | 仅用于「从环境变量导入」凭据 |
-| `CERTUM_OTP_URI` | secret | 同上，`otpauth://` URI（优先） |
-| `CERTUM_OTP_SECRET` | secret | 同上，不给 URI 时直接给 Base32 种子 |
-| `CERTUM_CERTIFICATE_SHA1` | var | 同上，导入时写入凭据的证书指纹 |
-| `CERTUM_API_BASE` | var | 默认 `https://cloudsign.webnotarius.pl` |
-| `CERTUM_CHAIN_PEM` | var | 可选，中间证书 PEM（多张用换行分隔），随证书一起返回给客户端 |
-| `LOG_SIGNATURES` | var | 设 `0` 关闭签名明细日志（只留统计） |
-| `TSA_UPSTREAM` | var | `/v1/timestamp` 转发的 RFC3161 服务，默认 `http://time.certum.pl/` |
+| `SESSION_SECRET` | secret | 可选，会话 cookie 的 HMAC 密钥；不设则用初始化时生成并存 KV 的随机值 |
 | `RESEND_API_KEY` | secret | 可选，Resend 发信 Key；不填则注册 / 找回密码不可用 |
-| `RESEND_FROM` | var | 可选，Resend 发件人（必须是 Resend 已验证的域名） |
-| `PUBLIC_BASE_URL` | var | 可选，邮件链接使用的站点地址；留空按请求 `Origin` 推导 |
+| `ADMIN_PASSWORD` | secret | 可选，旧版 `/admin` 登录口令；有 KV 管理员账号时忽略 |
+| `CERTUM_EMAIL` / `CERTUM_OTP_URI` / `CERTUM_OTP_SECRET` / `CERTUM_CERTIFICATE_SHA1` | var / secret | 可选，仅「从环境变量导入」凭据时用 |
+
+后台可改的运行时配置：基础地址、Certum API 根地址、TSA 上游、Resend 发件人、中间证书 PEM、
+签名明细日志开关。对应的环境变量（`PUBLIC_BASE_URL`、`CERTUM_API_BASE`、`TSA_UPSTREAM`、
+`RESEND_FROM`、`CERTUM_CHAIN_PEM`、`LOG_SIGNATURES`）仍作为回退保留，新部署不需要设置。
 
 正常运行时登录用的邮箱和种子来自 KV 里的凭据，`CERTUM_*` 不再是必需品。
 
@@ -301,8 +302,9 @@ npx wrangler secret put RESEND_API_KEY   # 可选，开启注册/找回密码时
 
 ## 验证状态
 
-- Worker：`npx tsc --noEmit` 通过；`npm test` 28 项通过（TOTP 命中 RFC 6238 向量、
-  multipart 解析、编码/哈希、KV 存储与口令哈希、管理员账号初始化/改口令）。
+- Worker：`npx tsc --noEmit` 通过；`npm test` 33 项通过（TOTP 命中 RFC 6238 向量、
+  multipart 解析、编码/哈希、KV 存储与口令哈希、管理员账号初始化/改口令、运行时配置的默认值/
+  环境变量回退/KV 覆盖）。
 - 新增功能实测（`wrangler dev`，2026-11）：主页下载区、双栏登录页与图形验证码
   （错误验证码 401 且换图、刷新按钮换 id、口令显示/隐藏）、系统设置开关持久化、
   注册在未配置 Resend 时给出明确错误、邮箱验证令牌（未验证登录 401 → 验证后登录 302）、
@@ -327,6 +329,9 @@ npx wrangler secret put RESEND_API_KEY   # 可选，开启注册/找回密码时
   设置页改口令（当前口令错 / 新口令过短 / 两次不一致 / 成功）逐项验证，改完旧口令 401、新口令 302，
   其他浏览器上的旧会话被注销（302 回登录页），当前浏览器拿到新 cookie 继续可用；
   旧版只有 `ADMIN_PASSWORD` 时登录页不显示用户名框、设置页显示「环境变量」并隐藏改口令表单。
+- 运行时可配置（2026-11，`wrangler dev`）：系统设置「服务与地址」保存基础地址 / Certum API / TSA /
+  发件人 / PEM / 日志开关后回显正确（尾部斜杠被归一化、发件人转义正常），`ftp://` 之类地址与不是 PEM 的
+  证书链分别被拒绝并回到设置页提示；清空字段即回落到默认值或环境变量。
 - 界面逐项实测：四套主题 × 明暗切换、`/prefs` 写 cookie 后 302 回原页、中英文切换
   （含登录失败、CSRF、表单校验等提示）、新建/编辑弹窗、记录详情弹窗、
   900px 与手机宽度下侧边栏不换行错位、页面无横向滚动。

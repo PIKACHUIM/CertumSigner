@@ -56,8 +56,10 @@ For registration / password reset, also configure email (optional; both toggles 
 | Name | Purpose |
 | --- | --- |
 | `RESEND_API_KEY` | secret, Resend API key |
-| `RESEND_FROM` | var, a verified sender such as `CertumSigner <noreply@example.com>` |
-| `PUBLIC_BASE_URL` | var, optional base URL for links in emails; derived from the request when empty |
+| Sender | set under Settings → Services and addresses, e.g. `CertumSigner <noreply@example.com>` |
+
+The custom domain is configured in `routes` in `worker/wrangler.jsonc` (this repo uses
+`sign.example.com`); put the same address into Settings → Base URL so email links use it.
 
 Then open `https://<your-domain>/`:
 
@@ -67,7 +69,10 @@ Then open `https://<your-domain>/`:
    email/password pair can obtain a token.
 3. **Users → New user**: set a password (PBKDF2-SHA256), an optional expiry, a user-level daily quota,
    an optional email and the certificates this user may sign with.
-4. **Settings**: enable the sign-in captcha, self-registration, password reset and the email captcha.
+4. **Settings → Services and addresses**: set the base URL used in email links (for example
+   `https://sign.example.com`), Certum API base, TSA upstream, sender, intermediate PEM and whether to
+   keep per-request logs. Values live in KV and apply immediately — no `wrangler.jsonc` edit or redeploy.
+   The lower cards toggle the captcha, self-registration, password reset and email captcha.
 5. Users sign in at `/user/login` to create their own keys; admins can also create keys from **Keys**.
 
 ## Features
@@ -251,21 +256,19 @@ links straight to those files.
 
 ## Environment variables
 
+Only two optional secrets remain; everything else lives under **Settings → Services and addresses** (KV):
+
 | Name | Type | Purpose |
 | --- | --- | --- |
-| `ADMIN_PASSWORD` | secret | optional legacy `/admin` password; ignored when a KV account exists |
-| `SESSION_SECRET` | secret | optional cookie HMAC key; defaults to the key generated at setup |
-| `CERTUM_EMAIL` | var | only used by "import from environment" |
-| `CERTUM_OTP_URI` | secret | same, `otpauth://` URI (preferred) |
-| `CERTUM_OTP_SECRET` | secret | same, raw Base32 seed |
-| `CERTUM_CERTIFICATE_SHA1` | var | same, written into the imported credential |
-| `CERTUM_API_BASE` | var | defaults to `https://cloudsign.webnotarius.pl` |
-| `CERTUM_CHAIN_PEM` | var | optional intermediate PEM(s), newline separated |
-| `LOG_SIGNATURES` | var | `0` disables per-signature logs (stats only) |
-| `TSA_UPSTREAM` | var | RFC3161 upstream for `/v1/timestamp`, defaults to `http://time.certum.pl/` |
+| `SESSION_SECRET` | secret | optional cookie HMAC key; defaults to the random value generated at setup |
 | `RESEND_API_KEY` | secret | optional Resend key; registration/reset stay disabled without it |
-| `RESEND_FROM` | var | optional verified Resend sender |
-| `PUBLIC_BASE_URL` | var | optional base URL for email links; derived from the request when empty |
+| `ADMIN_PASSWORD` | secret | optional legacy `/admin` password; ignored when a KV account exists |
+| `CERTUM_EMAIL` / `CERTUM_OTP_URI` / `CERTUM_OTP_SECRET` / `CERTUM_CERTIFICATE_SHA1` | var / secret | optional, only for "import from environment" |
+
+Runtime settings editable in the console: base URL, Certum API base, TSA upstream, Resend sender,
+intermediate PEM, per-request logging. The matching env vars (`PUBLIC_BASE_URL`, `CERTUM_API_BASE`,
+`TSA_UPSTREAM`, `RESEND_FROM`, `CERTUM_CHAIN_PEM`, `LOG_SIGNATURES`) still work as fallbacks but are not
+needed on a fresh deployment.
 
 At runtime the email and seed come from the KV credential, so `CERTUM_*` is no longer required.
 
@@ -303,8 +306,9 @@ At runtime the email and seed come from the KV credential, so `CERTUM_*` is no l
 
 ## Verification
 
-- Worker: `npx tsc --noEmit` clean; `npm test` 28 passing (TOTP against RFC 6238 vectors, multipart,
-  encoding/hashing, KV storage, password hashing, admin account setup/password change).
+- Worker: `npx tsc --noEmit` clean; `npm test` 33 passing (TOTP against RFC 6238 vectors, multipart,
+  encoding/hashing, KV storage, password hashing, admin account setup/password change, runtime config
+  defaults / env fallback / KV override).
 - New features exercised under `wrangler dev` (Nov 2026): home page downloads, two-column sign-in with
   captcha (wrong code → 401 and a new image, refresh button issues a new id, password show/hide),
   persisted settings toggles, registration reporting a clear error without Resend, email verification
@@ -324,6 +328,10 @@ At runtime the email and seed come from the KV credential, so `CERTUM_*` is no l
   current password, short new password, mismatch and success, with the old password then 401 and the new
   one 302, with other browser sessions revoked (302 back to sign-in) while the current browser receives a
   fresh cookie; env-only mode hides the username field and the password form.
+- Runtime config (Nov 2026, `wrangler dev`): saving base URL / Certum API / TSA / sender / PEM / log
+  switch under Settings echoes back correctly (trailing slash normalised, sender escaped), `ftp://` URLs
+  and a non-PEM chain are rejected with a message on the settings page, and clearing a field falls back to
+  the default or env var.
 - Exercised under `wrangler dev`: admin login, overview, user create/password/expiry/disable/enable,
   credential create (with non-ASCII label)/edit/disable/enable/delete/force login/refresh certificate,
   key create (secret shown once)/disable/delete, log page, stats JSON; user login, portal, self-service
