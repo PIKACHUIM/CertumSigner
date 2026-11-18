@@ -5,7 +5,7 @@ project(CertumSigner
     HOMEPAGE_URL "https://github.com/PIKACHUIM/CertumSigner"
     LANGUAGES CXX
 )
-# License: AGPL-3.0-only — see ../LICENSE
+# License: MIT — see ../LICENSE
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -22,6 +22,7 @@ add_executable(certumsigner
     src/util.cpp
     src/json.cpp
     src/der.cpp
+    src/digest.cpp
     src/pe.cpp
     src/spc.cpp
     src/pkcs7.cpp

@@ -1,13 +1,33 @@
 #include "signer.h"
 
 #include "api.h"
+#include "digest.h"
 #include "pe.h"
 #include "pkcs7.h"
 #include "spc.h"
 #include "tsa.h"
 #include "util.h"
 
+#include <algorithm>
+
 namespace cs {
+
+std::vector<std::string> effective_algorithms(const std::vector<std::string> &algorithms) {
+    std::vector<std::string> out;
+    for (const auto &raw : algorithms) {
+        const std::string name = digest::normalize(raw);
+        if (!digest::valid(name)) continue;
+        if (std::find(out.begin(), out.end(), name) == out.end()) out.push_back(name);
+    }
+    if (out.empty()) out.push_back("sha256");
+    return out;
+}
+
+bool SignOptions::wants(const std::string &algorithm) const {
+    const std::string name = digest::normalize(algorithm);
+    const auto list = effective_algorithms(algorithms);
+    return std::find(list.begin(), list.end(), name) != list.end();
+}
 
 namespace {
 
@@ -90,105 +110,123 @@ bool Signer::sign_file(const std::string &path, std::string &err) {
         return false;
     }
 
-    const bool sha1 = options.sha1();
     const std::string name = file_name(path);
-    write("计算摘要（" + std::string(sha1 ? "SHA1" : "SHA256") + "）：" + name);
+    const std::vector<std::string> algorithms = effective_algorithms(options.algorithms);
 
-    std::string file_digest;
-    if (!pe::authentihash(path, sha1, file_digest, err)) return false;
-    if (file_digest.size() != (sha1 ? 20u : 32u)) {
-        err = "摘要长度异常";
-        return false;
-    }
+    // 时间戳代理与鉴权头：每种算法各要一次时间戳，提前算好
+    const std::string proxy = worker_tsa_url(options.server);
+    HttpHeaders auth;
+    if (!options.api_key.empty()) auth.emplace_back("Authorization", "Bearer " + options.api_key);
 
-    const std::string content = spc::build(file_digest, sha1);
-    const std::string signed_attrs = build_signed_attributes(content, sha1);
-    const std::string attrs_digest = hash_bytes(signed_attrs, sha1);
-    if (attrs_digest.empty()) {
-        err = "计算签名输入摘要失败";
-        return false;
-    }
+    std::vector<std::string> blobs;
+    blobs.reserve(algorithms.size());
 
-    write("请求云端签名：" + to_hex(attrs_digest).substr(0, 16) + "…");
-    ApiClient api(options.server, options.api_key);
-    RemoteCertificate remote;
-    std::string signature_hex;
-    if (!api.sign_digest(to_hex(attrs_digest), sha1 ? "sha1" : "sha256", signature_hex, remote, err)) {
-        return false;
-    }
-
-    if (!remote.pem.empty() && remote.pem != certificate_pem_) {
-        // 云端换了证书（重签/续期），后续必须用新的那张来组装
-        if (!adopt_certificate(remote.pem, remote.chain, remote.serial, err)) return false;
-    }
-
-    const std::string signature = bytes_from_hex(signature_hex);
-    if (signature.empty()) {
-        err = "云端返回的签名不是合法十六进制";
-        return false;
-    }
-
-    CertificateBlob certificate;
-    if (!load_certificate(certificate_pem_, certificate, err)) return false;
-    const std::vector<std::string> chain = load_certificate_chain(chain_pem_);
-
-    if (options.self_check) {
-        std::string verify_error;
-        if (!verify_signature(certificate.der, signed_attrs, sha1, signature, verify_error)) {
-            err = verify_error;
+    for (const std::string &algorithm : algorithms) {
+        const std::string label = digest::display_name(algorithm);
+        const char *api_algorithm = digest::api_name(algorithm);
+        if (!api_algorithm) {
+            err = "不支持的摘要算法：" + algorithm;
             return false;
         }
-        write("签名自检通过");
-    }
 
-    std::string timestamp_token;
-    if (options.timestamp) {
-        const std::string proxy = worker_tsa_url(options.server);
-        HttpHeaders auth;
-        if (!options.api_key.empty()) auth.emplace_back("Authorization", "Bearer " + options.api_key);
+        write("计算摘要（" + label + "）：" + name);
+        std::string file_digest;
+        if (!pe::authentihash(path, algorithm, file_digest, err)) return false;
+        if (file_digest.size() != digest::byte_length(algorithm)) {
+            err = "摘要长度异常";
+            return false;
+        }
 
-        const std::string direct_url = wants_worker_tsa(options.tsa_url)
-                                           ? std::string()
-                                           : (options.tsa_url.empty() ? std::string(kDefaultTsa) : options.tsa_url);
+        const std::string content = spc::build(file_digest, algorithm);
+        if (content.empty()) {
+            err = "不支持的摘要算法：" + algorithm;
+            return false;
+        }
+        const std::string signed_attrs = build_signed_attributes(content, algorithm);
+        const std::string attrs_digest = hash_bytes(signed_attrs, algorithm);
+        if (attrs_digest.empty()) {
+            err = "计算签名输入摘要失败";
+            return false;
+        }
 
-        std::string token;
-        std::string direct_error;
-        bool ok = !direct_url.empty() && request_timestamp(direct_url, HttpHeaders(), signature, token, direct_error);
+        write("请求云端签名（" + label + "）：" + to_hex(attrs_digest).substr(0, 16) + "…");
+        ApiClient api(options.server, options.api_key);
+        RemoteCertificate remote;
+        std::string signature_hex;
+        if (!api.sign_digest(to_hex(attrs_digest), api_algorithm, signature_hex, remote, err)) {
+            return false;
+        }
 
-        if (ok) {
-            timestamp_token = token;
-            write("已获取时间戳：" + direct_url);
-        } else {
-            // 直连 TSA 失败多半是企业网的安全软件拦了未签名程序的出网请求，
-            // 客户端到 Worker 的连接通常是通的，改走 Worker 代理再试一次
-            std::string proxy_error;
-            if (!proxy.empty() && request_timestamp(proxy, auth, signature, token, proxy_error)) {
+        if (!remote.pem.empty() && remote.pem != certificate_pem_) {
+            // 云端换了证书（重签/续期），后续必须用新的那张来组装
+            if (!adopt_certificate(remote.pem, remote.chain, remote.serial, err)) return false;
+        }
+
+        const std::string signature = bytes_from_hex(signature_hex);
+        if (signature.empty()) {
+            err = "云端返回的签名不是合法十六进制";
+            return false;
+        }
+
+        CertificateBlob certificate;
+        if (!load_certificate(certificate_pem_, certificate, err)) return false;
+        const std::vector<std::string> chain = load_certificate_chain(chain_pem_);
+
+        if (options.self_check) {
+            std::string verify_error;
+            if (!verify_signature(certificate.der, signed_attrs, algorithm, signature, verify_error)) {
+                err = verify_error;
+                return false;
+            }
+            write("签名自检通过（" + label + "）");
+        }
+
+        std::string timestamp_token;
+        if (options.timestamp) {
+            const std::string direct_url = wants_worker_tsa(options.tsa_url)
+                                               ? std::string()
+                                               : (options.tsa_url.empty() ? std::string(kDefaultTsa) : options.tsa_url);
+
+            std::string token;
+            std::string direct_error;
+            bool ok = !direct_url.empty() && request_timestamp(direct_url, HttpHeaders(), signature, token, direct_error);
+
+            if (ok) {
                 timestamp_token = token;
-                if (!direct_error.empty()) write("直连 " + direct_url + " 失败（" + direct_error + "），已改走 Worker 代理");
-                write("已获取时间戳：" + proxy);
+                write("已获取时间戳：" + direct_url);
             } else {
-                std::string detail = direct_error;
-                if (!proxy_error.empty()) {
-                    if (!detail.empty()) detail += "；Worker 代理也失败：";
-                    detail += proxy_error;
+                // 直连 TSA 失败多半是企业网的安全软件拦了未签名程序的出网请求，
+                // 客户端到 Worker 的连接通常是通的，改走 Worker 代理再试一次
+                std::string proxy_error;
+                if (!proxy.empty() && request_timestamp(proxy, auth, signature, token, proxy_error)) {
+                    timestamp_token = token;
+                    if (!direct_error.empty()) write("直连 " + direct_url + " 失败（" + direct_error + "），已改走 Worker 代理");
+                    write("已获取时间戳：" + proxy);
+                } else {
+                    std::string detail = direct_error;
+                    if (!proxy_error.empty()) {
+                        if (!detail.empty()) detail += "；Worker 代理也失败：";
+                        detail += proxy_error;
+                    }
+                    // 时间戳失败不阻断签名：产物仍然有效，只是没有可信时间
+                    write("警告：时间戳失败（" + detail + "），继续生成不带时间戳的签名");
+                    timestamp_token.clear();
                 }
-                // 时间戳失败不阻断签名：产物仍然有效，只是没有可信时间
-                write("警告：时间戳失败（" + detail + "），继续生成不带时间戳的签名");
-                timestamp_token.clear();
             }
         }
+
+        Pkcs7Request request;
+        request.content = content;
+        request.certificate = certificate;
+        request.chain_der = chain;
+        request.algorithm = algorithm;
+        request.signature = signature;
+        request.timestamp_token = timestamp_token;
+
+        std::string pkcs7 = build_pkcs7(request, err);
+        if (pkcs7.empty()) return false;
+        blobs.push_back(std::move(pkcs7));
     }
-
-    Pkcs7Request request;
-    request.content = content;
-    request.certificate = certificate;
-    request.chain_der = chain;
-    request.sha1 = sha1;
-    request.signature = signature;
-    request.timestamp_token = timestamp_token;
-
-    const std::string pkcs7 = build_pkcs7(request, err);
-    if (pkcs7.empty()) return false;
 
     if (options.backup) {
         const std::string backup = path + ".orig";
@@ -206,8 +244,14 @@ bool Signer::sign_file(const std::string &path, std::string &err) {
         }
     }
 
-    if (!pe::embed(path, pkcs7, err)) return false;
-    write("签名完成：" + name);
+    if (!pe::embed(path, blobs, err)) return false;
+
+    std::string joined;
+    for (const std::string &algorithm : algorithms) {
+        if (!joined.empty()) joined += " + ";
+        joined += digest::display_name(algorithm);
+    }
+    write("签名完成：" + name + "（" + joined + "）");
     return true;
 }
 

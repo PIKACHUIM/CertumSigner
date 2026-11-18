@@ -1,5 +1,6 @@
 #include "pe.h"
 
+#include "digest.h"
 #include "util.h"
 
 #include <openssl/evp.h>
@@ -32,6 +33,15 @@ void wr32(std::string &data, size_t offset, uint32_t value) {
     for (int i = 0; i < 4; i++) {
         data[offset + static_cast<size_t>(i)] = static_cast<char>((value >> (8 * i)) & 0xFF);
     }
+}
+
+const EVP_MD *md_for(const std::string &algorithm) {
+    const std::string name = digest::normalize(algorithm);
+    if (name == "sha1") return EVP_sha1();
+    if (name == "sha256") return EVP_sha256();
+    if (name == "sha384") return EVP_sha384();
+    if (name == "sha512") return EVP_sha512();
+    return nullptr;
 }
 
 uint32_t compute_checksum(const std::string &data, size_t checksum_offset) {
@@ -128,12 +138,18 @@ bool analyze_file(const std::string &path, Layout &out, std::string &err) {
     return analyze(data, out, err);
 }
 
-bool authentihash(const std::string &path, bool sha1, std::string &digest, std::string &err) {
+bool authentihash(const std::string &path, const std::string &algorithm, std::string &digest, std::string &err) {
     std::string data;
     if (!read_file(path, data, err)) return false;
 
     Layout layout;
     if (!analyze(data, layout, err)) return false;
+
+    const EVP_MD *md = md_for(algorithm);
+    if (!md) {
+        err = "不支持的摘要算法：" + algorithm;
+        return false;
+    }
 
     size_t cert_start = layout.cert_table_offset > 0 ? layout.cert_table_offset : data.size();
     if (cert_start > data.size()) cert_start = data.size();
@@ -145,7 +161,6 @@ bool authentihash(const std::string &path, bool sha1, std::string &digest, std::
         return false;
     }
 
-    const EVP_MD *md = sha1 ? EVP_sha1() : EVP_sha256();
     EVP_MD_CTX *ctx = EVP_MD_CTX_new();
     if (!ctx) {
         err = "无法创建摘要上下文";
@@ -175,27 +190,12 @@ bool authentihash(const std::string &path, bool sha1, std::string &digest, std::
     return true;
 }
 
-bool embed(const std::string &path, const std::string &pkcs7, std::string &err) {
-    std::string data;
-    if (!read_file(path, data, err)) return false;
+namespace {
 
-    Layout layout;
-    if (!analyze(data, layout, err)) return false;
-    if (pkcs7.empty()) {
-        err = "PKCS#7 内容为空";
-        return false;
-    }
-
-    size_t base = layout.cert_table_offset > 0 ? layout.cert_table_offset : data.size();
-    if (base > data.size()) base = data.size();
-    data.resize(base);
-
-    // 证书表必须 8 字节对齐
-    while (data.size() % 8 != 0) data.push_back('\0');
-
-    const size_t entry_offset = data.size();
-    const size_t total = 8 + pkcs7.size();
-    const size_t padded = (total + 7) & ~static_cast<size_t>(7);
+/** 追加一个 WIN_CERTIFICATE（8 字节头 + PKCS#7，补齐到 8 字节对齐） */
+void append_certificate(std::string &data, const std::string &pkcs7, size_t &total) {
+    const size_t entry_total = 8 + pkcs7.size();
+    const size_t padded = (entry_total + 7) & ~static_cast<size_t>(7);
 
     std::string entry;
     entry.reserve(padded);
@@ -210,14 +210,51 @@ bool embed(const std::string &path, const std::string &pkcs7, std::string &err) 
     entry += pkcs7;
     entry.resize(padded, '\0');
     data += entry;
+    total += padded;
+}
+
+} // namespace
+
+bool embed(const std::string &path, const std::vector<std::string> &signatures, std::string &err) {
+    if (signatures.empty()) {
+        err = "PKCS#7 内容为空";
+        return false;
+    }
+    for (const auto &pkcs7 : signatures) {
+        if (pkcs7.empty()) {
+            err = "PKCS#7 内容为空";
+            return false;
+        }
+    }
+
+    std::string data;
+    if (!read_file(path, data, err)) return false;
+
+    Layout layout;
+    if (!analyze(data, layout, err)) return false;
+
+    size_t base = layout.cert_table_offset > 0 ? layout.cert_table_offset : data.size();
+    if (base > data.size()) base = data.size();
+    data.resize(base);
+
+    // 证书表必须 8 字节对齐
+    while (data.size() % 8 != 0) data.push_back('\0');
+
+    const size_t entry_offset = data.size();
+    size_t total = 0;
+    for (const auto &pkcs7 : signatures) append_certificate(data, pkcs7, total);
 
     wr32(data, layout.security_dir_offset, static_cast<uint32_t>(entry_offset));
-    wr32(data, layout.security_dir_offset + 4, static_cast<uint32_t>(padded));
+    wr32(data, layout.security_dir_offset + 4, static_cast<uint32_t>(total));
 
     uint32_t checksum = compute_checksum(data, layout.checksum_offset);
     wr32(data, layout.checksum_offset, checksum);
 
     return write_file(path, data, err);
+}
+
+bool embed(const std::string &path, const std::string &pkcs7, std::string &err) {
+    return embed(path, std::vector<std::string>{pkcs7}, err);
 }
 
 bool has_signature(const std::string &path) {

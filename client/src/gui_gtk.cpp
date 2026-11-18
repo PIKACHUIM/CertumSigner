@@ -3,10 +3,12 @@
 
 #include <gtk/gtk.h>
 
+#include <algorithm>
 #include <atomic>
 #include <memory>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include "settings.h"
 #include "signer.h"
@@ -19,7 +21,10 @@ namespace {
 GtkWidget *g_server = nullptr;
 GtkWidget *g_key = nullptr;
 GtkWidget *g_file = nullptr;
-GtkWidget *g_algo = nullptr;
+GtkWidget *g_algo_sha1 = nullptr;
+GtkWidget *g_algo_sha256 = nullptr;
+GtkWidget *g_algo_sha384 = nullptr;
+GtkWidget *g_algo_sha512 = nullptr;
 GtkWidget *g_timestamp = nullptr;
 GtkWidget *g_backup = nullptr;
 GtkWidget *g_sign = nullptr;
@@ -81,10 +86,12 @@ struct SignJob {
     std::string server;
     std::string key;
     std::string path;
-    std::string algorithm;
+    std::vector<std::string> algorithms;
     bool timestamp = true;
     bool backup = false;
 };
+
+bool checked(GtkWidget *button) { return button && gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(button)) != 0; }
 
 void on_sign(GtkWidget *, gpointer) {
     if (g_busy) return;
@@ -93,9 +100,16 @@ void on_sign(GtkWidget *, gpointer) {
     job->server = gtk_entry_get_text(GTK_ENTRY(g_server));
     job->key = gtk_entry_get_text(GTK_ENTRY(g_key));
     job->path = gtk_entry_get_text(GTK_ENTRY(g_file));
-    job->algorithm = gtk_combo_box_get_active(GTK_COMBO_BOX(g_algo)) == 1 ? "sha1" : "sha256";
-    job->timestamp = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(g_timestamp)) != 0;
-    job->backup = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(g_backup)) != 0;
+    if (checked(g_algo_sha1)) job->algorithms.push_back("sha1");
+    if (checked(g_algo_sha256)) job->algorithms.push_back("sha256");
+    if (checked(g_algo_sha384)) job->algorithms.push_back("sha384");
+    if (checked(g_algo_sha512)) job->algorithms.push_back("sha512");
+    if (job->algorithms.empty()) {
+        append_log("请至少选择一种摘要算法。");
+        return;
+    }
+    job->timestamp = checked(g_timestamp);
+    job->backup = checked(g_backup);
 
     if (job->server.empty() || job->key.empty() || job->path.empty()) {
         append_log("请先填写 Worker 地址、API Key 和目标文件。");
@@ -105,6 +119,7 @@ void on_sign(GtkWidget *, gpointer) {
     Settings settings;
     settings.server = job->server;
     settings.api_key = job->key;
+    settings.algorithms = job->algorithms;
     std::string save_error;
     if (!save_settings(settings, save_error)) append_log("警告：保存配置失败（" + save_error + "）");
 
@@ -116,7 +131,7 @@ void on_sign(GtkWidget *, gpointer) {
         Signer signer;
         signer.options.server = job->server;
         signer.options.api_key = job->key;
-        signer.options.algorithm = job->algorithm;
+        signer.options.algorithms = job->algorithms;
         signer.options.timestamp = job->timestamp;
         signer.options.backup = job->backup;
         signer.log = [](const std::string &message) { append_log(message); };
@@ -171,22 +186,30 @@ int gui_main(int argc, char **argv) {
     gtk_box_pack_start(GTK_BOX(file_box), browse, FALSE, FALSE, 0);
     add_row(grid, 2, "目标文件", file_box, 520);
 
+    // 摘要算法可多选：每种勾选的算法各生成一个签名，默认只勾 SHA-256
+    GtkWidget *algo_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+    g_algo_sha1 = gtk_check_button_new_with_label("SHA-1");
+    g_algo_sha256 = gtk_check_button_new_with_label("SHA-256");
+    g_algo_sha384 = gtk_check_button_new_with_label("SHA-384");
+    g_algo_sha512 = gtk_check_button_new_with_label("SHA-512");
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(g_algo_sha256), TRUE);
+    gtk_box_pack_start(GTK_BOX(algo_box), g_algo_sha256, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(algo_box), g_algo_sha384, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(algo_box), g_algo_sha512, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(algo_box), g_algo_sha1, FALSE, FALSE, 0);
+    add_row(grid, 3, "摘要算法", algo_box, 520);
+
     GtkWidget *options = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 16);
-    g_algo = gtk_combo_box_text_new();
-    gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(g_algo), "SHA-256");
-    gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(g_algo), "SHA-1");
-    gtk_combo_box_set_active(GTK_COMBO_BOX(g_algo), 0);
     g_timestamp = gtk_check_button_new_with_label("添加时间戳");
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(g_timestamp), TRUE);
     g_backup = gtk_check_button_new_with_label("备份原文件");
-    gtk_box_pack_start(GTK_BOX(options), g_algo, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(options), g_timestamp, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(options), g_backup, FALSE, FALSE, 0);
-    add_row(grid, 3, "选项", options, 520);
+    add_row(grid, 4, "选项", options, 520);
 
     g_sign = gtk_button_new_with_label("开始签名");
     gtk_widget_set_halign(g_sign, GTK_ALIGN_START);
-    gtk_grid_attach(GTK_GRID(grid), g_sign, 1, 4, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), g_sign, 1, 5, 1, 1);
 
     GtkWidget *scroller = gtk_scrolled_window_new(nullptr, nullptr);
     gtk_widget_set_hexpand(scroller, TRUE);
@@ -197,7 +220,7 @@ int gui_main(int argc, char **argv) {
     gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(view), GTK_WRAP_WORD_CHAR);
     gtk_container_add(GTK_CONTAINER(scroller), view);
     g_buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(view));
-    gtk_grid_attach(GTK_GRID(grid), scroller, 0, 5, 2, 1);
+    gtk_grid_attach(GTK_GRID(grid), scroller, 0, 6, 2, 1);
 
     gtk_container_add(GTK_CONTAINER(window), grid);
 
@@ -206,6 +229,16 @@ int gui_main(int argc, char **argv) {
     if (load_settings(settings, error)) {
         gtk_entry_set_text(GTK_ENTRY(g_server), settings.server.c_str());
         if (!settings.api_key.empty()) gtk_entry_set_text(GTK_ENTRY(g_key), settings.api_key.c_str());
+        // 恢复上次勾选的摘要算法
+        const std::vector<std::string> algorithms = effective_algorithms(settings.algorithms);
+        auto select = [&algorithms](GtkWidget *button, const char *name) {
+            const bool on = std::find(algorithms.begin(), algorithms.end(), std::string(name)) != algorithms.end();
+            gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(button), on ? TRUE : FALSE);
+        };
+        select(g_algo_sha1, "sha1");
+        select(g_algo_sha256, "sha256");
+        select(g_algo_sha384, "sha384");
+        select(g_algo_sha512, "sha512");
     } else {
         append_log("读取配置失败：" + error);
     }

@@ -1,6 +1,7 @@
 #include "pkcs7.h"
 
 #include "der.h"
+#include "digest.h"
 #include "util.h"
 
 #include <openssl/bio.h>
@@ -32,10 +33,20 @@ std::string attribute(const char *oid, const std::string &value) {
     return der::sequence(der::oid(oid) + der::set(value));
 }
 
+const EVP_MD *md_for(const std::string &algorithm) {
+    const std::string name = digest::normalize(algorithm);
+    if (name == "sha1") return EVP_sha1();
+    if (name == "sha256") return EVP_sha256();
+    if (name == "sha384") return EVP_sha384();
+    if (name == "sha512") return EVP_sha512();
+    return nullptr;
+}
+
 } // namespace
 
-std::string hash_bytes(const std::string &data, bool sha1) {
-    const EVP_MD *md = sha1 ? EVP_sha1() : EVP_sha256();
+std::string hash_bytes(const std::string &data, const std::string &algorithm) {
+    const EVP_MD *md = md_for(algorithm);
+    if (!md) return {};
     unsigned char digest[EVP_MAX_MD_SIZE];
     unsigned int length = 0;
     if (EVP_Digest(data.data(), data.size(), digest, &length, md, nullptr) != 1) return {};
@@ -127,14 +138,14 @@ std::vector<std::string> load_certificate_chain(const std::vector<std::string> &
     return out;
 }
 
-std::string build_signed_attributes(const std::string &content, bool sha1) {
+std::string build_signed_attributes(const std::string &content, const std::string &algorithm) {
     // messageDigest 是对 SpcIndirectDataContent 的内容字节求摘要（不含外层 SEQUENCE 头）
     std::string content_body;
     if (!der::content_octets(content, content_body)) {
         // 结构自检会在 build_pkcs7 里再做一次；这里失败说明调用方传错了
         content_body = content;
     }
-    const std::string content_digest = hash_bytes(content_body, sha1);
+    const std::string content_digest = hash_bytes(content_body, algorithm);
 
     std::string content_type = attribute(kContentTypeOid, der::oid(kSpcIndirectDataOid));
     std::string message_digest = attribute(kMessageDigestOid, der::octet_string(content_digest));
@@ -160,9 +171,13 @@ std::string build_pkcs7(const Pkcs7Request &request, std::string &err) {
         return {};
     }
 
-    const std::string digest_oid = request.sha1 ? "1.3.14.3.2.26" : "2.16.840.1.101.3.4.2.1";
+    const char *digest_oid = digest::oid(request.algorithm);
+    if (!digest_oid) {
+        err = "不支持的摘要算法：" + request.algorithm;
+        return {};
+    }
 
-    const std::string attrs = build_signed_attributes(request.content, request.sha1);
+    const std::string attrs = build_signed_attributes(request.content, request.algorithm);
     std::string attrs_implicit = attrs;
     // 在 SignerInfo 里 authenticatedAttributes 是 [0] IMPLICIT，内容与 SET 完全一致
     attrs_implicit[0] = static_cast<char>(0xA0);
@@ -204,8 +219,8 @@ std::string build_pkcs7(const Pkcs7Request &request, std::string &err) {
     return content_info;
 }
 
-bool verify_signature(const std::string &cert_der, const std::string &signed_attributes, bool sha1,
-                      const std::string &signature, std::string &err) {
+bool verify_signature(const std::string &cert_der, const std::string &signed_attributes,
+                      const std::string &algorithm, const std::string &signature, std::string &err) {
     const unsigned char *cursor = reinterpret_cast<const unsigned char *>(cert_der.data());
     X509 *cert = d2i_X509(nullptr, &cursor, static_cast<long>(cert_der.size()));
     if (!cert) {
@@ -216,8 +231,8 @@ bool verify_signature(const std::string &cert_der, const std::string &signed_att
     bool ok = false;
     EVP_PKEY *key = X509_get0_pubkey(cert);
     EVP_MD_CTX *ctx = EVP_MD_CTX_new();
-    if (key && ctx) {
-        const EVP_MD *md = sha1 ? EVP_sha1() : EVP_sha256();
+    const EVP_MD *md = md_for(algorithm);
+    if (key && ctx && md) {
         if (EVP_DigestVerifyInit(ctx, nullptr, md, nullptr, key) == 1) {
             int rc = EVP_DigestVerify(ctx, reinterpret_cast<const unsigned char *>(signature.data()),
                                       signature.size(),
@@ -229,7 +244,7 @@ bool verify_signature(const std::string &cert_der, const std::string &signed_att
             err = "自检失败：无法初始化验签";
         }
     } else {
-        err = "自检失败：证书没有可用的公钥";
+        err = md ? "自检失败：证书没有可用的公钥" : "自检失败：不支持的摘要算法 " + algorithm;
     }
 
     if (ctx) EVP_MD_CTX_free(ctx);

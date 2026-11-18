@@ -20,15 +20,15 @@ bool load_certificate(const std::string &pem, CertificateBlob &out, std::string 
 std::vector<std::string> load_certificate_chain(const std::vector<std::string> &pems);
 
 /** 需要签名的 authenticatedAttributes（0x31 SET OF 编码，签名输入就是它） */
-std::string build_signed_attributes(const std::string &content, bool sha1);
+std::string build_signed_attributes(const std::string &content, const std::string &algorithm);
 
-std::string hash_bytes(const std::string &data, bool sha1);
+std::string hash_bytes(const std::string &data, const std::string &algorithm);
 
 struct Pkcs7Request {
     std::string content;   // SpcIndirectDataContent
     CertificateBlob certificate;
     std::vector<std::string> chain_der;
-    bool sha1 = false;
+    std::string algorithm = "sha256"; // sha1 | sha256 | sha384 | sha512
     std::string signature;        // RSA PKCS#1 v1.5 原始签名
     std::string timestamp_token;  // 可选的 RFC3161 TimeStampToken（DER）
 };
@@ -36,7 +36,7 @@ struct Pkcs7Request {
 std::string build_pkcs7(const Pkcs7Request &request, std::string &err);
 
 /** 自检：用证书公钥验证签名确实对应这段 authenticatedAttributes */
-bool verify_signature(const std::string &cert_der, const std::string &signed_attributes, bool sha1,
-                      const std::string &signature, std::string &err);
+bool verify_signature(const std::string &cert_der, const std::string &signed_attributes,
+                      const std::string &algorithm, const std::string &signature, std::string &err);
 
 } // namespace cs

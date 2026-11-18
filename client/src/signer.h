@@ -9,14 +9,18 @@ namespace cs {
 struct SignOptions {
     std::string server;
     std::string api_key;
-    std::string algorithm = "sha256";              // sha1 | sha256
+    /** 可多选：sha1 / sha256 / sha384 / sha512，默认只用 sha256；每选中一种就多一个签名 */
+    std::vector<std::string> algorithms{"sha256"};
     std::string tsa_url = "http://time.certum.pl/";
     bool timestamp = true;
     bool backup = false;
     bool self_check = true;
 
-    bool sha1() const { return algorithm == "sha1"; }
+    bool wants(const std::string &algorithm) const;
 };
+
+/** 实际要用的算法列表：去重、只留受支持的，空的话回落到 sha256 */
+std::vector<std::string> effective_algorithms(const std::vector<std::string> &algorithms);
 
 using LogFn = std::function<void(const std::string &)>;
 

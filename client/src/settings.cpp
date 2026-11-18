@@ -1,5 +1,6 @@
 #include "settings.h"
 
+#include "digest.h"
 #include "json.h"
 #include "util.h"
 
@@ -71,6 +72,7 @@ bool load_settings(Settings &out, std::string &err) {
             const std::string tsa_url = root.get_string("tsa_url");
             const std::string tsa_name = root.get_string("tsa_name");
             const std::string algorithm = root.get_string("algorithm");
+            const std::vector<std::string> algorithms = root.get_strings("algorithms");
             const std::string lang = root.get_string("lang");
             const std::string theme = root.get_string("theme");
             const std::string username = root.get_string("username");
@@ -80,7 +82,13 @@ bool load_settings(Settings &out, std::string &err) {
             if (!key.empty()) out.api_key = key;
             if (!tsa_url.empty()) out.tsa_url = tsa_url;
             if (!tsa_name.empty()) out.tsa_name = tsa_name;
-            if (algorithm == "sha1" || algorithm == "sha256") out.algorithm = algorithm;
+            // 新版写 algorithms 数组；旧配置只有单个 algorithm 字符串
+            std::vector<std::string> picked;
+            for (const auto &item : algorithms) {
+                if (digest::valid(item)) picked.push_back(digest::normalize(item));
+            }
+            if (picked.empty() && digest::valid(algorithm)) picked.push_back(digest::normalize(algorithm));
+            if (!picked.empty()) out.algorithms = picked;
             if (lang == "zh" || lang == "en") out.lang = lang;
             if (theme == "auto" || theme == "dark" || theme == "light") out.theme = theme;
             if (!username.empty()) out.username = username;
@@ -112,7 +120,22 @@ bool save_settings(const Settings &settings, std::string &err) {
     root.members.emplace_back("api_key", json_string(settings.api_key));
     root.members.emplace_back("tsa_name", json_string(settings.tsa_name));
     root.members.emplace_back("tsa_url", json_string(settings.tsa_url));
-    root.members.emplace_back("algorithm", json_string(settings.algorithm));
+
+    Json list;
+    list.type = Json::Type::Array;
+    for (const auto &raw : settings.algorithms) {
+        if (!digest::valid(raw)) continue;
+        const std::string name = digest::normalize(raw);
+        bool seen = false;
+        for (const auto &item : list.items) {
+            if (item.text == name) seen = true;
+        }
+        if (!seen) list.items.push_back(json_string(name));
+    }
+    if (list.items.empty()) list.items.push_back(json_string("sha256"));
+    root.members.emplace_back("algorithms", list);
+    // 旧版客户端只认单个 algorithm，这里写成第一项，方便降级
+    root.members.emplace_back("algorithm", json_string(list.items.front().text));
     root.members.emplace_back("timestamp", json_bool(settings.timestamp));
     root.members.emplace_back("backup", json_bool(settings.backup));
     root.members.emplace_back("lang", json_string(settings.lang));

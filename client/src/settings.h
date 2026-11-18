@@ -23,7 +23,8 @@ struct Settings {
     std::string tsa_name = "DigiCert";
     /** 自定义时间戳地址；非空时优先于 tsa_name（也支持 worker/auto 走代理） */
     std::string tsa_url;
-    std::string algorithm = "sha256"; // sha1 | sha256
+    /** 多选摘要算法：sha1 / sha256 / sha384 / sha512，默认只用 sha256 */
+    std::vector<std::string> algorithms{"sha256"};
     bool timestamp = true;
     bool backup = false;
     /** zh | en；空 = 跟随系统语言 */

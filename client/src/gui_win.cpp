@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "http.h"
+#include "digest.h"
 #include "json.h"
 #include "settings.h"
 #include "signer.h"
@@ -42,7 +43,11 @@ constexpr int kBaseWidth = 1060;
 constexpr int kBaseHeight = 740;
 constexpr int kSideWidth = 200;
 
-enum Page { PAGE_LOGIN = 0, PAGE_KEYS = 1, PAGE_SIGN = 2, PAGE_SETTINGS = 3 };
+// 软件许可页：卡片、正文与底部留白（设计坐标，运行时按 DPI 缩放）
+constexpr int kLicTextTop = 132;
+constexpr int kLicMargin = 24;
+
+enum Page { PAGE_LOGIN = 0, PAGE_KEYS = 1, PAGE_SIGN = 2, PAGE_SETTINGS = 3, PAGE_LICENSE = 4 };
 
 constexpr int IDC_NAV_SIGN = 1001;
 constexpr int IDC_NAV_SETTINGS = 1002;
@@ -85,6 +90,11 @@ constexpr int IDC_T_THEME = 1410;
 constexpr int IDC_T_RELOGIN = 1411;
 constexpr int IDC_T_LICENSE = 1412;
 constexpr int IDC_T_PROJECT = 1413;
+constexpr int IDC_T_ALGO384 = 1414;
+constexpr int IDC_T_ALGO512 = 1415;
+
+constexpr int IDC_LIC_TEXT = 1501;
+constexpr int IDC_LIC_BACK = 1502;
 
 constexpr UINT WM_APP_LOG = WM_APP + 1;
 constexpr UINT WM_APP_FILE_STATE = WM_APP + 2;
@@ -215,7 +225,7 @@ const TextRow kTexts[] = {
     {"set.account", L"当前账号", L"Account"},
     {"set.keyName", L"当前 Key", L"Current key"},
     {"set.signing", L"签名选项", L"Signing"},
-    {"set.algo", L"摘要算法", L"Digest"},
+    {"set.algo", L"摘要算法（可多选）", L"Digest (pick one or more)"},
     {"set.ts", L"时间戳服务", L"Timestamp server"},
     {"set.tsOn", L"添加时间戳", L"Add timestamp"},
     {"set.backup", L"备份原文件", L"Keep a .bak copy"},
@@ -237,6 +247,12 @@ const TextRow kTexts[] = {
     {"set.version", L"v1.0.0 · 私钥始终在 Certum 云端，本机只发送摘要",
      L"v1.0.0 · the private key stays in Certum's cloud; only digests leave this machine"},
 
+    {"lic.title", L"软件许可", L"License"},
+    {"lic.sub", L"本程序以 MIT 许可发布，以下为完整许可文本", L"Released under the MIT license — full text below"},
+    {"lic.docTitle", L"MIT 许可证", L"MIT License"},
+    {"lic.back", L"返回设置", L"Back to settings"},
+    {"lic.readonly", L"只读", L"Read only"},
+
     {"err.badCredentials", L"用户名或口令错误", L"Wrong username or password"},
     {"err.tooMany", L"尝试次数过多，请稍后再试", L"Too many attempts, try again later"},
     {"err.expired", L"登录已过期，请重新登录", L"Session expired, please sign in again"},
@@ -250,6 +266,30 @@ const TextRow kTexts[] = {
     {"err.oldServer", L"服务端缺少客户端登录接口，请先升级 Worker", L"Server is missing the client API — upgrade the Worker"},
     {"err.server", L"服务端错误：", L"Server error: "},
 };
+
+/** MIT 许可正文（与仓库根目录 LICENSE 一致，许可文本保持英文原文） */
+const wchar_t *kMitLicenseText =
+    L"MIT License\r\n"
+    L"\r\n"
+    L"Copyright (c) 2026 pikachuren\r\n"
+    L"\r\n"
+    L"Permission is hereby granted, free of charge, to any person obtaining a copy\r\n"
+    L"of this software and associated documentation files (the \"Software\"), to deal\r\n"
+    L"in the Software without restriction, including without limitation the rights\r\n"
+    L"to use, copy, modify, merge, publish, distribute, sublicense, and/or sell\r\n"
+    L"copies of the Software, and to permit persons to whom the Software is\r\n"
+    L"furnished to do so, subject to the following conditions:\r\n"
+    L"\r\n"
+    L"The above copyright notice and this permission notice shall be included in all\r\n"
+    L"copies or substantial portions of the Software.\r\n"
+    L"\r\n"
+    L"THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\r\n"
+    L"IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\r\n"
+    L"FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\r\n"
+    L"AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\r\n"
+    L"LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\r\n"
+    L"OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\r\n"
+    L"SOFTWARE.\r\n";
 
 /* --------------------------------- 状态 ---------------------------------- */
 
@@ -339,6 +379,8 @@ struct App {
     HWND stShowKey = nullptr;
     HWND stAlgo256 = nullptr;
     HWND stAlgo1 = nullptr;
+    HWND stAlgo384 = nullptr;
+    HWND stAlgo512 = nullptr;
     HWND stTsOn = nullptr;
     HWND stTsa = nullptr;
     HWND stBackup = nullptr;
@@ -347,6 +389,9 @@ struct App {
     HWND stRelogin = nullptr;
     HWND stLicense = nullptr;
     HWND stProject = nullptr;
+
+    HWND licText = nullptr;
+    HWND licBack = nullptr;
 
     HFONT fontTitle = nullptr;
     HFONT fontH1 = nullptr;
@@ -823,8 +868,13 @@ ControlSet sign_controls() {
 
 ControlSet settings_controls() {
     App *a = g_app;
-    return {{a->stServer, a->stKey, a->stShowKey, a->stAlgo256, a->stAlgo1, a->stTsOn, a->stTsa, a->stBackup,
-             a->stLang, a->stTheme, a->stRelogin, a->stLicense, a->stProject}};
+    return {{a->stServer, a->stKey, a->stShowKey, a->stAlgo256, a->stAlgo1, a->stAlgo384, a->stAlgo512, a->stTsOn,
+             a->stTsa, a->stBackup, a->stLang, a->stTheme, a->stRelogin, a->stLicense, a->stProject}};
+}
+
+ControlSet license_controls() {
+    App *a = g_app;
+    return {{a->licText, a->licBack}};
 }
 
 void show_controls(const ControlSet &set, bool visible) {
@@ -843,6 +893,7 @@ void set_page(Page page) {
     show_controls(keys_controls(), page == PAGE_KEYS);
     show_controls(sign_controls(), page == PAGE_SIGN);
     show_controls(settings_controls(), page == PAGE_SETTINGS);
+    show_controls(license_controls(), page == PAGE_LICENSE);
 
     if (a->navSign) ShowWindow(a->navSign, logged_in ? SW_SHOW : SW_HIDE);
     if (a->navKeys) ShowWindow(a->navKeys, logged_in ? SW_SHOW : SW_HIDE);
@@ -1138,7 +1189,7 @@ void start_batch_sign() {
     struct Job {
         std::string server;
         std::string key;
-        std::string algorithm;
+        std::vector<std::string> algorithms;
         std::string tsa;
         bool timestamp = true;
         bool backup = false;
@@ -1149,7 +1200,7 @@ void start_batch_sign() {
     auto job = std::make_shared<Job>();
     job->server = a->settings.server;
     job->key = a->settings.api_key;
-    job->algorithm = a->settings.algorithm;
+    job->algorithms = effective_algorithms(a->settings.algorithms);
     job->tsa = effective_tsa(a->settings);
     job->timestamp = a->settings.timestamp;
     job->backup = a->settings.backup;
@@ -1167,7 +1218,7 @@ void start_batch_sign() {
         Signer signer;
         signer.options.server = job->server;
         signer.options.api_key = job->key;
-        signer.options.algorithm = job->algorithm;
+        signer.options.algorithms = job->algorithms;
         signer.options.timestamp = job->timestamp;
         signer.options.backup = job->backup;
         if (!job->tsa.empty()) signer.options.tsa_url = job->tsa;
@@ -1678,8 +1729,10 @@ void layout_controls() {
     place_edit(a->stKey, 244, 212, 480, 38);
     if (a->stShowKey) MoveWindow(a->stShowKey, px(736) + dx, px(212), px(72), px(38), TRUE);
     if (a->stAlgo256) MoveWindow(a->stAlgo256, px(244) + dx, px(336), px(96), px(34), TRUE);
-    if (a->stAlgo1) MoveWindow(a->stAlgo1, px(348) + dx, px(336), px(84), px(34), TRUE);
-    if (a->stTsa) MoveWindow(a->stTsa, px(500) + dx, px(336), px(220), px(34), TRUE);
+    if (a->stAlgo1) MoveWindow(a->stAlgo1, px(348) + dx, px(336), px(76), px(34), TRUE);
+    if (a->stAlgo384) MoveWindow(a->stAlgo384, px(432) + dx, px(336), px(84), px(34), TRUE);
+    if (a->stAlgo512) MoveWindow(a->stAlgo512, px(524) + dx, px(336), px(84), px(34), TRUE);
+    if (a->stTsa) MoveWindow(a->stTsa, px(660) + dx, px(336), px(200), px(34), TRUE);
     if (a->stTsOn) MoveWindow(a->stTsOn, px(244) + dx, px(380), px(130), px(32), TRUE);
     if (a->stBackup) MoveWindow(a->stBackup, px(390) + dx, px(380), px(170), px(32), TRUE);
     if (a->stLang) MoveWindow(a->stLang, px(244) + dx, px(498), px(200), px(34), TRUE);
@@ -1687,6 +1740,12 @@ void layout_controls() {
     if (a->stLicense) MoveWindow(a->stLicense, px(244) + dx, px(626), px(140), px(36), TRUE);
     if (a->stProject) MoveWindow(a->stProject, px(396) + dx, px(626), px(190), px(36), TRUE);
     if (a->stRelogin) MoveWindow(a->stRelogin, px(600) + dx, px(626), px(160), px(36), TRUE);
+
+    // 许可页：正文占满卡片剩余高度，返回按钮贴卡片底部
+    const int lic_bottom = height - px(kLicMargin);
+    const int lic_text_h = std::max(px(80), lic_bottom - px(kLicTextTop) - px(56));
+    if (a->licText) MoveWindow(a->licText, px(244) + dx, px(kLicTextTop), px(772), lic_text_h, TRUE);
+    if (a->licBack) MoveWindow(a->licBack, px(244) + dx, lic_bottom - px(36), px(150), px(36), TRUE);
 }
 
 /* ------------------------------- 页面绘制 -------------------------------- */
@@ -1888,8 +1947,8 @@ void paint_settings(HDC dc) {
     fill_round(dc, c2, px(16), p.card);
     stroke_round(dc, c2, px(16), p.edge);
     draw_text(dc, tr("set.signing"), rect(244, 290, 200, 22), a->fontButton, p.text);
-    draw_text(dc, tr("set.algo"), rect(244, 318, 200, 16), a->fontTiny, p.muted2);
-    draw_text(dc, tr("set.ts"), rect(500, 318, 200, 16), a->fontTiny, p.muted2);
+    draw_text(dc, tr("set.algo"), rect(244, 318, 300, 16), a->fontTiny, p.muted2);
+    draw_text(dc, tr("set.ts"), rect(660, 318, 200, 16), a->fontTiny, p.muted2);
     draw_text(dc, tr("set.tsHint"), rect(570, 386, 440, 16), a->fontTiny, p.muted2,
               DT_RIGHT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
     if (!a->note.empty()) {
@@ -1918,6 +1977,33 @@ void paint_settings(HDC dc) {
               DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
 }
 
+void paint_license(HDC dc) {
+    App *a = g_app;
+    const Palette &p = pal();
+
+    RECT client{};
+    GetClientRect(a->window, &client);
+    const int bottom = client.bottom - px(kLicMargin);
+
+    draw_text(dc, tr("lic.title"), rect(224, 18, 400, 30), a->fontH1, p.text);
+    draw_text(dc, tr("lic.sub"), rect(224, 48, 760, 20), a->fontSmall, p.muted,
+              DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
+
+    RECT card = rect(224, 78, 812, bottom - 78);
+    fill_round(dc, card, px(16), p.card);
+    stroke_round(dc, card, px(16), p.edge);
+
+    draw_text(dc, tr("lic.docTitle"), rect(244, 96, 300, 22), a->fontButton, p.text);
+    draw_text(dc, tr("lic.readonly"), rect(880, 96, 136, 22), a->fontTiny, p.muted2,
+              DT_RIGHT | DT_SINGLELINE | DT_VCENTER);
+
+    // 正文框：编辑控件只会盖住内部，边框留 2px 由这里画
+    const int text_h = std::max(px(80), bottom - px(kLicTextTop) - px(56));
+    RECT frame = rect(242, kLicTextTop - 2, 776, text_h + 4);
+    fill_round(dc, frame, px(10), p.input);
+    stroke_round(dc, frame, px(10), p.inputEdge);
+}
+
 void paint_window(HWND window, HDC target) {
     App *a = g_app;
     RECT client{};
@@ -1938,6 +2024,7 @@ void paint_window(HWND window, HDC target) {
     case PAGE_KEYS: paint_keys(dc); break;
     case PAGE_SIGN: paint_sign(dc); break;
     case PAGE_SETTINGS: paint_settings(dc); break;
+    case PAGE_LICENSE: paint_license(dc); break;
     }
     if (dx > 0) SetViewportOrgEx(dc, 0, 0, nullptr);
 
@@ -2038,6 +2125,13 @@ void draw_key_item(const DRAWITEMSTRUCT *item) {
               p.muted, DT_RIGHT | DT_SINGLELINE | DT_VCENTER);
 }
 
+/** 摘要算法是否被勾选（至少保留一项，空列表按 sha256 处理） */
+bool algo_active(const char *name) {
+    if (!g_app) return false;
+    const auto list = effective_algorithms(g_app->settings.algorithms);
+    return std::find(list.begin(), list.end(), std::string(name)) != list.end();
+}
+
 void draw_ownerdraw(const DRAWITEMSTRUCT *item) {
     App *a = g_app;
     if (!a || !item) return;
@@ -2071,7 +2165,7 @@ void draw_ownerdraw(const DRAWITEMSTRUCT *item) {
     if (id == IDC_NAV_SIGN || id == IDC_NAV_KEYS || id == IDC_NAV_SETTINGS) {
         const bool active = (id == IDC_NAV_SIGN)   ? a->page == PAGE_SIGN
                             : (id == IDC_NAV_KEYS) ? a->page == PAGE_KEYS
-                                                   : a->page == PAGE_SETTINGS;
+                                                   : (a->page == PAGE_SETTINGS || a->page == PAGE_LICENSE);
         fill_rect(dc, r, p.side);
         fill_round(dc, r, px(10), active ? p.sideActive : (hot ? p.hover : p.side));
         RECT icon{r.left + px(14), r.top + px(12), r.left + px(32), r.top + px(32)};
@@ -2162,6 +2256,13 @@ void draw_ownerdraw(const DRAWITEMSTRUCT *item) {
         return;
     }
 
+    if (id == IDC_LIC_BACK) {
+        fill_round(dc, r, px(10), hot ? p.hover : p.card);
+        stroke_round(dc, r, px(10), p.inputEdge);
+        draw_text(dc, tr("lic.back"), r, a->fontButton, p.text, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+        return;
+    }
+
     if (id == IDC_T_SHOWKEY) {
         fill_round(dc, r, px(9), hot ? p.hover : p.card);
         stroke_round(dc, r, px(9), p.inputEdge);
@@ -2170,13 +2271,16 @@ void draw_ownerdraw(const DRAWITEMSTRUCT *item) {
         return;
     }
 
-    if (id == IDC_T_ALGO256 || id == IDC_T_ALGO1) {
-        const bool active = (id == IDC_T_ALGO256) ? a->settings.algorithm != "sha1"
-                                                  : a->settings.algorithm == "sha1";
+    if (id == IDC_T_ALGO256 || id == IDC_T_ALGO1 || id == IDC_T_ALGO384 || id == IDC_T_ALGO512) {
+        const char *name = id == IDC_T_ALGO256   ? "sha256"
+                           : id == IDC_T_ALGO1   ? "sha1"
+                           : id == IDC_T_ALGO384 ? "sha384"
+                                                 : "sha512";
+        const bool active = algo_active(name);
         fill_round(dc, r, px(9), active ? p.accent : (hot ? p.hover : p.input));
         stroke_round(dc, r, px(9), active ? p.accent : p.inputEdge);
-        draw_text(dc, id == IDC_T_ALGO256 ? L"SHA-256" : L"SHA-1", r, a->fontSmall,
-                  active ? RGB(255, 255, 255) : p.muted, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+        draw_text(dc, widen(digest::display_name(name)), r, a->fontSmall, active ? RGB(255, 255, 255) : p.muted,
+                  DT_CENTER | DT_SINGLELINE | DT_VCENTER);
         return;
     }
 
@@ -2205,6 +2309,7 @@ void apply_language_to_controls() {
     if (a->stRelogin) SetWindowTextW(a->stRelogin, tr("set.relogin").c_str());
     if (a->stLicense) SetWindowTextW(a->stLicense, tr("set.license").c_str());
     if (a->stProject) SetWindowTextW(a->stProject, tr("set.project").c_str());
+    if (a->licBack) SetWindowTextW(a->licBack, tr("lic.back").c_str());
     if (a->stShowKey) {
         const std::wstring label = a->show_key ? tr("common.hide") : tr("common.show");
         SetWindowTextW(a->stShowKey, label.c_str());
@@ -2536,6 +2641,8 @@ void setup_controls(HWND window) {
     a->stShowKey = make_control(L"BUTTON", L"", button, 0, rect(0, 0, 10, 10), IDC_T_SHOWKEY, window, a->fontSmall);
     a->stAlgo256 = make_control(L"BUTTON", L"", button, 0, rect(0, 0, 10, 10), IDC_T_ALGO256, window, a->fontSmall);
     a->stAlgo1 = make_control(L"BUTTON", L"", button, 0, rect(0, 0, 10, 10), IDC_T_ALGO1, window, a->fontSmall);
+    a->stAlgo384 = make_control(L"BUTTON", L"", button, 0, rect(0, 0, 10, 10), IDC_T_ALGO384, window, a->fontSmall);
+    a->stAlgo512 = make_control(L"BUTTON", L"", button, 0, rect(0, 0, 10, 10), IDC_T_ALGO512, window, a->fontSmall);
     a->stTsOn = make_control(L"BUTTON", L"", button, 0, rect(0, 0, 10, 10), IDC_T_TSON, window, a->fontSmall);
     a->stTsa = make_control(L"BUTTON", L"", button, 0, rect(0, 0, 10, 10), IDC_T_TSA, window, a->fontSmall);
     a->stBackup = make_control(L"BUTTON", L"", button, 0, rect(0, 0, 10, 10), IDC_T_BACKUP, window, a->fontSmall);
@@ -2544,6 +2651,14 @@ void setup_controls(HWND window) {
     a->stRelogin = make_control(L"BUTTON", L"", button, 0, rect(0, 0, 10, 10), IDC_T_RELOGIN, window, a->fontButton);
     a->stLicense = make_control(L"BUTTON", L"", button, 0, rect(0, 0, 10, 10), IDC_T_LICENSE, window, a->fontButton);
     a->stProject = make_control(L"BUTTON", L"", button, 0, rect(0, 0, 10, 10), IDC_T_PROJECT, window, a->fontButton);
+
+    a->licText = make_control(L"EDIT", L"", ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | WS_VSCROLL, 0,
+                              rect(0, 0, 10, 10), IDC_LIC_TEXT, window, a->fontSmall);
+    a->licBack = make_control(L"BUTTON", L"", button, 0, rect(0, 0, 10, 10), IDC_LIC_BACK, window, a->fontButton);
+    if (a->licText) {
+        SetWindowTextW(a->licText, kMitLicenseText);
+        SendMessageW(a->licText, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(px(10), px(10)));
+    }
 
     SendMessageW(a->keyList, LB_SETITEMHEIGHT, 0, px(56));
     SendMessageW(a->list, LB_SETITEMHEIGHT, 0, px(56));
@@ -2618,15 +2733,11 @@ void relogin() {
     SetFocus(a->lgUser);
 }
 
-void show_license() {
-    const std::wstring text =
-        L"CertumSigner — GNU Affero General Public License v3.0\r\n\r\n"
-        L"本程序是自由软件：你可以依据自由软件基金会发布的 GNU AGPL v3.0\r\n"
-        L"（或更新版本）条款重新分发和/或修改它。\r\n\r\n"
-        L"分发本程序或通过网络提供其功能时，必须一并提供完整的源代码。\r\n"
-        L"本程序不提供任何担保，包括适销性或特定用途适用性的默示担保。\r\n\r\n"
-        L"完整许可文本见项目仓库根目录的 LICENSE 文件。";
-    MessageBoxW(g_app->window, text.c_str(), L"AGPL-3.0", MB_ICONINFORMATION | MB_OK);
+/** 软件许可：切到应用内的许可页（不再弹系统对话框） */
+void open_license() {
+    if (!g_app) return;
+    set_page(PAGE_LICENSE);
+    if (g_app->licText) SetFocus(g_app->licText);
 }
 
 void open_project() {
@@ -2664,17 +2775,35 @@ void handle_command(int id, int code) {
         case IDC_S_VERIFY: verify_selected(); return;
         case IDC_S_LOGCLEAR: SetWindowTextW(a->logBox, L""); return;
         case IDC_T_ALGO256:
-            a->settings.algorithm = "sha256";
-            InvalidateRect(a->stAlgo256, nullptr, TRUE);
-            InvalidateRect(a->stAlgo1, nullptr, TRUE);
-            save_settings_silent();
-            return;
         case IDC_T_ALGO1:
-            a->settings.algorithm = "sha1";
-            InvalidateRect(a->stAlgo256, nullptr, TRUE);
-            InvalidateRect(a->stAlgo1, nullptr, TRUE);
+        case IDC_T_ALGO384:
+        case IDC_T_ALGO512: {
+            const char *name = id == IDC_T_ALGO256   ? "sha256"
+                               : id == IDC_T_ALGO1   ? "sha1"
+                               : id == IDC_T_ALGO384 ? "sha384"
+                                                     : "sha512";
+            std::vector<std::string> list = effective_algorithms(a->settings.algorithms);
+            const auto found = std::find(list.begin(), list.end(), std::string(name));
+            if (found != list.end()) {
+                // 至少保留一种算法，最后一项点了不取消
+                if (list.size() > 1) list.erase(found);
+            } else {
+                list.push_back(name);
+            }
+            // 固定顺序：SHA-1 → SHA-256 → SHA-384 → SHA-512
+            const char *order[] = {"sha1", "sha256", "sha384", "sha512"};
+            std::vector<std::string> sorted;
+            for (const char *item : order) {
+                if (std::find(list.begin(), list.end(), std::string(item)) != list.end()) sorted.push_back(item);
+            }
+            a->settings.algorithms = sorted;
+            HWND chips[] = {a->stAlgo1, a->stAlgo256, a->stAlgo384, a->stAlgo512};
+            for (HWND chip : chips) {
+                if (chip) InvalidateRect(chip, nullptr, TRUE);
+            }
             save_settings_silent();
             return;
+        }
         case IDC_T_TSON:
             a->settings.timestamp = !a->settings.timestamp;
             InvalidateRect(a->stTsOn, nullptr, TRUE);
@@ -2692,7 +2821,8 @@ void handle_command(int id, int code) {
             InvalidateRect(a->stShowKey, nullptr, TRUE);
             return;
         case IDC_T_RELOGIN: relogin(); return;
-        case IDC_T_LICENSE: show_license(); return;
+        case IDC_T_LICENSE: open_license(); return;
+        case IDC_LIC_BACK: set_page(PAGE_SETTINGS); return;
         case IDC_T_PROJECT: open_project(); return;
         default: break;
         }

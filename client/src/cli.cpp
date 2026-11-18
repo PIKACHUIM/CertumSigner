@@ -1,6 +1,7 @@
 #include "cli.h"
 
 #include "api.h"
+#include "digest.h"
 #include "gui.h"
 #include "pe.h"
 #include "pkcs7.h"
@@ -59,14 +60,15 @@ void print_usage() {
         << "用法：\n"
         << "  certumsigner sign <文件或目录>... [选项]\n"
         << "  certumsigner cert [--save <证书路径>]\n"
-        << "  certumsigner hash <文件> [--sha1]\n"
+        << "  certumsigner hash <文件> [--sha1|--sha256|--sha384|--sha512]\n"
         << "  certumsigner verify <文件>\n"
         << "  certumsigner config [--server URL] [--api-key KEY] [--tsa URL] [--show]\n"
         << "  certumsigner --gui\n\n"
         << "签名选项：\n"
         << "  --server <URL>       Worker 地址（默认取配置，例如 https://sign.example.com）\n"
         << "  --api-key <KEY>      Worker 后台创建的 csk_… Key\n"
-        << "  --sha1 | --sha256    摘要算法（默认 sha256）\n"
+        << "  --sha1|--sha256|--sha384|--sha512\n"
+        << "                      摘要算法，可叠加使用（默认 sha256）；每种算法各生成一个签名\n"
         << "  --no-timestamp       不请求 RFC3161 时间戳\n"
         << "  --tsa <URL>          时间戳服务（默认取配置，未配置时用 http://time.certum.pl/）\n"
         << "  --backup             修改前保留 <文件>.orig\n"
@@ -85,7 +87,7 @@ struct ParsedArgs {
     std::string api_key;
     std::string tsa_url;
     std::string save_path;
-    bool sha1 = false;
+    std::vector<std::string> algorithms;
     bool no_timestamp = false;
     bool backup = false;
     bool recursive = false;
@@ -149,9 +151,24 @@ bool parse_args(int argc, char **argv, ParsedArgs &out, std::string &err) {
         } else if (take_value("--save", value)) {
             out.save_path = value;
         } else if (arg == "--sha1") {
-            out.sha1 = true;
+            out.algorithms.push_back("sha1");
         } else if (arg == "--sha256") {
-            out.sha1 = false;
+            out.algorithms.push_back("sha256");
+        } else if (arg == "--sha384") {
+            out.algorithms.push_back("sha384");
+        } else if (arg == "--sha512") {
+            out.algorithms.push_back("sha512");
+        } else if (take_value("--alg", value)) {
+            // --alg sha256,sha384 也可以一次写多个
+            std::string current;
+            for (char ch : value + ",") {
+                if (ch == ',' || ch == ' ' || ch == ';') {
+                    if (!current.empty()) out.algorithms.push_back(current);
+                    current.clear();
+                } else {
+                    current.push_back(ch);
+                }
+            }
         } else if (arg == "--no-timestamp") {
             out.no_timestamp = true;
         } else if (arg == "--backup") {
@@ -277,16 +294,20 @@ int run_cert(const ParsedArgs &args) {
 
 int run_hash(const ParsedArgs &args) {
     if (args.positionals.empty()) {
-        std::cerr << "用法：certumsigner hash <文件> [--sha1]\n";
+        std::cerr << "用法：certumsigner hash <文件> [--sha1|--sha256|--sha384|--sha512]\n";
         return 1;
     }
+    const std::vector<std::string> algorithms = effective_algorithms(args.algorithms);
     std::string digest;
     std::string err;
-    if (!pe::authentihash(args.positionals[0], args.sha1, digest, err)) {
-        std::cerr << err << "\n";
-        return 1;
+    for (const std::string &algorithm : algorithms) {
+        if (!pe::authentihash(args.positionals[0], algorithm, digest, err)) {
+            std::cerr << err << "\n";
+            return 1;
+        }
+        if (algorithms.size() > 1) std::cout << digest::display_name(algorithm) << "  ";
+        std::cout << to_hex(digest) << "\n";
     }
-    std::cout << to_hex(digest) << "\n";
     return 0;
 }
 
@@ -381,7 +402,8 @@ int run_sign(const ParsedArgs &args) {
     Signer signer;
     signer.options.server = settings.server;
     signer.options.api_key = settings.api_key;
-    signer.options.algorithm = args.sha1 ? "sha1" : "sha256";
+    signer.options.algorithms = args.algorithms.empty() ? settings.algorithms : args.algorithms;
+    signer.options.algorithms = effective_algorithms(signer.options.algorithms);
     signer.options.timestamp = !args.no_timestamp;
     signer.options.backup = args.backup;
     // 优先级：命令行 --tsa > 配置文件 tsa_url > 内置时间戳服务（默认 DigiCert）
@@ -392,7 +414,12 @@ int run_sign(const ParsedArgs &args) {
 
     if (!args.quiet) {
         std::cout << "服务地址: " << settings.server << "\n";
-        std::cout << "算法    : " << (args.sha1 ? "SHA1" : "SHA256") << "\n";
+        std::string joined;
+        for (const std::string &algorithm : signer.options.algorithms) {
+            if (!joined.empty()) joined += " + ";
+            joined += digest::display_name(algorithm);
+        }
+        std::cout << "算法    : " << joined << "\n";
     }
 
     if (!signer.prepare(err)) {

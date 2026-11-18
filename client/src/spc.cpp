@@ -1,17 +1,16 @@
 #include "spc.h"
 
 #include "der.h"
+#include "digest.h"
 
 namespace cs {
 namespace spc {
 
 namespace {
 const char *kSpcPeImageData = "1.3.6.1.4.1.311.2.1.15";
-const char *kSha1 = "1.3.14.3.2.26";
-const char *kSha256 = "2.16.840.1.101.3.4.2.1";
 } // namespace
 
-std::string build(const std::string &file_digest, bool sha1) {
+std::string build(const std::string &file_digest, const std::string &algorithm) {
     // SpcString ::= unicode [0] IMPLICIT BMPSTRING
     // 实际签出来的（Certum 自己的 PE 也一样）是空串，而不是微软文档里的 ">>"
     std::string spc_string = der::context_primitive(0, der::bmp_string(""));
@@ -29,8 +28,9 @@ std::string build(const std::string &file_digest, bool sha1) {
     std::string attribute = der::sequence(der::oid(kSpcPeImageData) + pe_image);
 
     // DigestInfo ::= SEQUENCE { digestAlgorithm, digest OCTET STRING }
-    std::string digest_info = der::sequence(
-        der::algorithm_identifier(sha1 ? kSha1 : kSha256) + der::octet_string(file_digest));
+    const char *oid = digest::oid(algorithm);
+    if (!oid) return {};
+    std::string digest_info = der::sequence(der::algorithm_identifier(oid) + der::octet_string(file_digest));
 
     return der::sequence(attribute + digest_info);
 }
