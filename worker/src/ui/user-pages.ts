@@ -392,7 +392,7 @@ export function userDashboardPage(data: UserPageData): string {
     .map(
       (key) => `<tr>
         <td><strong>${escapeHtml(key.name)}</strong><div class="small muted mono">${escapeHtml(key.prefix)}…</div></td>
-        <td class="small">${escapeHtml(
+        <td class="small hide-xs">${escapeHtml(
           key.credentialId ? credName.get(key.credentialId) ?? t("keys.deletedCred") : t("keys.defaultCred"),
         )}</td>
         <td>${key.enabled ? pill(t("common.enabled"), "ok") : pill(t("common.disabled"), "bad")}</td>
@@ -401,7 +401,7 @@ export function userDashboardPage(data: UserPageData): string {
             ? `${data.usage[key.id] ?? 0}/${key.dailyQuota}`
             : `${data.usage[key.id] ?? 0}/${t("common.unlimited")}`
         }</td>
-        <td class="small">${key.totalSigns}</td>
+        <td class="small hide-xs">${key.totalSigns}</td>
         <td class="small muted">${key.lastUsedAt ? fmtTime(key.lastUsedAt) : escapeHtml(t("common.never"))}</td>
         <td><div class="row">
           <button class="btn btn--sm btn--ghost" type="button" data-open="quota-${escapeHtml(key.id)}">${escapeHtml(
@@ -519,9 +519,9 @@ export function userDashboardPage(data: UserPageData): string {
       </div>
       <div class="table-wrap">
         <table class="table">
-          <thead><tr><th>${escapeHtml(t("keys.name"))}</th><th>${escapeHtml(t("keys.cert"))}</th><th>${escapeHtml(
+          <thead><tr><th>${escapeHtml(t("keys.name"))}</th><th class="hide-xs">${escapeHtml(t("keys.cert"))}</th><th>${escapeHtml(
             t("common.status"),
-          )}</th><th>${escapeHtml(t("overview.todaySignatures"))}</th><th>${escapeHtml(t("users.total"))}</th><th>${escapeHtml(
+          )}</th><th>${escapeHtml(t("overview.todaySignatures"))}</th><th class="hide-xs">${escapeHtml(t("users.total"))}</th><th>${escapeHtml(
             t("users.lastUsed"),
           )}</th><th></th></tr></thead>
           <tbody>${rows || emptyRow(7, t("me.noKey"))}</tbody>

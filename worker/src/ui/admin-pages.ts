@@ -124,15 +124,15 @@ export function adminDashboardPage(data: DashboardData): string {
     .map((cred) => {
       const status = data.statuses[cred.id] ?? {};
       return `<tr>
-        <td><strong>${escapeHtml(cred.label)}</strong><div class="small muted">${escapeHtml(cred.email)}</div></td>
+        <td><strong>${escapeHtml(cred.label)}</strong><div class="small muted hide-xs">${escapeHtml(cred.email)}</div></td>
         <td>${cred.enabled ? pill(t("common.enabled"), "ok") : pill(t("common.disabled"), "bad")}</td>
-        <td class="small mono">${
+        <td class="small mono hide-xs">${
           cred.certificateSha1 ? escapeHtml(cred.certificateSha1.slice(0, 16) + "…") : escapeHtml(t("cred.firstCard"))
         }</td>
         <td class="small">${
           status.sessionExpiresAt ? fmtTime(status.sessionExpiresAt) : `<span class="muted">${escapeHtml(t("cred.notLoggedIn"))}</span>`
         }</td>
-        <td class="small mono">${status.cardSerial ? escapeHtml(status.cardSerial) : "—"}</td>
+        <td class="small mono hide-xs">${status.cardSerial ? escapeHtml(status.cardSerial) : "—"}</td>
       </tr>`;
     })
     .join("");
@@ -143,7 +143,7 @@ export function adminDashboardPage(data: DashboardData): string {
       const id = logDialogId(log);
       return `<tr>
         <td class="small">${fmtTime(log.at)}</td>
-        <td class="small">${escapeHtml(log.keyName)}</td>
+        <td class="small hide-xs">${escapeHtml(log.keyName)}</td>
         <td class="small">${
           log.userId ? escapeHtml(data.userName.get(log.userId) ?? t("keys.deletedUser")) : escapeHtml(t("common.platform"))
         }</td>
@@ -186,7 +186,7 @@ export function adminDashboardPage(data: DashboardData): string {
         <p class="hint">${escapeHtml(t("overview.credentialHint"))}</p>
         <div class="table-wrap">
           <table class="table">
-            <thead><tr><th>${escapeHtml(t("cred.label"))}</th><th>${escapeHtml(t("common.status"))}</th><th>${escapeHtml(t("cred.certSha1"))}</th><th>${escapeHtml(t("cred.session"))}</th><th>${escapeHtml(t("cred.card"))}</th></tr></thead>
+            <thead><tr><th>${escapeHtml(t("cred.label"))}</th><th>${escapeHtml(t("common.status"))}</th><th class="hide-xs">${escapeHtml(t("cred.certSha1"))}</th><th>${escapeHtml(t("cred.session"))}</th><th class="hide-xs">${escapeHtml(t("cred.card"))}</th></tr></thead>
             <tbody>${credentialRows || emptyRow(5, t("overview.noCred"))}</tbody>
           </table>
         </div>
@@ -196,7 +196,7 @@ export function adminDashboardPage(data: DashboardData): string {
         <p class="hint">${escapeHtml(t("overview.recentHint"))}</p>
         <div class="table-wrap">
           <table class="table">
-            <thead><tr><th>${escapeHtml(t("logs.time"))}</th><th>Key</th><th>${escapeHtml(
+            <thead><tr><th>${escapeHtml(t("logs.time"))}</th><th class="hide-xs">Key</th><th>${escapeHtml(
               t("logs.user"),
             )}</th><th class="hide-xs">${escapeHtml(t("logs.algorithm"))}</th><th>${escapeHtml(t("logs.result"))}</th><th class="hide-xs">${escapeHtml(t("logs.duration"))}</th><th></th></tr></thead>
             <tbody>${logRows || emptyRow(7, t("logs.empty"))}</tbody>
@@ -241,13 +241,13 @@ export function adminUsersPage(data: UsersPageData): string {
           ? pill(t("common.expired"), "warn")
           : pill(t("common.normal"), "ok");
       return `<tr>
-        <td><strong>${escapeHtml(user.username)}</strong><div class="small muted mono">${escapeHtml(user.id)}</div></td>
+        <td><strong>${escapeHtml(user.username)}</strong><div class="small muted mono hide-xs">${escapeHtml(user.id)}</div></td>
         <td>${status}</td>
         <td class="small">${user.expiresAt ? fmtTime(user.expiresAt) : escapeHtml(t("common.forever"))}</td>
-        <td class="small">${escapeHtml(t("common.items", { n: user.credentialIds.length }))}</td>
-        <td class="small">${user.dailyQuota ? escapeHtml(t("common.perDay", { n: user.dailyQuota })) : escapeHtml(t("common.unlimited"))}</td>
+        <td class="small hide-xs">${escapeHtml(t("common.items", { n: user.credentialIds.length }))}</td>
+        <td class="small hide-xs">${user.dailyQuota ? escapeHtml(t("common.perDay", { n: user.dailyQuota })) : escapeHtml(t("common.unlimited"))}</td>
         <td class="small">${data.keyCounts[user.id] ?? 0}</td>
-        <td class="small muted">${user.lastLoginAt ? fmtTime(user.lastLoginAt) : escapeHtml(t("common.never"))}</td>
+        <td class="small muted hide-xs">${user.lastLoginAt ? fmtTime(user.lastLoginAt) : escapeHtml(t("common.never"))}</td>
         <td><div class="row">
           <a class="btn btn--sm" href="/admin/users/${escapeHtml(user.id)}">${escapeHtml(t("common.edit"))}</a>
           <form class="inline" method="post" action="/admin/users/${escapeHtml(user.id)}/toggle">
@@ -310,9 +310,9 @@ export function adminUsersPage(data: UsersPageData): string {
         <table class="table">
           <thead><tr><th>${escapeHtml(t("users.user"))}</th><th>${escapeHtml(t("common.status"))}</th><th>${escapeHtml(
             t("users.expires"),
-          )}</th><th>${escapeHtml(t("users.certs"))}</th><th>${escapeHtml(t("users.quota"))}</th><th>${escapeHtml(
+          )}</th><th class="hide-xs">${escapeHtml(t("users.certs"))}</th><th class="hide-xs">${escapeHtml(t("users.quota"))}</th><th>${escapeHtml(
             t("users.keys"),
-          )}</th><th>${escapeHtml(t("users.lastLogin"))}</th><th></th></tr></thead>
+          )}</th><th class="hide-xs">${escapeHtml(t("users.lastLogin"))}</th><th></th></tr></thead>
           <tbody>${rows || emptyRow(8, t("users.empty"))}</tbody>
         </table>
       </div>
@@ -525,7 +525,7 @@ export function adminCredentialsPage(data: CredentialsPageData): string {
         <td class="small">${
           status.sessionExpiresAt ? fmtTime(status.sessionExpiresAt) : `<span class="muted">${escapeHtml(t("cred.notLoggedIn"))}</span>`
         }</td>
-        <td class="small mono">${status.cardSerial ? escapeHtml(status.cardSerial) : "—"}</td>
+        <td class="small mono hide-xs">${status.cardSerial ? escapeHtml(status.cardSerial) : "—"}</td>
         <td><div class="row">
           <button class="btn btn--sm" type="button" data-open="dlg-cred-${escapeHtml(cred.id)}">${escapeHtml(
             t("common.edit"),
@@ -630,7 +630,7 @@ export function adminCredentialsPage(data: CredentialsPageData): string {
         <table class="table">
           <thead><tr><th>${escapeHtml(t("cred.label"))}</th><th class="hide-xs">${escapeHtml(t("cred.certSha1"))}</th><th>${escapeHtml(
             t("common.status"),
-          )}</th><th>${escapeHtml(t("cred.session"))}</th><th>${escapeHtml(t("cred.card"))}</th><th></th></tr></thead>
+          )}</th><th>${escapeHtml(t("cred.session"))}</th><th class="hide-xs">${escapeHtml(t("cred.card"))}</th><th></th></tr></thead>
           <tbody>${rows || emptyRow(6, t("cred.empty"))}</tbody>
         </table>
       </div>
@@ -662,13 +662,13 @@ export function adminKeysPage(data: KeysPageData): string {
             ? escapeHtml(userName.get(key.userId) ?? t("keys.deletedUser"))
             : `<span class="muted">${escapeHtml(t("keys.platformKey"))}</span>`
         }</td>
-        <td class="small">${escapeHtml(
+        <td class="small hide-xs">${escapeHtml(
           key.credentialId ? credName.get(key.credentialId) ?? t("keys.deletedCred") : t("keys.defaultCred"),
         )}</td>
         <td>${key.enabled ? pill(t("common.enabled"), "ok") : pill(t("common.disabled"), "bad")}</td>
         <td class="small">${key.dailyQuota ? escapeHtml(t("common.perDay", { n: key.dailyQuota })) : escapeHtml(t("common.unlimited"))}</td>
-        <td class="small">${key.totalSigns}</td>
-        <td class="small muted">${key.lastUsedAt ? fmtTime(key.lastUsedAt) : escapeHtml(t("common.never"))}</td>
+        <td class="small hide-xs">${key.totalSigns}</td>
+        <td class="small muted hide-xs">${key.lastUsedAt ? fmtTime(key.lastUsedAt) : escapeHtml(t("common.never"))}</td>
         <td><div class="row">
           <form class="inline" method="post" action="/admin/keys/${escapeHtml(key.id)}/toggle">
             <input type="hidden" name="csrf" value="${escapeHtml(data.csrf)}">
@@ -736,11 +736,11 @@ export function adminKeysPage(data: KeysPageData): string {
       </div>
       <div class="table-wrap">
         <table class="table">
-          <thead><tr><th>${escapeHtml(t("keys.name"))}</th><th>${escapeHtml(t("keys.owner"))}</th><th>${escapeHtml(
+          <thead><tr><th>${escapeHtml(t("keys.name"))}</th><th>${escapeHtml(t("keys.owner"))}</th><th class="hide-xs">${escapeHtml(
             t("keys.cert"),
-          )}</th><th>${escapeHtml(t("common.status"))}</th><th>${escapeHtml(t("users.quota"))}</th><th>${escapeHtml(
+          )}</th><th>${escapeHtml(t("common.status"))}</th><th>${escapeHtml(t("users.quota"))}</th><th class="hide-xs">${escapeHtml(
             t("users.total"),
-          )}</th><th>${escapeHtml(t("users.lastUsed"))}</th><th></th></tr></thead>
+          )}</th><th class="hide-xs">${escapeHtml(t("users.lastUsed"))}</th><th></th></tr></thead>
           <tbody>${rows || emptyRow(8, t("keys.empty"))}</tbody>
         </table>
       </div>
@@ -804,7 +804,7 @@ export function adminLogsPage(data: LogsPageData): string {
           log.userId ? escapeHtml(data.userName.get(log.userId) ?? t("keys.deletedUser")) : escapeHtml(t("common.platform"))
         }</td>
         <td class="small hide-xs">${log.algorithm.toUpperCase()} × ${log.count}</td>
-        <td class="small mono">${escapeHtml(log.digestPrefix)}…</td>
+        <td class="small mono hide-xs">${escapeHtml(log.digestPrefix)}…</td>
         <td>${log.ok ? pill(t("common.success"), "ok") : pill(t("common.failure"), "bad")}</td>
         <td class="small muted hide-xs">${log.durationMs} ms</td>
         <td class="small muted mono hide-xs">${escapeHtml(log.ip)}</td>
@@ -824,7 +824,7 @@ export function adminLogsPage(data: LogsPageData): string {
       <p class="hint" style="margin:0 0 12px">${escapeHtml(t("overview.recentHint"))}</p>
       <div class="table-wrap">
         <table class="table">
-          <thead><tr><th>${escapeHtml(t("logs.time"))}</th><th>Key</th><th>${escapeHtml(t("logs.user"))}</th><th class="hide-xs">${escapeHtml(t("logs.algorithm"))}</th><th>${escapeHtml(t("logs.digest"))}</th><th>${escapeHtml(t("logs.result"))}</th><th class="hide-xs">${escapeHtml(t("logs.duration"))}</th><th class="hide-xs">${escapeHtml(t("logs.ip"))}</th><th></th></tr></thead>
+          <thead><tr><th>${escapeHtml(t("logs.time"))}</th><th>Key</th><th>${escapeHtml(t("logs.user"))}</th><th class="hide-xs">${escapeHtml(t("logs.algorithm"))}</th><th class="hide-xs">${escapeHtml(t("logs.digest"))}</th><th>${escapeHtml(t("logs.result"))}</th><th class="hide-xs">${escapeHtml(t("logs.duration"))}</th><th class="hide-xs">${escapeHtml(t("logs.ip"))}</th><th></th></tr></thead>
           <tbody>${rows || emptyRow(9, t("logs.empty"))}</tbody>
         </table>
       </div>

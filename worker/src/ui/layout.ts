@@ -157,6 +157,8 @@ ${accentCss()}
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
 body {
+  max-width: 100%;
+  overflow-x: clip; /* 兜底：任何一处撑宽都不让整页左右晃 */
   background: var(--bg);
   background-image: var(--bg-glow);
   background-repeat: no-repeat;
@@ -266,7 +268,10 @@ html[data-mode="dark"] .side { border-right-color: var(--line); }
 .table tr:last-child td { border-bottom: 0; }
 .table tbody tr:hover td { background: color-mix(in srgb, var(--brand) 4%, transparent); }
 .table .empty { color: var(--muted); text-align: center; padding: 26px 10px; }
-.table-wrap { overflow-x: auto; }
+.table-wrap {
+  overflow-x: auto; overscroll-behavior-x: contain; -webkit-overflow-scrolling: touch;
+  max-width: 100%;
+}
 
 .pill {
   display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border-radius: 999px;
@@ -458,16 +463,17 @@ textarea { min-height: 82px; resize: vertical; font-family: ui-monospace, Menlo,
 }
 
 @media (max-width: 960px) {
-  .shell { grid-template-columns: 1fr; align-content: start; }
+  /* minmax(0, 1fr)：否则侧栏里不换行的内容会把整个网格顶宽，页面出现横向滚动 */
+  .shell { grid-template-columns: minmax(0, 1fr); align-content: start; }
   .side {
     position: static; height: auto; flex-direction: row; align-items: center; align-content: flex-start;
-    gap: 10px 12px; flex-wrap: wrap;
+    gap: 10px 12px; flex-wrap: wrap; min-width: 0;
     border-right: 0; border-bottom: 1px solid var(--side-line); padding: 12px 14px;
   }
   .brand .tag { display: none; }
-  .brand, .nav, .nav a, .side-foot { flex: none; }
-  .side-foot { white-space: nowrap; }
-  .nav { flex-direction: row; }
+  .brand, .nav a, .side-foot { flex: none; }
+  .side-foot { white-space: nowrap; min-width: 0; }
+  .nav { flex-direction: row; flex-wrap: wrap; min-width: 0; row-gap: 2px; }
   .nav a.on::before { display: none; }
   .side-foot { margin: 0 0 0 auto; display: flex; align-items: center; gap: 12px; }
   .main { padding: 18px 16px 40px; }
@@ -487,19 +493,24 @@ textarea { min-height: 82px; resize: vertical; font-family: ui-monospace, Menlo,
   /* 手机：品牌与身份同一行，导航独占下一行，省掉一行高度 */
   .side { padding: 10px 12px; gap: 8px 10px; }
   .side-foot { order: 2; }
-  .nav { order: 3; flex-basis: 100%; gap: 2px; }
-  .nav a { padding: 7px 9px; font-size: 12.5px; gap: 7px; }
+  .main { padding: 14px 12px 36px; }
+  /* 导航去掉图标后 6 项能挤进一行；真放不下时按行折行，不做横向滚动 */
+  .nav { order: 3; flex-basis: 100%; gap: 2px 4px; flex-wrap: wrap; }
+  .nav a { padding: 6px 9px; font-size: 12.5px; gap: 7px; }
+  .nav a svg { display: none; }
   .head h1 { font-size: 19px; }
   .card { padding: 14px; }
   .card > h2 { font-size: 15px; }
   .table { font-size: 12.5px; }
-  .table th { padding: 8px 8px; }
-  .table td { padding: 9px 8px; }
+  .table th { padding: 8px 6px; }
+  .table td { padding: 9px 6px; overflow-wrap: break-word; }
   .table td:last-child, .table th:last-child { white-space: nowrap; }
   .table td.small { white-space: nowrap; }
   .table td .row { flex-wrap: wrap; gap: 6px; }
   .btn--sm { padding: 4px 8px; font-size: 12px; }
   .hide-xs { display: none; }
+  .modal__card { padding: 16px 14px 14px; border-radius: 16px; }
+  .modal { max-width: calc(100vw - 16px); }
 }
 `;
 
