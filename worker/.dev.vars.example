@@ -1,29 +1,19 @@
 # 复制为 .dev.vars 后填写，仅用于本地 wrangler dev（不要提交真实值）
-CERTUM_EMAIL=you@example.com
+#
+# 线上运行时配置（基础地址、Certum API、TSA、发件人、证书链、签名日志）都在后台
+# 「系统设置 → 服务与地址」里改，存 KV；这里只保留本地跑起来必须的几项。
 
-# 两种写法任选其一：
-# 1) 完整 otpauth URI（Certum 后台“显示密钥”给出的二维码内容）
-CERTUM_OTP_URI=otpauth://totp/Certum:you@example.com?secret=XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX&algorithm=SHA256&digits=6&period=30
-# 2) 只给 Base32 种子 + 参数
-CERTUM_OTP_SECRET=XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
-CERTUM_OTP_ALGORITHM=SHA256
-CERTUM_OTP_DIGITS=6
-CERTUM_OTP_PERIOD=30
-
-# 账号下有多张卡片时，用证书 DER 的 SHA-1 指纹指定用哪张（openssl x509 -fingerprint -sha1）
+# 只有想用「从环境变量导入凭据」时才需要；平时在后台凭据页填邮箱 + OTP 种子即可
+# CERTUM_EMAIL=you@example.com
+# CERTUM_OTP_URI=otpauth://totp/Certum:you@example.com?secret=XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX&algorithm=SHA256&digits=6&period=30
+# CERTUM_OTP_SECRET=XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
 # CERTUM_CERTIFICATE_SHA1=0000000000000000000000000000000000000000
 
-# 旧版管理员登录密码（/admin）。留空也行：首次打开 /admin 会进初始化页，
-# 账号存在 KV 里，之后这里填什么都不再使用
-ADMIN_PASSWORD=change-me-please
+# 旧版管理员密码。留空也行：首次打开 /admin 会进初始化页，账号存在 KV 里
+# ADMIN_PASSWORD=change-me-please
 
-# 用于给管理员会话 cookie 签名，随便一串 32+ 字符随机值
-SESSION_SECRET=please-change-this-to-a-long-random-string
+# 可选：会话签名密钥；不填则用初始化时自动生成并存在 KV 的随机值
+# SESSION_SECRET=
 
-# /v1/timestamp 转发用的 RFC3161 服务（默认 http://time.certum.pl/）
-# TSA_UPSTREAM=http://timestamp.digicert.com
-
-# 可选：注册 / 找回密码的发信（不填则这两个功能不可用）
+# 可选：注册 / 找回密码的发信（不填则这两个功能不可用；发件人可在后台设置）
 # RESEND_API_KEY=re_xxxxxxxxxxxxxxxxxxxxxxxx
-# RESEND_FROM=CertumSigner <noreply@example.com>
-# PUBLIC_BASE_URL=http://127.0.0.1:8787

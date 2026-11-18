@@ -19,6 +19,7 @@ import {
   type NavItem,
 } from "./layout";
 import type { SystemSettings } from "../store/settings";
+import type { RuntimeConfig } from "../store/config";
 
 export interface CredentialStatus {
   sessionExpiresAt?: number;
@@ -892,6 +893,7 @@ export function adminLogsPage(data: LogsPageData): string {
 
 export interface SettingsPageData extends AdminNavData {
   settings: SystemSettings;
+  config: RuntimeConfig;
   mailReady: boolean;
   /** account = KV 里的管理员账号；env = 旧版 ADMIN_PASSWORD */
   adminMode: "unconfigured" | "account" | "env";
@@ -927,6 +929,43 @@ export function adminSettingsPage(data: SettingsPageData): string {
           ${toggle("resetEnabled", t("settings.reset"), t("settings.resetHint"), settings.resetEnabled)}
           ${toggle("emailCaptcha", t("settings.emailCaptcha"), t("settings.emailCaptchaHint"), settings.emailCaptcha)}
         </div>
+      </div>
+      <div class="card" style="margin-bottom:16px">
+        <h2>${escapeHtml(t("settings.services"))}</h2>
+        <p class="small muted" style="margin:0 0 12px">${escapeHtml(t("settings.servicesHint"))}</p>
+        <div class="form-grid">
+          <label class="field">${escapeHtml(t("settings.publicBaseUrl"))}
+            <input type="url" name="publicBaseUrl" value="${escapeHtml(data.config.publicBaseUrl)}"
+              placeholder="https://certum.example.com">
+            <span class="small muted">${escapeHtml(t("settings.publicBaseUrlHint"))}</span>
+          </label>
+          <label class="field">${escapeHtml(t("settings.certumApiBase"))}
+            <input type="url" name="certumApiBase" value="${escapeHtml(data.config.certumApiBase)}"
+              placeholder="https://cloudsign.webnotarius.pl">
+            <span class="small muted">${escapeHtml(t("settings.certumApiBaseHint"))}</span>
+          </label>
+          <label class="field">${escapeHtml(t("settings.tsaUpstream"))}
+            <input type="url" name="tsaUpstream" value="${escapeHtml(data.config.tsaUpstream)}"
+              placeholder="http://time.certum.pl/">
+            <span class="small muted">${escapeHtml(t("settings.tsaUpstreamHint"))}</span>
+          </label>
+          <label class="field">${escapeHtml(t("settings.resendFrom"))}
+            <input type="text" name="resendFrom" value="${escapeHtml(data.config.resendFrom)}"
+              placeholder="CertumSigner &lt;noreply@example.com&gt;">
+            <span class="small muted">${escapeHtml(t("settings.resendFromHint"))}</span>
+          </label>
+          <label class="field wide">${escapeHtml(t("settings.chainPem"))}
+            <textarea name="certumChainPem" rows="4" spellcheck="false"
+              placeholder="-----BEGIN CERTIFICATE-----">${escapeHtml(data.config.certumChainPem)}</textarea>
+            <span class="small muted">${escapeHtml(t("settings.chainPemHint"))}</span>
+          </label>
+        </div>
+        <div class="checks" style="margin-top:6px">
+          <label><input type="checkbox" name="logSignatures" value="1" ${
+            data.config.logSignatures ? "checked" : ""
+          }> ${escapeHtml(t("settings.logSignatures"))}</label>
+        </div>
+        <p class="small muted" style="margin:6px 0 0">${escapeHtml(t("settings.logSignaturesHint"))}</p>
       </div>
       <div class="card" style="margin-bottom:16px">
         <h2>${escapeHtml(t("settings.mail"))} ${

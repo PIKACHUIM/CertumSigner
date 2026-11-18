@@ -8,10 +8,11 @@
  */
 import type { CardCache, CertumSession, CredentialRecord, Env, SignAlgorithm } from "../types";
 import { CertumApi, type CardCertificate } from "./api";
-import { resolveEndpoints } from "./config";
+import { resolveEndpoints, type CertumEndpoints } from "./config";
 import { CertumError } from "./errors";
 import { loginWithOtp, refreshToken } from "./login";
-import { credentialOtp, CRED_CARD_PREFIX, CRED_SESSION_PREFIX } from "../store/credentials";
+import { credentialOtp, CRED_CARD_PREFIX, CRED_SESSION_PREFIX } from "../store/credentials.ts";
+import { readConfig } from "../store/config.ts";
 import { pemToDer, splitPemChain } from "../lib/pem";
 import { normalizeHex, sha1Hex, sha256Hex } from "../lib/encoding";
 
@@ -20,6 +21,16 @@ const CARD_TTL_MS = 12 * 60 * 60 * 1000;
 
 const memorySessions = new Map<string, CertumSession>();
 const pendingLogins = new Map<string, Promise<CertumSession>>();
+
+/** API 根地址来自 KV 配置（后台可改），客户端常量仍用环境变量兜底 */
+async function endpointsFor(env: Env): Promise<CertumEndpoints> {
+  const config = await readConfig(env);
+  return resolveEndpoints({
+    apiBase: config.certumApiBase,
+    clientId: env.CERTUM_CLIENT_ID,
+    clientSecret: env.CERTUM_CLIENT_SECRET,
+  });
+}
 
 function sessionKey(cred: CredentialRecord): string {
   return `${CRED_SESSION_PREFIX}${cred.id}`;
@@ -43,7 +54,7 @@ async function saveSession(env: Env, cred: CredentialRecord, session: CertumSess
 
 async function loginFresh(env: Env, cred: CredentialRecord): Promise<CertumSession> {
   requireEnabled(cred);
-  const endpoints = resolveEndpoints(env);
+  const endpoints = await endpointsFor(env);
   const otp = credentialOtp(cred);
   const result = await loginWithOtp(endpoints, cred.email.trim(), otp, 3);
   const now = Date.now();
@@ -78,7 +89,7 @@ export async function getSessionFor(
     }
 
     if (cached?.refreshToken) {
-      const refreshed = await refreshToken(resolveEndpoints(env), cached.refreshToken);
+      const refreshed = await refreshToken(await endpointsFor(env), cached.refreshToken);
       if (refreshed) {
         const now = Date.now();
         const session: CertumSession = {
@@ -127,7 +138,7 @@ export async function peekCard(env: Env, cred: CredentialRecord): Promise<CardCa
 /** 拉卡片 + 证书，结果缓存到 KV */
 export async function refreshCardFor(env: Env, cred: CredentialRecord): Promise<CardCache> {
   const session = await getSessionFor(env, cred);
-  const api = new CertumApi(resolveEndpoints(env), session.token);
+  const api = new CertumApi(await endpointsFor(env), session.token);
 
   const cards = await api.listCards();
   if (cards.length === 0) throw new CertumError("no_card", "账号下没有可用的云签名卡片", 404);
@@ -194,8 +205,9 @@ export async function getCardFor(
   return refreshCardFor(env, cred);
 }
 
-export function chainPem(env: Env): string[] {
-  return splitPemChain(env.CERTUM_CHAIN_PEM ?? "");
+export async function chainPem(env: Env): Promise<string[]> {
+  const config = await readConfig(env);
+  return splitPemChain(config.certumChainPem);
 }
 
 /**
@@ -209,7 +221,7 @@ export async function signDigestsFor(
   algorithm: SignAlgorithm,
 ): Promise<{ signatures: string[]; card: CardCache }> {
   const cache = await getCardFor(env, cred);
-  const endpoints = resolveEndpoints(env);
+  const endpoints = await endpointsFor(env);
 
   const attempt = async (force: boolean): Promise<string[]> => {
     const session = await getSessionFor(env, cred, { force });

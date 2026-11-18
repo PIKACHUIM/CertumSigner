@@ -5,6 +5,7 @@
  * 对签名代理来说这个精度足够，换取的是零额外依赖。
  */
 import type { Env, SignAlgorithm, SignLogRecord, StatsBucket } from "../types";
+import { readConfig } from "./config.ts";
 
 const TOTAL_KEY = "stats:total";
 const DAY_PREFIX = "stats:day:";
@@ -58,7 +59,11 @@ export async function recordSign(
   },
 ): Promise<void> {
   const dayKey = `${DAY_PREFIX}${today()}`;
-  const [total, daily] = await Promise.all([readBucket(env, TOTAL_KEY), readBucket(env, dayKey)]);
+  const [total, daily, config] = await Promise.all([
+    readBucket(env, TOTAL_KEY),
+    readBucket(env, dayKey),
+    readConfig(env),
+  ]);
 
   bump(total, input.algorithm, input.ok, input.count);
   bump(daily, input.algorithm, input.ok, input.count);
@@ -68,7 +73,7 @@ export async function recordSign(
     writeBucket(env, dayKey, daily, 400 * 24 * 60 * 60),
   ];
 
-  if (env.LOG_SIGNATURES !== "0") {
+  if (config.logSignatures) {
     const inverted = String(9_999_999_999_999 - input.record.at).padStart(13, "0");
     writes.push(
       env.CERTUM_KV.put(`${LOG_PREFIX}${inverted}:${input.record.id}`, JSON.stringify(input.record), {

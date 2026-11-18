@@ -22,12 +22,12 @@ export const DEFAULT_API_BASE = "https://cloudsign.webnotarius.pl";
 export const DEFAULT_CLIENT_ID = "44rvDKKEWY53a7xBeF5w";
 export const DEFAULT_CLIENT_SECRET = "BRSE2u2nY3p3m77QHTt8";
 
-export function resolveEndpoints(env: {
-  CERTUM_API_BASE?: string;
-  CERTUM_CLIENT_ID?: string;
-  CERTUM_CLIENT_SECRET?: string;
+export function resolveEndpoints(options: {
+  apiBase?: string;
+  clientId?: string;
+  clientSecret?: string;
 }): CertumEndpoints {
-  const apiBase = (env.CERTUM_API_BASE?.trim() || DEFAULT_API_BASE).replace(/\/+$/, "");
+  const apiBase = (options.apiBase?.trim() || DEFAULT_API_BASE).replace(/\/+$/, "");
   return {
     apiBase,
     authorizeUrl: `${apiBase}/idp/oauth2.0/authorize`,
@@ -35,7 +35,7 @@ export function resolveEndpoints(env: {
     tokenUrl: `${apiBase}/idp/oauth2.0/accessToken`,
     scope: `${apiBase}/idp/oauth2.0/profile`,
     redirectUri: `${apiBase}/redirect`,
-    clientId: env.CERTUM_CLIENT_ID?.trim() || DEFAULT_CLIENT_ID,
-    clientSecret: env.CERTUM_CLIENT_SECRET?.trim() || DEFAULT_CLIENT_SECRET,
+    clientId: options.clientId?.trim() || DEFAULT_CLIENT_ID,
+    clientSecret: options.clientSecret?.trim() || DEFAULT_CLIENT_SECRET,
   };
 }

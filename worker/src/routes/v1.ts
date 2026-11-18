@@ -20,6 +20,7 @@ import { bumpDailyUsage, bumpUserDailyUsage, getDailyUsage, getUserDailyUsage, t
 import { getCredential, pickDefaultCredential } from "../store/credentials";
 import { getUser } from "../store/users";
 import { readStats, recordSign } from "../store/stats";
+import { readConfig } from "../store/config.ts";
 
 export type AppEnv = {
   Bindings: Env;
@@ -213,7 +214,7 @@ v1.post("/sign", async (c) => {
       signatures: signatures.map((sig) => sig.toLowerCase()),
       certificate: {
         pem: card.certificatePem,
-        chain: chainPem(c.env),
+        chain: await chainPem(c.env),
         serial: card.serial,
         fingerprint1: card.fingerprint1 ?? null,
         fingerprint256: card.fingerprint256,
@@ -265,7 +266,7 @@ v1.get("/certificate", async (c) => {
       ok: true,
       certificate: {
         pem: card.certificatePem,
-        chain: chainPem(c.env),
+        chain: await chainPem(c.env),
         serial: card.serial,
         fingerprint1: card.fingerprint1 ?? null,
         fingerprint256: card.fingerprint256,
@@ -347,7 +348,7 @@ v1.post("/timestamp", async (c) => {
     return jsonError(c, 400, "bad_timestamp_query", "时间戳请求为空或超过 64 KB");
   }
 
-  const upstream = (c.env.TSA_UPSTREAM ?? "").trim() || "http://time.certum.pl/";
+  const upstream = (await readConfig(c.env)).tsaUpstream;
   let response: Response;
   try {
     response = await fetch(upstream, {

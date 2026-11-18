@@ -21,6 +21,7 @@ import {
   touchAdminLogin,
 } from "../store/admin-account";
 import { readSettings, writeSettings } from "../store/settings";
+import { readConfig, writeConfig } from "../store/config";
 import { createApiKey, deleteApiKey, deleteKeysOfUser, listApiKeys, listKeysOfUser, setApiKeyEnabled } from "../store/keys";
 import {
   createCredential,
@@ -655,15 +656,19 @@ secure.post("/keys/:id/delete", async (c) => {
 /* -------------------------------- 系统设置 -------------------------------- */
 
 secure.get("/settings", async (c) => {
-  const settings = await readSettings(c.env);
-  const state = await adminAuthState(c.env);
+  const [settings, state, config] = await Promise.all([
+    readSettings(c.env),
+    adminAuthState(c.env),
+    readConfig(c.env),
+  ]);
   return c.html(
     adminSettingsPage({
       ...pageContext(c),
       ...queryMessages(c),
       csrf: c.get("adminSession").csrf,
       settings,
-      mailReady: mailConfigured(c.env),
+      config,
+      mailReady: (await mailConfigured(c.env)),
       adminMode: state.mode,
       adminUsername: state.account?.username,
     }),
@@ -675,11 +680,35 @@ secure.post("/settings", async (c) => {
   if (!(await checkCsrf(c, form))) return csrfFail(c);
 
   const on = (name: string) => one(form, name) === "1";
+  const fail = (message: string) => backWith(c, "/admin/settings", "error", message);
+
+  const publicBaseUrl = one(form, "publicBaseUrl");
+  const certumApiBase = one(form, "certumApiBase");
+  const tsaUpstream = one(form, "tsaUpstream");
+  const urls: Array<[string, string]> = [
+    [publicBaseUrl, tr(c)("settings.publicBaseUrl")],
+    [certumApiBase, tr(c)("settings.certumApiBase")],
+    [tsaUpstream, tr(c)("settings.tsaUpstream")],
+  ];
+  for (const [value, label] of urls) {
+    if (value && !/^https?:\/\/[^\s]+$/i.test(value)) return fail(tr(c)("settings.badUrl", { name: label }));
+  }
+  const certumChainPem = one(form, "certumChainPem");
+  if (certumChainPem && !certumChainPem.includes("BEGIN CERTIFICATE")) return fail(tr(c)("settings.badPem"));
+
   await writeSettings(c.env, {
     loginCaptcha: on("loginCaptcha"),
     registerEnabled: on("registerEnabled"),
     resetEnabled: on("resetEnabled"),
     emailCaptcha: on("emailCaptcha"),
+  });
+  await writeConfig(c.env, {
+    publicBaseUrl,
+    certumApiBase,
+    tsaUpstream,
+    resendFrom: one(form, "resendFrom"),
+    certumChainPem,
+    logSignatures: on("logSignatures"),
   });
   return backWith(c, "/admin/settings", "ok", tr(c)("settings.saved"));
 });

@@ -3,6 +3,7 @@
  * API Key / 发件人走 secret，代码里不出现任何真实凭据。
  */
 import type { Env } from "../types";
+import { readConfig } from "../store/config.ts";
 
 const ENDPOINT = "https://api.resend.com/emails";
 
@@ -13,14 +14,15 @@ export interface MailMessage {
   text: string;
 }
 
-export function mailConfigured(env: Env): boolean {
-  return !!((env.RESEND_API_KEY ?? "").trim() && (env.RESEND_FROM ?? "").trim());
+export async function mailConfigured(env: Env): Promise<boolean> {
+  const config = await readConfig(env);
+  return !!((env.RESEND_API_KEY ?? "").trim() && config.resendFrom);
 }
 
-/** 邮件里的绝对地址：优先 PUBLIC_BASE_URL，否则按本次请求推导 */
-export function siteBase(env: Env, requestUrl: string): string {
-  const configured = (env.PUBLIC_BASE_URL ?? "").trim().replace(/\/+$/, "");
-  return configured || new URL(requestUrl).origin;
+/** 邮件里的绝对地址：优先后台配置的基础地址，否则按本次请求推导 */
+export async function siteBase(env: Env, requestUrl: string): Promise<string> {
+  const config = await readConfig(env);
+  return config.publicBaseUrl || new URL(requestUrl).origin;
 }
 
 function escapeHtml(text: string): string {
@@ -60,8 +62,9 @@ export function mailTemplate(options: {
 
 export async function sendMail(env: Env, message: MailMessage): Promise<void> {
   const apiKey = (env.RESEND_API_KEY ?? "").trim();
-  const from = (env.RESEND_FROM ?? "").trim();
-  if (!apiKey || !from) throw new Error("邮件服务未配置（缺少 RESEND_API_KEY / RESEND_FROM）");
+  const config = await readConfig(env);
+  const from = config.resendFrom;
+  if (!apiKey || !from) throw new Error("邮件服务未配置（缺少 RESEND_API_KEY 或发件人）");
 
   const response = await fetch(ENDPOINT, {
     method: "POST",

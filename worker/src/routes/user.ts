@@ -187,7 +187,7 @@ function passwordProblem(password: string, password2: string, t: Translate): str
 
 async function sendVerifyMail(c: Context<UserEnv>, account: UserRecord, token: string): Promise<void> {
   const { t } = pageContext(c);
-  const link = `${siteBase(c.env, c.req.url)}/user/verify?token=${encodeURIComponent(token)}`;
+  const link = `${(await siteBase(c.env, c.req.url))}/user/verify?token=${encodeURIComponent(token)}`;
   await sendMail(c.env, {
     to: account.email!,
     subject: t("register.mailSubject"),
@@ -205,7 +205,7 @@ async function sendVerifyMail(c: Context<UserEnv>, account: UserRecord, token: s
 
 async function sendResetMail(c: Context<UserEnv>, account: UserRecord, token: string): Promise<void> {
   const { t } = pageContext(c);
-  const link = `${siteBase(c.env, c.req.url)}/user/reset/confirm?token=${encodeURIComponent(token)}`;
+  const link = `${(await siteBase(c.env, c.req.url))}/user/reset/confirm?token=${encodeURIComponent(token)}`;
   await sendMail(c.env, {
     to: account.email!,
     subject: t("reset.mailSubject"),
@@ -309,7 +309,7 @@ user.get("/user/register", async (c) => {
   return c.html(
     userRegisterPage({
       ...context,
-      error: mailConfigured(c.env) ? undefined : context.t("settings.mailMissing"),
+      error: (await mailConfigured(c.env)) ? undefined : context.t("settings.mailMissing"),
       captcha: settings.emailCaptcha ? await createCaptcha(c.env) : undefined,
     }),
   );
@@ -364,7 +364,7 @@ user.post("/user/register", async (c) => {
     );
   }
 
-  if (!mailConfigured(c.env)) {
+  if (!(await mailConfigured(c.env))) {
     return registerPage(t("settings.mailMissing"));
   }
 
@@ -448,7 +448,7 @@ user.get("/user/reset", async (c) => {
       403,
     );
   }
-  if (!mailConfigured(c.env)) {
+  if (!(await mailConfigured(c.env))) {
     return c.html(
       userMessagePage({
         ...context,
@@ -498,7 +498,7 @@ user.post("/user/reset", async (c) => {
       400,
     );
   }
-  if (!mailConfigured(c.env)) {
+  if (!(await mailConfigured(c.env))) {
     return c.html(
       userMessagePage({
         ...context,
