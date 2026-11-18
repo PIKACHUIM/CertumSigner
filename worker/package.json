@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "description": "Certum SimplySign cloud signing proxy on Cloudflare Workers",
-  "license": "AGPL-3.0-only",
+  "license": "MIT",
   "homepage": "https://github.com/PIKACHUIM/CertumSigner",
   "repository": {
     "type": "git",

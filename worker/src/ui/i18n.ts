@@ -148,7 +148,7 @@ const zh = {
   "home.docsTitle": "文档与部署",
   "home.docsText": "一键部署 Worker、配置 secret、构建客户端，步骤都在 README 里。",
   "home.docsLink": "查看 README",
-  "home.footer": "AGPL-3.0 · Certum 私钥始终在云端",
+  "home.footer": "MIT · Certum 私钥始终在云端",
 
   "register.title": "创建账号",
   "register.subtitle": "注册后需要验证邮箱才能登录；证书由管理员分配",
@@ -553,7 +553,7 @@ const en: Record<keyof Dict, string> = {
   "home.docsTitle": "Docs and deployment",
   "home.docsText": "One-click Worker deploy, secrets and client builds — all covered in the README.",
   "home.docsLink": "Read the README",
-  "home.footer": "AGPL-3.0 · The Certum private key always stays in the cloud",
+  "home.footer": "MIT · The Certum private key always stays in the cloud",
 
   "register.title": "Create account",
   "register.subtitle": "Verify your email before signing in; certificates are assigned by an admin",
