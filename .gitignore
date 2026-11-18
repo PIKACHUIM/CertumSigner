@@ -1,0 +1,14 @@
+# C++ 构建产物
+*.obj
+*.o
+*.exe
+*.dll
+*.pdb
+*.ilk
+*.lib
+build/
+out/
+
+# 编辑器
+.vs/
+.idea/

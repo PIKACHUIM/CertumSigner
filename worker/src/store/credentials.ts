@@ -1,0 +1,171 @@
+/**
+ * Certum 凭据（邮箱 + TOTP 种子 + 证书指纹）存 KV。
+ *
+ * 这是敏感数据：拿到 otpUri 就能登录对应 Certum 账号并调用云端 HSM 签名。
+ * KV 在 Cloudflare 侧是静态加密的，但任何能读这个 namespace 的代码/令牌都能拿到明文，
+ * 所以生产环境请收紧 API Token 权限（只给这个 namespace 的 KV 读写）。
+ */
+import type { CredentialRecord, Env } from "../types";
+import { randomToken } from "../lib/encoding.ts";
+import { base32Decode, parseOtpUri, resolveOtpConfig, type OtpConfig } from "../lib/totp.ts";
+
+const PREFIX = "cred:";
+export const CRED_SESSION_PREFIX = "certum:sess:";
+export const CRED_CARD_PREFIX = "certum:card:";
+
+export interface CreateCredentialInput {
+  label: string;
+  email: string;
+  /** otpauth:// URI 或裸 Base32 种子 */
+  otp: string;
+  certificateSha1?: string;
+  createdBy: string;
+}
+
+/** 统一成 otpauth:// URI；裸种子补上 Certum 默认参数 */
+export function normalizeOtpInput(input: string, email: string): string {
+  const text = input.trim();
+  if (!text) throw new Error("OTP 种子不能为空");
+
+  if (/^otpauth:\/\//i.test(text)) {
+    const parsed = parseOtpUri(text);
+    base32Decode(parsed.secret!);
+    return text;
+  }
+
+  const secret = text.replace(/[\s-]/g, "").replace(/=+$/, "").toUpperCase();
+  if (!/^[A-Z2-7]+$/.test(secret)) throw new Error("OTP 种子只能是 Base32 字符（A-Z、2-7）");
+  base32Decode(secret);
+  const label = encodeURIComponent(`Certum:${email}`);
+  return `otpauth://totp/${label}?secret=${secret}&issuer=Certum&algorithm=SHA256&digits=6&period=30`;
+}
+
+/** 列表里只展示非敏感参数，种子用 **** 代替 */
+export function maskOtpUri(uri: string): string {
+  try {
+    const parsed = parseOtpUri(uri);
+    const params = new URLSearchParams(uri.slice(uri.indexOf("?") + 1));
+    const algorithm = params.get("algorithm") ?? "SHA1";
+    const digits = params.get("digits") ?? "6";
+    const period = params.get("period") ?? "30";
+    return `secret ****${parsed.secret!.slice(-4)} · ${algorithm} · ${digits} 位 · ${period}s`;
+  } catch {
+    return "无法解析";
+  }
+}
+
+export function credentialOtp(cred: CredentialRecord): OtpConfig {
+  return resolveOtpConfig({ CERTUM_OTP_URI: cred.otpUri });
+}
+
+export async function createCredential(env: Env, input: CreateCredentialInput): Promise<CredentialRecord> {
+  const label = input.label.trim() || input.email.trim();
+  const email = input.email.trim();
+  if (!email || !/^[^@\s]+@[^@\s]+$/.test(email)) throw new Error("邮箱格式不正确");
+
+  const otpUri = normalizeOtpInput(input.otp, email);
+  const record: CredentialRecord = {
+    id: `cred_${randomToken(8).replace(/[^A-Za-z0-9]/g, "").slice(0, 12)}`,
+    label: label.slice(0, 60),
+    email,
+    otpUri,
+    certificateSha1: normalizeSha1(input.certificateSha1),
+    enabled: true,
+    createdAt: Date.now(),
+    createdBy: input.createdBy,
+  };
+  await env.CERTUM_KV.put(`${PREFIX}${record.id}`, JSON.stringify(record));
+  return record;
+}
+
+function normalizeSha1(raw: string | undefined): string | undefined {
+  const clean = (raw ?? "").replace(/[\s:]/g, "").toLowerCase();
+  if (!clean) return undefined;
+  if (!/^[0-9a-f]{40}$/.test(clean)) throw new Error("证书 SHA-1 必须是 40 位十六进制");
+  return clean;
+}
+
+export async function listCredentials(env: Env): Promise<CredentialRecord[]> {
+  const list = await env.CERTUM_KV.list({ prefix: PREFIX, limit: 1000 });
+  const records: CredentialRecord[] = [];
+  for (const item of list.keys) {
+    const record = await env.CERTUM_KV.get<CredentialRecord>(item.name, "json");
+    if (record) records.push(record);
+  }
+  return records.sort((a, b) => a.createdAt - b.createdAt);
+}
+
+export async function getCredential(env: Env, id: string): Promise<CredentialRecord | null> {
+  if (!id) return null;
+  return env.CERTUM_KV.get<CredentialRecord>(`${PREFIX}${id}`, "json");
+}
+
+export async function saveCredential(env: Env, record: CredentialRecord): Promise<void> {
+  await env.CERTUM_KV.put(`${PREFIX}${record.id}`, JSON.stringify(record));
+}
+
+export async function setCredentialEnabled(env: Env, id: string, enabled: boolean): Promise<boolean> {
+  const record = await getCredential(env, id);
+  if (!record) return false;
+  record.enabled = enabled;
+  await saveCredential(env, record);
+  return true;
+}
+
+export async function updateCredential(
+  env: Env,
+  id: string,
+  patch: { label?: string; email?: string; otp?: string; certificateSha1?: string },
+): Promise<boolean> {
+  const record = await getCredential(env, id);
+  if (!record) return false;
+  if (patch.label !== undefined) record.label = patch.label.trim().slice(0, 60) || record.label;
+  if (patch.email !== undefined && patch.email.trim()) record.email = patch.email.trim();
+  if (patch.otp !== undefined && patch.otp.trim()) {
+    record.otpUri = normalizeOtpInput(patch.otp, record.email);
+  }
+  if (patch.certificateSha1 !== undefined) record.certificateSha1 = normalizeSha1(patch.certificateSha1);
+  record.lastError = undefined;
+  await saveCredential(env, record);
+  return true;
+}
+
+export async function deleteCredential(env: Env, id: string): Promise<boolean> {
+  const record = await getCredential(env, id);
+  if (!record) return false;
+  await Promise.all([
+    env.CERTUM_KV.delete(`${PREFIX}${id}`),
+    env.CERTUM_KV.delete(`${CRED_SESSION_PREFIX}${id}`),
+    env.CERTUM_KV.delete(`${CRED_CARD_PREFIX}${id}`),
+  ]);
+  return true;
+}
+
+/** 第一条启用中的凭据，用于旧 Key（没有绑定 credentialId）的兼容路径 */
+export async function pickDefaultCredential(env: Env): Promise<CredentialRecord | null> {
+  const all = await listCredentials(env);
+  return all.find((item) => item.enabled) ?? null;
+}
+
+/**
+ * 把 .dev.vars / 环境变量里的老配置导成一条 KV 凭据（一次性）。
+ * 已经存在同邮箱 + 同指纹的凭据时直接返回它。
+ */
+export async function importCredentialFromEnv(env: Env, createdBy: string): Promise<CredentialRecord | null> {
+  const email = (env.CERTUM_EMAIL ?? "").trim();
+  const otp = (env.CERTUM_OTP_URI ?? "").trim() || (env.CERTUM_OTP_SECRET ?? "").trim();
+  if (!email || !otp) return null;
+
+  const sha1 = normalizeSha1(env.CERTUM_CERTIFICATE_SHA1);
+  const existing = await listCredentials(env);
+  const match = existing.find((item) => item.email === email && (item.certificateSha1 ?? "") === (sha1 ?? ""));
+  if (match) return match;
+
+  return createCredential(env, {
+    label: `${email} 的环境变量凭据`,
+    email,
+    otp,
+    certificateSha1: sha1,
+    createdBy,
+  });
+}

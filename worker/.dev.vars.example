@@ -1,0 +1,23 @@
+# 复制为 .dev.vars 后填写，仅用于本地 wrangler dev（不要提交真实值）
+CERTUM_EMAIL=you@example.com
+
+# 两种写法任选其一：
+# 1) 完整 otpauth URI（Certum 后台“显示密钥”给出的二维码内容）
+CERTUM_OTP_URI=otpauth://totp/Certum:you@example.com?secret=XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX&algorithm=SHA256&digits=6&period=30
+# 2) 只给 Base32 种子 + 参数
+CERTUM_OTP_SECRET=XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+CERTUM_OTP_ALGORITHM=SHA256
+CERTUM_OTP_DIGITS=6
+CERTUM_OTP_PERIOD=30
+
+# 账号下有多张卡片时，用证书 DER 的 SHA-1 指纹指定用哪张（openssl x509 -fingerprint -sha1）
+# CERTUM_CERTIFICATE_SHA1=0000000000000000000000000000000000000000
+
+# 管理员登录密码（/admin）
+ADMIN_PASSWORD=change-me-please
+
+# 用于给管理员会话 cookie 签名，随便一串 32+ 字符随机值
+SESSION_SECRET=please-change-this-to-a-long-random-string
+
+# /v1/timestamp 转发用的 RFC3161 服务（默认 http://time.certum.pl/）
+# TSA_UPSTREAM=http://timestamp.digicert.com

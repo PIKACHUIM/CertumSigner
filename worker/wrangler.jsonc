@@ -1,0 +1,25 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "certum-signer",
+  "main": "src/index.ts",
+  "compatibility_date": "2024-12-05",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true
+  },
+  "kv_namespaces": [
+    {
+      // wrangler kv namespace create CERTUM_KV
+      "binding": "CERTUM_KV",
+      "id": "0000000000000000000000000000000000"
+    }
+  ],
+  "vars": {
+    // 登录账号（邮箱）。OTP 种子与管理员密码请用 `wrangler secret put` 写入，不要写在这里。
+    "CERTUM_EMAIL": "",
+    // 可选：覆盖 API 端点 / OAuth 客户端常量
+    "CERTUM_API_BASE": "https://cloudsign.webnotarius.pl",
+    // 可选：证书链中间证书（PEM），多个用换行分隔；不填只返回签名证书本身
+    "CERTUM_CHAIN_PEM": ""
+  }
+}
