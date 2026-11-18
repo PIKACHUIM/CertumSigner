@@ -69,11 +69,12 @@ Then open `https://<your-domain>/`:
 3. **Users → New user**: enter the email (it *is* the login name) and a password (PBKDF2-SHA256), plus
    an optional expiry, a user-level daily quota and the certificates this user may sign with. Emails are
    unique globally; there is no separate username field.
-4. **Settings**: the left card (**Self-service accounts**) picks the sign-in captcha (off / 4-digit image /
-   Cloudflare Turnstile with its site and secret keys) and toggles self-registration and password reset;
-   the right card (**Email delivery**) holds the base URL used in email links, the sender, the Resend key
-   and the email-captcha switch; **Services and addresses** below has the Certum API base, TSA upstream,
-   intermediate PEM and log switch. Values live in KV and apply immediately — no redeploy needed.
+4. **Settings**: the left card (**Self-service accounts**) has a **Require a captcha at sign-in** checkbox
+   (off by default) plus the captcha type (4-digit image or Cloudflare Turnstile, which needs its site and
+   secret keys), and toggles self-registration and password reset; the right card (**Email delivery**)
+   holds the base URL used in email links, the sender, the Resend key and the email-captcha switch;
+   **Services and addresses** below has the Certum API base, TSA upstream, intermediate PEM and log
+   switch. Values live in KV and apply immediately — no redeploy needed.
 5. Users sign in at `/user/login` to create their own keys; admins can also create keys from **Keys**.
 
 ## Features
@@ -96,10 +97,11 @@ Then open `https://<your-domain>/`:
 - **Registration / password reset** (off by default): can be enabled in Settings. Registration requires
   email verification before sign-in; reset links are sent through Resend and are valid for one hour.
   Both flows can additionally require a captcha.
-- **Sign-in captcha**: off, a server-rendered single-use image captcha of 4 digits (5-minute TTL), or
-  Cloudflare Turnstile (falls back to the image captcha when its keys are missing). User, admin and
-  desktop-client sign-in share this switch; the image and its input sit on one line, and clicking the
-  image (or ↻) issues a new code.
+- **Sign-in captcha**: opt in with **Require a captcha at sign-in** in Settings (off by default), then
+  pick the type — a server-rendered single-use 4-digit image captcha (5-minute TTL) or Cloudflare
+  Turnstile (falls back to the image captcha when its keys are missing). User, admin and desktop-client
+  sign-in share the switch; the image and its input sit on one line, and clicking the image (or ↻) issues
+  a new code.
 - **UI preferences**: language (中文 / English), light/dark (system/dark/light) and four accent themes,
   picked from the browser on first visit and remembered in cookies (`cs_lang` / `cs_mode` / `cs_theme`)
   for a year. Server rendered, native `<dialog>` modals, no frontend build step.

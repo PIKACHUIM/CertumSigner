@@ -985,17 +985,6 @@ function toggle(name: string, label: string, hint: string, checked: boolean): st
 
 export function adminSettingsPage(data: SettingsPageData): string {
   const { t, settings } = data;
-  const modes: Array<[string, string]> = [
-    ["off", t("settings.captchaOff")],
-    ["svg", t("settings.captchaSvg")],
-    ["turnstile", t("settings.captchaTurnstile")],
-  ];
-  const modeOptions = modes
-    .map(
-      ([value, label]) =>
-        `<option value="${value}"${settings.captchaMode === value ? " selected" : ""}>${escapeHtml(label)}</option>`,
-    )
-    .join("");
 
   return page(
     "/admin/settings",
@@ -1007,10 +996,19 @@ export function adminSettingsPage(data: SettingsPageData): string {
       <div class="grid cols-2" style="margin-bottom:16px">
         <div class="card">
           <h2>${escapeHtml(t("settings.accounts"))}</h2>
-          <label class="field" style="margin-bottom:14px">${escapeHtml(t("settings.captchaMode"))}
-            <select name="captchaMode">${modeOptions}</select>
-            <span class="small muted">${escapeHtml(t("settings.captchaModeHint"))}</span>
-          </label>
+          ${toggle("loginCaptcha", t("settings.loginCaptcha"), t("settings.loginCaptchaHint"), settings.captchaMode !== "off")}
+          <div class="field" style="margin-bottom:14px">
+            <span>${escapeHtml(t("settings.captchaType"))}</span>
+            <div class="checks">
+              <label><input type="radio" name="captchaProvider" value="svg" ${
+                settings.captchaMode === "turnstile" ? "" : "checked"
+              }> ${escapeHtml(t("settings.captchaSvg"))}</label>
+              <label><input type="radio" name="captchaProvider" value="turnstile" ${
+                settings.captchaMode === "turnstile" ? "checked" : ""
+              }> ${escapeHtml(t("settings.captchaTurnstile"))}</label>
+            </div>
+            <span class="small muted">${escapeHtml(t("settings.captchaTypeHint"))}</span>
+          </div>
           <div class="form-grid" style="margin-bottom:14px">
             <label class="field">${escapeHtml(t("settings.turnstileSiteKey"))}
               <input type="text" name="turnstileSiteKey" value="${escapeHtml(data.config.turnstileSiteKey)}"

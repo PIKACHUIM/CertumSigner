@@ -158,11 +158,6 @@ function backWith(c: Context<AdminEnv>, path: string, kind: "ok" | "error", mess
   return c.redirect(`${path}?${kind}=${encodeURIComponent(message)}`);
 }
 
-/** 表单里的验证码方式：只接受三个合法值，其他一律当关闭 */
-function captchaModeOf(raw: string): "off" | "svg" | "turnstile" {
-  return raw === "svg" || raw === "turnstile" ? raw : "off";
-}
-
 async function credentialStatuses(env: Env, credentials: CredentialRecord[]): Promise<Record<string, CredentialStatus>> {
   const out: Record<string, CredentialStatus> = {};
   for (const cred of credentials) {
@@ -762,10 +757,12 @@ secure.post("/settings", async (c) => {
   const certumChainPem = one(form, "certumChainPem");
   if (certumChainPem && !certumChainPem.includes("BEGIN CERTIFICATE")) return fail(tr(c)("settings.badPem"));
 
-  // 旧版设置页只提交 loginCaptcha；没有 captchaMode 字段时不要静默关掉验证码
-  const modeRaw = one(form, "captchaMode");
+  // 验证码：新表单是「勾选框 + 类型单选」；captchaMode 只为兼容还开着旧设置页的浏览器
+  const legacyMode = one(form, "captchaMode");
+  const needsCaptcha = legacyMode ? legacyMode !== "off" : on("loginCaptcha");
+  const useTurnstile = one(form, "captchaProvider") === "turnstile" || legacyMode === "turnstile";
   await writeSettings(c.env, {
-    captchaMode: modeRaw ? captchaModeOf(modeRaw) : on("loginCaptcha") ? "svg" : "off",
+    captchaMode: needsCaptcha ? (useTurnstile ? "turnstile" : "svg") : "off",
     registerEnabled: on("registerEnabled"),
     resetEnabled: on("resetEnabled"),
     emailCaptcha: on("emailCaptcha"),
