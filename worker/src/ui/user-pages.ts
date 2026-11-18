@@ -3,6 +3,7 @@ import type { ApiKeyRecord, CredentialRecord, SignLogRecord, UserRecord } from "
 import type { Translate } from "./i18n";
 import type { Prefs } from "./prefs";
 import {
+  captchaField,
   detailModal,
   emptyRow,
   escapeHtml,
@@ -13,6 +14,7 @@ import {
   pill,
   shell,
   statCard,
+  type CaptchaView,
   type NavItem,
 } from "./layout";
 
@@ -21,6 +23,8 @@ export interface UserPageData {
   credentials: CredentialRecord[];
   keys: ApiKeyRecord[];
   usage: Record<string, number>;
+  /** 用户级当日已用签名数 */
+  userUsage?: number;
   logs: SignLogRecord[];
   csrf: string;
   notice?: string;
@@ -55,8 +59,26 @@ function userShell(active: string, title: string, subtitle: string, data: UserPa
   });
 }
 
-export function userLoginPage(data: { prefs: Prefs; t: Translate; self: string; error?: string }): string {
+export function userLoginPage(data: {
+  prefs: Prefs;
+  t: Translate;
+  self: string;
+  error?: string;
+  notice?: string;
+  captcha?: CaptchaView;
+  canRegister?: boolean;
+  canReset?: boolean;
+}): string {
   const { t } = data;
+  const links = [
+    data.canRegister
+      ? `<span>${escapeHtml(t("login.noAccountHint"))} <a href="/user/register">${escapeHtml(t("login.registerLink"))}</a></span>`
+      : `<span>${escapeHtml(t("login.noAccount"))}</span>`,
+    data.canReset ? `<a href="/user/reset">${escapeHtml(t("login.forgotLink"))}</a>` : "",
+  ]
+    .filter(Boolean)
+    .join("");
+
   return loginShell({
     title: t("login.userTitle"),
     subtitle: t("login.userSubtitle"),
@@ -65,17 +87,277 @@ export function userLoginPage(data: { prefs: Prefs; t: Translate; self: string; 
     t,
     self: data.self,
     error: data.error,
-    body: `<label class="field">${escapeHtml(t("login.username"))}
-      <input type="text" name="username" autocomplete="username" autofocus required>
+    notice: data.notice,
+    captcha: data.captcha,
+    body: `<label class="auth__field">${escapeHtml(t("login.username"))}
+      <div class="auth__box"><input type="text" name="username" autocomplete="username" autofocus required></div>
     </label>
-    <label class="field">${escapeHtml(t("login.userPassword"))}
-      <input type="password" name="password" autocomplete="current-password" required>
+    <label class="auth__field">${escapeHtml(t("login.userPassword"))}
+      <div class="auth__box">
+        <input type="password" name="password" autocomplete="current-password" required>
+        <button type="button" class="auth__peek" data-peek data-show="${escapeHtml(
+          t("login.show"),
+        )}" data-hide="${escapeHtml(t("login.hide"))}">${escapeHtml(t("login.show"))}</button>
+      </div>
     </label>
-    <button class="btn btn--primary" type="submit">${escapeHtml(t("login.submit"))}</button>`,
-    footer: `<p class="login-foot">${escapeHtml(t("login.noAccount"))}</p>
-      <p class="login-foot">${escapeHtml(t("login.toAdmin"))} <a href="/admin/login">${escapeHtml(
-        t("login.adminLink"),
-      )}</a></p>`,
+    ${data.captcha ? captchaField(data.captcha, t) : ""}
+    <button class="btn btn--primary auth__submit" type="submit">
+      <span>${escapeHtml(t("login.submit"))}</span><span class="arrow">→</span>
+    </button>
+    <div class="auth__links">${links}</div>
+    <p class="login-foot">${escapeHtml(t("login.toAdmin"))} <a href="/admin/login">${escapeHtml(
+      t("login.adminLink"),
+    )}</a></p>`,
+  });
+}
+
+/** 结果 / 不可用提示页：不套表单，只给一个返回按钮 */
+export function userMessagePage(data: {
+  prefs: Prefs;
+  t: Translate;
+  self: string;
+  title: string;
+  subtitle: string;
+  notice?: string;
+  error?: string;
+  backHref?: string;
+  backLabel?: string;
+}): string {
+  const { t } = data;
+  return loginShell({
+    title: data.title,
+    subtitle: data.subtitle,
+    action: "/user/login",
+    prefs: data.prefs,
+    t,
+    self: data.self,
+    notice: data.notice,
+    error: data.error,
+    wide: true,
+    formless: true,
+    body: `<div class="auth__done">
+      <a class="btn btn--primary" href="${escapeHtml(data.backHref ?? "/user/login")}">${escapeHtml(
+        data.backLabel ?? t("reset.backLogin"),
+      )}</a>
+    </div>`,
+  });
+}
+
+export function userRegisterPage(data: {
+  prefs: Prefs;
+  t: Translate;
+  self: string;
+  error?: string;
+  notice?: string;
+  captcha?: CaptchaView;
+}): string {
+  const { t } = data;
+  return loginShell({
+    title: t("register.title"),
+    subtitle: t("register.subtitle"),
+    action: "/user/register",
+    prefs: data.prefs,
+    t,
+    self: data.self,
+    error: data.error,
+    notice: data.notice,
+    captcha: data.captcha,
+    wide: true,
+    body: `<label class="auth__field">${escapeHtml(t("register.username"))}
+      <div class="auth__box"><input type="text" name="username" autocomplete="username" autofocus required></div>
+    </label>
+    <label class="auth__field">${escapeHtml(t("register.email"))}
+      <div class="auth__box"><input type="email" name="email" autocomplete="email" required></div>
+    </label>
+    <label class="auth__field">${escapeHtml(t("register.password"))}
+      <div class="auth__box">
+        <input type="password" name="password" autocomplete="new-password" minlength="8" required>
+        <button type="button" class="auth__peek" data-peek data-show="${escapeHtml(
+          t("login.show"),
+        )}" data-hide="${escapeHtml(t("login.hide"))}">${escapeHtml(t("login.show"))}</button>
+      </div>
+    </label>
+    <label class="auth__field">${escapeHtml(t("register.password2"))}
+      <div class="auth__box"><input type="password" name="password2" autocomplete="new-password" minlength="8" required></div>
+    </label>
+    ${data.captcha ? captchaField(data.captcha, t) : ""}
+    <button class="btn btn--primary auth__submit" type="submit">
+      <span>${escapeHtml(t("register.submit"))}</span><span class="arrow">→</span>
+    </button>
+    <div class="auth__links"><span>${escapeHtml(t("register.hasAccount"))} <a href="/user/login">${escapeHtml(
+      t("register.toLogin"),
+    )}</a></span></div>`,
+  });
+}
+
+export function userRegisterDonePage(data: {
+  prefs: Prefs;
+  t: Translate;
+  self: string;
+  email: string;
+}): string {
+  const { t } = data;
+  return loginShell({
+    title: t("register.done"),
+    subtitle: t("register.doneHint", { email: data.email }),
+    action: "/user/login",
+    prefs: data.prefs,
+    t,
+    self: data.self,
+    wide: true,
+    formless: true,
+    body: `<div class="auth__done">
+      <span class="mark">✓</span>
+      <a class="btn btn--primary" href="/user/login" style="margin-top:6px">${escapeHtml(t("register.toLogin"))}</a>
+    </div>`,
+  });
+}
+
+export function userVerifyPage(data: {
+  prefs: Prefs;
+  t: Translate;
+  self: string;
+  token?: string;
+  error?: string;
+  done?: boolean;
+}): string {
+  const { t } = data;
+  if (data.done) {
+    return loginShell({
+      title: t("register.verifyTitle"),
+      subtitle: t("register.verifyOk"),
+      action: "/user/login",
+      prefs: data.prefs,
+      t,
+      self: data.self,
+      wide: true,
+      formless: true,
+      body: `<div class="auth__done">
+        <span class="mark">✓</span>
+        <a class="btn btn--primary" href="/user/login">${escapeHtml(t("register.toLogin"))}</a>
+      </div>`,
+    });
+  }
+  if (!data.token || data.error) {
+    return loginShell({
+      title: t("register.verifyTitle"),
+      subtitle: data.error ?? t("register.verifyFail"),
+      action: "/user/login",
+      prefs: data.prefs,
+      t,
+      self: data.self,
+      wide: true,
+      formless: true,
+      body: `<div class="auth__done">
+        <a class="btn btn--primary" href="/user/login">${escapeHtml(t("register.toLogin"))}</a>
+      </div>`,
+    });
+  }
+  return loginShell({
+    title: t("register.verifyTitle"),
+    subtitle: t("register.verifyLead"),
+    action: "/user/verify",
+    prefs: data.prefs,
+    t,
+    self: data.self,
+    wide: true,
+    body: `<input type="hidden" name="token" value="${escapeHtml(data.token ?? "")}">
+      <button class="btn btn--primary auth__submit" type="submit">
+        <span>${escapeHtml(t("register.verifyButton"))}</span><span class="arrow">→</span>
+      </button>`,
+  });
+}
+
+export function userResetPage(data: {
+  prefs: Prefs;
+  t: Translate;
+  self: string;
+  error?: string;
+  notice?: string;
+  captcha?: CaptchaView;
+}): string {
+  const { t } = data;
+  return loginShell({
+    title: t("reset.title"),
+    subtitle: t("reset.subtitle"),
+    action: "/user/reset",
+    prefs: data.prefs,
+    t,
+    self: data.self,
+    error: data.error,
+    notice: data.notice,
+    captcha: data.captcha,
+    body: `<label class="auth__field">${escapeHtml(t("reset.account"))}
+      <div class="auth__box"><input type="text" name="account" autocomplete="username" autofocus required></div>
+    </label>
+    ${data.captcha ? captchaField(data.captcha, t) : ""}
+    <button class="btn btn--primary auth__submit" type="submit">
+      <span>${escapeHtml(t("reset.submit"))}</span><span class="arrow">→</span>
+    </button>
+    <div class="auth__links"><a href="/user/login">← ${escapeHtml(t("reset.backLogin"))}</a></div>`,
+  });
+}
+
+export function userResetConfirmPage(data: {
+  prefs: Prefs;
+  t: Translate;
+  self: string;
+  token?: string;
+  error?: string;
+  done?: boolean;
+}): string {
+  const { t } = data;
+  if (data.done) {
+    return loginShell({
+      title: t("reset.title"),
+      subtitle: t("reset.ok"),
+      action: "/user/login",
+      prefs: data.prefs,
+      t,
+      self: data.self,
+      formless: true,
+      body: `<div class="auth__done">
+        <span class="mark">✓</span>
+        <a class="btn btn--primary" href="/user/login">${escapeHtml(t("reset.backLogin"))}</a>
+      </div>`,
+    });
+  }
+  if (!data.token || data.error) {
+    return loginShell({
+      title: t("reset.title"),
+      subtitle: data.error ?? t("reset.fail"),
+      action: "/user/login",
+      prefs: data.prefs,
+      t,
+      self: data.self,
+      formless: true,
+      body: `<div class="auth__done">
+        <a class="btn btn--primary" href="/user/login">${escapeHtml(t("reset.backLogin"))}</a>
+      </div>`,
+    });
+  }
+  return loginShell({
+    title: t("reset.newTitle"),
+    subtitle: t("reset.newSubtitle"),
+    action: "/user/reset/confirm",
+    prefs: data.prefs,
+    t,
+    self: data.self,
+    body: `<input type="hidden" name="token" value="${escapeHtml(data.token ?? "")}">
+      <label class="auth__field">${escapeHtml(t("reset.newPassword"))}
+        <div class="auth__box">
+          <input type="password" name="password" autocomplete="new-password" minlength="8" autofocus required>
+          <button type="button" class="auth__peek" data-peek data-show="${escapeHtml(
+            t("login.show"),
+          )}" data-hide="${escapeHtml(t("login.hide"))}">${escapeHtml(t("login.show"))}</button>
+        </div>
+      </label>
+      <label class="auth__field">${escapeHtml(t("reset.confirm"))}
+        <div class="auth__box"><input type="password" name="password2" autocomplete="new-password" minlength="8" required></div>
+      </label>
+      <button class="btn btn--primary auth__submit" type="submit">
+        <span>${escapeHtml(t("common.save"))}</span><span class="arrow">→</span>
+      </button>`,
   });
 }
 
@@ -104,7 +386,7 @@ export function userDashboardPage(data: UserPageData): string {
   const { t } = data;
   const credName = new Map(data.credentials.map((cred) => [cred.id, cred.label]));
   const totalSigns = data.keys.reduce((sum, key) => sum + key.totalSigns, 0);
-  const todaySigns = data.keys.reduce((sum, key) => sum + (data.usage[key.id] ?? 0), 0);
+  const todaySigns = data.userUsage ?? data.keys.reduce((sum, key) => sum + (data.usage[key.id] ?? 0), 0);
 
   const rows = data.keys
     .map(
@@ -122,6 +404,9 @@ export function userDashboardPage(data: UserPageData): string {
         <td class="small">${key.totalSigns}</td>
         <td class="small muted">${key.lastUsedAt ? fmtTime(key.lastUsedAt) : escapeHtml(t("common.never"))}</td>
         <td><div class="row">
+          <button class="btn btn--sm btn--ghost" type="button" data-open="quota-${escapeHtml(key.id)}">${escapeHtml(
+            t("keys.editQuota"),
+          )}</button>
           <form class="inline" method="post" action="/user/keys/${escapeHtml(key.id)}/toggle">
             <input type="hidden" name="csrf" value="${escapeHtml(data.csrf)}">
             <input type="hidden" name="enabled" value="${key.enabled ? "0" : "1"}">
@@ -179,7 +464,25 @@ export function userDashboardPage(data: UserPageData): string {
     </div>`,
   });
 
+  const quotaDialogs = data.keys
+    .map((key) =>
+      formModal({
+        id: `quota-${key.id}`,
+        title: t("keys.editQuotaTitle"),
+        hint: key.name,
+        action: `/user/keys/${key.id}/quota`,
+        csrf: data.csrf,
+        submit: t("common.save"),
+        cancel: t("common.cancel"),
+        body: `<label class="field">${escapeHtml(t("keys.quota"))}
+          <input type="number" name="dailyQuota" min="0" value="${key.dailyQuota}"></label>`,
+      }),
+    )
+    .join("");
+
   const expired = !!data.user.expiresAt && data.user.expiresAt <= Date.now();
+  const userQuota = data.user.dailyQuota || 0;
+  const userUsed = data.userUsage ?? 0;
 
   return userShell(
     "/user",
@@ -197,9 +500,9 @@ export function userDashboardPage(data: UserPageData): string {
       ${statCard(t("me.todaySigns"), todaySigns, t("me.todayHint"))}
       ${statCard(t("me.totalSigns"), totalSigns, t("me.totalHint"))}
       ${statCard(
-        t("me.keyCount"),
-        data.keys.length,
-        t("me.keyCountHint", { on: data.keys.filter((key) => key.enabled).length }),
+        t("me.quotaCard"),
+        userQuota ? `${userUsed}/${userQuota}` : t("common.unlimited"),
+        t("me.quotaHint"),
       )}
       ${statCard(
         t("me.accountExpiry"),
@@ -238,6 +541,7 @@ export function userDashboardPage(data: UserPageData): string {
       </div>
     </div>
     ${dialog}
+    ${quotaDialogs}
     ${recent.map((log) => logDetailDialog(log, t)).join("")}`,
   );
 }

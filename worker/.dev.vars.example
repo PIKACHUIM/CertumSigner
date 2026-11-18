@@ -21,3 +21,8 @@ SESSION_SECRET=please-change-this-to-a-long-random-string
 
 # /v1/timestamp 转发用的 RFC3161 服务（默认 http://time.certum.pl/）
 # TSA_UPSTREAM=http://timestamp.digicert.com
+
+# 可选：注册 / 找回密码的发信（不填则这两个功能不可用）
+# RESEND_API_KEY=re_xxxxxxxxxxxxxxxxxxxxxxxx
+# RESEND_FROM=CertumSigner <noreply@example.com>
+# PUBLIC_BASE_URL=http://127.0.0.1:8787

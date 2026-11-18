@@ -20,6 +20,10 @@
     // 可选：覆盖 API 端点 / OAuth 客户端常量
     "CERTUM_API_BASE": "https://cloudsign.webnotarius.pl",
     // 可选：证书链中间证书（PEM），多个用换行分隔；不填只返回签名证书本身
-    "CERTUM_CHAIN_PEM": ""
+    "CERTUM_CHAIN_PEM": "",
+    // 注册 / 找回密码的发件人；RESEND_API_KEY 请用 `wrangler secret put RESEND_API_KEY`
+    "RESEND_FROM": "",
+    // 站点对外地址（例如 https://sign.example.com），用于邮件里的绝对链接；留空按请求推导
+    "PUBLIC_BASE_URL": ""
   }
 }

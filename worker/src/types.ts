@@ -34,6 +34,13 @@ export interface Env {
   LOG_SIGNATURES?: string;
   /** /v1/timestamp 转发用的 RFC3161 服务，默认 http://time.certum.pl/ */
   TSA_UPSTREAM?: string;
+
+  /** Resend 发信 API Key（secret）；不配置则注册/找回密码不可用 */
+  RESEND_API_KEY?: string;
+  /** 发件人，例如 "CertumSigner <noreply@example.com>" */
+  RESEND_FROM?: string;
+  /** 站点对外地址（可选），用于邮件里的绝对链接；默认按请求推导 */
+  PUBLIC_BASE_URL?: string;
 }
 
 export type SignAlgorithm = "sha1" | "sha256";
@@ -85,9 +92,15 @@ export interface UserRecord {
   username: string;
   /** pbkdf2$迭代次数$salt$hash（Base64） */
   passwordHash: string;
+  /** 注册/找回密码用的邮箱；管理员创建的用户可以没有 */
+  email?: string;
+  /** 通过邮件验证过邮箱；老用户没有该字段按已验证处理 */
+  emailVerified?: boolean;
   enabled: boolean;
   expiresAt?: number;
   credentialIds: string[];
+  /** 用户级每日签名上限，0 = 不限（Key 级额度仍然各自生效） */
+  dailyQuota: number;
   createdAt: number;
   createdBy: string;
   lastLoginAt?: number;

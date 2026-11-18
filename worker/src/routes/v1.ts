@@ -16,8 +16,9 @@ import { CertumError } from "../certum/errors";
 import { chainPem, getCardFor, signDigestsFor } from "../certum/session";
 import { base64Decode } from "../lib/pem";
 import { normalizeHex, randomId, toHex } from "../lib/encoding";
-import { bumpDailyUsage, getDailyUsage, touchApiKey, verifyApiKey } from "../store/keys";
+import { bumpDailyUsage, bumpUserDailyUsage, getDailyUsage, getUserDailyUsage, touchApiKey, verifyApiKey } from "../store/keys";
 import { getCredential, pickDefaultCredential } from "../store/credentials";
+import { getUser } from "../store/users";
 import { readStats, recordSign } from "../store/stats";
 
 export type AppEnv = {
@@ -149,6 +150,22 @@ v1.post("/sign", async (c) => {
       }
     }
 
+    // 用户级额度：该用户名下所有 Key 共用，0 = 不限
+    if (key.userId) {
+      const owner = await getUser(c.env, key.userId);
+      if (owner && owner.dailyQuota > 0) {
+        const used = await getUserDailyUsage(c.env, key.userId);
+        if (used + digests.length > owner.dailyQuota) {
+          return jsonError(
+            c,
+            429,
+            "quota_exceeded",
+            `已超出账号今日限额（${used}/${owner.dailyQuota}）`,
+          );
+        }
+      }
+    }
+
     const { signatures, card } = await signDigestsFor(c.env, credential, digests, algorithm);
     const duration = Date.now() - started;
 
@@ -173,6 +190,7 @@ v1.post("/sign", async (c) => {
         await recordSign(c.env, { record: log, algorithm, ok: true, count: digests.length });
         await touchApiKey(c.env, key, digests.length);
         await bumpDailyUsage(c.env, key.id, digests.length);
+        if (key.userId) await bumpUserDailyUsage(c.env, key.userId, digests.length);
       })(),
     );
 
@@ -261,6 +279,8 @@ v1.get("/whoami", async (c) => {
   const key = c.get("apiKey") as ApiKeyRecord;
   const credential = c.get("credential") as CredentialRecord;
   const used = await getDailyUsage(c.env, key.id);
+  const owner = key.userId ? await getUser(c.env, key.userId) : null;
+  const userUsed = key.userId ? await getUserDailyUsage(c.env, key.userId) : 0;
   return c.json({
     ok: true,
     key: {
@@ -273,6 +293,9 @@ v1.get("/whoami", async (c) => {
       expiresAt: key.expiresAt ?? null,
       userId: key.userId ?? null,
     },
+    user: owner
+      ? { id: owner.id, username: owner.username, dailyQuota: owner.dailyQuota, usedToday: userUsed }
+      : null,
     credential: {
       id: credential.id,
       label: credential.label,
@@ -286,9 +309,14 @@ v1.get("/stats", async (c) => {
   const key = c.get("apiKey") as ApiKeyRecord;
   const stats = await readStats(c.env, 7);
   const used = await getDailyUsage(c.env, key.id);
+  const owner = key.userId ? await getUser(c.env, key.userId) : null;
+  const userUsed = key.userId ? await getUserDailyUsage(c.env, key.userId) : 0;
   return c.json({
     ok: true,
     key: { id: key.id, name: key.name, dailyQuota: key.dailyQuota, usedToday: used, totalSigns: key.totalSigns },
+    user: owner
+      ? { id: owner.id, username: owner.username, dailyQuota: owner.dailyQuota, usedToday: userUsed }
+      : null,
     today: stats.today,
     total: stats.total,
   });

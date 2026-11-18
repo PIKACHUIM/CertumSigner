@@ -7,11 +7,14 @@
  */
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { captchaAllowed, createCaptcha } from "./lib/captcha";
 import { admin } from "./routes/admin";
 import { clientApi } from "./routes/client";
 import { user } from "./routes/user";
 import { v1 } from "./routes/v1";
-import { applyPrefs, safeBack } from "./ui/prefs";
+import { translator } from "./ui/i18n";
+import { landingPage } from "./ui/landing";
+import { applyPrefs, readPrefs, safeBack } from "./ui/prefs";
 import type { Env } from "./types";
 
 const app = new Hono<{ Bindings: Env }>();
@@ -45,7 +48,23 @@ app.get("/health", (c) =>
 );
 
 app.get("/favicon.ico", (c) => c.body(null, 204));
-app.get("/", (c) => c.redirect("/admin"));
+
+/** 主页：产品介绍 + 客户端下载；登录入口统一从 /user/login 进入 */
+app.get("/", (c) => {
+  const prefs = readPrefs(c);
+  return c.html(landingPage({ prefs, t: translator(prefs.lang) }));
+});
+
+/** 图形验证码：返回内联 SVG + 一次性 id，登录/注册/找回共用一个端点 */
+app.get("/captcha", async (c) => {
+  const ip = c.req.header("cf-connecting-ip") ?? "unknown";
+  if (!(await captchaAllowed(c.env, ip))) {
+    return c.json({ ok: false, error: { code: "too_many", message: "验证码请求过于频繁" } }, 429);
+  }
+  const captcha = await createCaptcha(c.env);
+  c.header("cache-control", "no-store");
+  return c.json({ ok: true, id: captcha.id, svg: captcha.svg });
+});
 
 /** 语言 / 主题 / 明暗切换：写 cookie 后跳回原页面（不带任何业务数据） */
 app.get("/prefs", (c) => {
@@ -55,7 +74,7 @@ app.get("/prefs", (c) => {
     theme: url.searchParams.get("theme") ?? undefined,
     mode: url.searchParams.get("mode") ?? undefined,
   });
-  return c.redirect(safeBack(url.searchParams.get("back"), "/admin"));
+  return c.redirect(safeBack(url.searchParams.get("back"), "/"));
 });
 
 app.route("/v1", v1);

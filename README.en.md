@@ -24,7 +24,8 @@ Project home: <https://github.com/PIKACHUIM/CertumSigner>
     │   │ C++ client         │  Windows: hand-drawn Win32 GUI / Linux: GTK3 GUI
     │   └────────────────────┘
     │
-    ├── /admin  admin console: overview, users, credentials, keys (plus a full log page)
+    ├── /        home page: features + client downloads (sign-in defaults to /user/login)
+    ├── /admin  admin console: overview, users, credentials, keys, settings (plus a full log page)
     └── /user   user portal: create your own keys, see quota and call history
 ```
 
@@ -38,21 +39,31 @@ docs/          Notes from reverse engineering the Certum cloud signing protocol
 
 ## One-click deploy
 
-Click **Deploy to Cloudflare Workers** above, authorize, create the KV namespace, then set two secrets:
+Click **Deploy to Cloudflare Workers** above, authorize, create the KV namespace, then set two required secrets:
 
 | Secret | Purpose |
 | --- | --- |
 | `ADMIN_PASSWORD` | password for `/admin` |
 | `SESSION_SECRET` | HMAC key for cookies; any random string of 32+ chars |
 
-Then open `https://<your-domain>/admin`:
+For registration / password reset, also configure email (optional; both toggles stay unusable without it):
 
-1. **Credentials → New credential**: label, Certum email, TOTP seed (`otpauth://` URI or raw Base32),
-   plus the certificate SHA-1 when you need a specific card. Use **Test login** to confirm the
+| Name | Purpose |
+| --- | --- |
+| `RESEND_API_KEY` | secret, Resend API key |
+| `RESEND_FROM` | var, a verified sender such as `CertumSigner <noreply@example.com>` |
+| `PUBLIC_BASE_URL` | var, optional base URL for links in emails; derived from the request when empty |
+
+Then open `https://<your-domain>/`:
+
+1. The home page links to Windows / Linux builds and to the user sign-in / admin console.
+2. In `/admin`: **Credentials → New credential**: label, Certum email, TOTP seed (`otpauth://` URI or raw
+   Base32), plus the certificate SHA-1 when you need a specific card. Use **Test login** to confirm the
    email/password pair can obtain a token.
-2. **Users → New user**: set a password (PBKDF2-SHA256), an optional expiry and the certificates
-   this user may sign with.
-3. Users visit `/user` to create their own keys; admins can also create keys from the **Keys** page.
+3. **Users → New user**: set a password (PBKDF2-SHA256), an optional expiry, a user-level daily quota,
+   an optional email and the certificates this user may sign with.
+4. **Settings**: enable the sign-in captcha, self-registration, password reset and the email captcha.
+5. Users sign in at `/user/login` to create their own keys; admins can also create keys from **Keys**.
 
 ## Features
 
@@ -60,10 +71,21 @@ Then open `https://<your-domain>/admin`:
   Several accounts/cards can live side by side, each with its own cached login session and card info.
 - **Admin console** (`/admin`): overview metrics, 7-day chart, recent signatures with a detail dialog,
   user/credential/key management (create, edit, enable, disable, delete), forced re-login,
-  certificate refresh, import from environment variables.
+  certificate refresh, import from environment variables, and a **Settings** page for the sign-in
+  captcha, self-registration, password reset and email captcha.
+- **Home page** (`/`): feature overview plus Windows / Linux × x64 / arm64 × GUI / CLI downloads,
+  built by GitHub Actions and published to the latest release.
 - **User portal** (`/user`): log in with username/password, create a key from the certificates the admin
-  assigned to you (the secret is shown once, for 5 minutes), disable/delete it later, and inspect your
-  own call history.
+  assigned to you (the secret is shown once, for 5 minutes), adjust each key's daily limit, disable or
+  delete it later, and inspect your own call history.
+- **Quotas**: per-key and per-user daily limits apply together (0 = unlimited). Users can change their
+  own key limits; admins can change the account-wide limit. `/v1/sign` rejects over-quota calls with
+  `429 quota_exceeded` before contacting the cloud.
+- **Registration / password reset** (off by default): can be enabled in Settings. Registration requires
+  email verification before sign-in; reset links are sent through Resend and are valid for one hour.
+  Both flows can additionally require a captcha.
+- **Sign-in captcha**: a server-rendered, single-use SVG captcha (5-minute TTL) shared by user and
+  admin sign-in, controlled by a Settings toggle.
 - **UI preferences**: language (中文 / English), light/dark (system/dark/light) and four accent themes,
   picked from the browser on first visit and remembered in cookies (`cs_lang` / `cs_mode` / `cs_theme`)
   for a year. Server rendered, native `<dialog>` modals, no frontend build step.
@@ -174,9 +196,10 @@ Errors are `{"ok":false,"error":{"code":"...","message":"..."}}` with codes such
 | Endpoint | Purpose |
 | --- | --- |
 | `GET /v1/certificate` | signing certificate PEM + optional chain |
-| `GET /v1/whoami` | owning user, quota, usage today, bound credential |
-| `GET /v1/stats` | global statistics + your own usage |
+| `GET /v1/whoami` | owning user, key/user quotas, usage today, bound credential |
+| `GET /v1/stats` | global statistics + your own and account usage |
 | `POST /v1/timestamp` | RFC3161 proxy: request body is a TSQ, response is the TSR |
+| `GET /captcha` | issue a single-use captcha (`{id, svg}`, 5-minute TTL) |
 | `GET /prefs?lang=&mode=&theme=&back=` | switch language/mode/theme, set cookies, 302 back (site-relative only) |
 | `GET /health` | liveness check (no upstream requests) |
 
@@ -206,8 +229,13 @@ Manual deploy:
 ```bash
 npx wrangler secret put ADMIN_PASSWORD
 npx wrangler secret put SESSION_SECRET
+npx wrangler secret put RESEND_API_KEY   # optional, needed for registration/reset
 npm run deploy
 ```
+
+Pushing a `v*` tag or running `.github/workflows/release.yml` manually builds eight artifacts
+(Windows / Linux × x64 / arm64 × GUI / CLI) and publishes them to the `latest` release; the home page
+links straight to those files.
 
 ## Environment variables
 
@@ -223,6 +251,9 @@ npm run deploy
 | `CERTUM_CHAIN_PEM` | var | optional intermediate PEM(s), newline separated |
 | `LOG_SIGNATURES` | var | `0` disables per-signature logs (stats only) |
 | `TSA_UPSTREAM` | var | RFC3161 upstream for `/v1/timestamp`, defaults to `http://time.certum.pl/` |
+| `RESEND_API_KEY` | secret | optional Resend key; registration/reset stay disabled without it |
+| `RESEND_FROM` | var | optional verified Resend sender |
+| `PUBLIC_BASE_URL` | var | optional base URL for email links; derived from the request when empty |
 
 At runtime the email and seed come from the KV credential, so `CERTUM_*` is no longer required.
 
@@ -238,7 +269,7 @@ At runtime the email and seed come from the KV credential, so `CERTUM_*` is no l
   12 hours, both revocable in KV. Writes check CSRF, logins are rate limited per IP (8 failures per
   10 minutes; 8 per 10 minutes for the client API).
 - The signing API is strict: digest length must match the algorithm (40 / 64 hex chars), at most 16
-  digests per call, optional per-key daily quota.
+  digests per call, with per-key and per-user daily quotas.
 - The client verifies the returned signature with the certificate's public key before writing the file.
 
 ## Known limitations
@@ -251,12 +282,19 @@ At runtime the email and seed come from the KV credential, so `CERTUM_*` is no l
   practice and `/v1/sign` returns `digest_algorithm_unsupported`.
 - PE files only (`.exe/.dll/.sys/.ocx`); no MSI, CAB or scripts.
 - Workers limits subrequests: one signature typically uses 3–8, so keep batches to a dozen digests.
-- No "forgot password" flow; an admin has to reset the password from the user detail page.
+- Registration / password reset are off by default; without Resend only an admin can reset a password.
+- Windows arm64 and Linux client builds come from CI and have not been run locally.
 
 ## Verification
 
 - Worker: `npx tsc --noEmit` clean; `npm test` 21 passing (TOTP against RFC 6238 vectors, multipart,
   encoding/hashing, KV storage, password hashing).
+- New features exercised under `wrangler dev` (Nov 2026): home page downloads, two-column sign-in with
+  captcha (wrong code → 401 and a new image, refresh button issues a new id, password show/hide),
+  persisted settings toggles, registration reporting a clear error without Resend, email verification
+  tokens (unverified sign-in 401 → verified sign-in 302), reset token (old password 401 / new password
+  302), user-level quota (usage 5 / limit 1 → `/v1/sign` 429 `已超出账号今日限额`), self-service key quota
+  updates. The eight CI artifacts have not been produced yet; Linux GTK3 remains unbuilt locally.
 - Exercised under `wrangler dev`: admin login, overview, user create/password/expiry/disable/enable,
   credential create (with non-ASCII label)/edit/disable/enable/delete/force login/refresh certificate,
   key create (secret shown once)/disable/delete, log page, stats JSON; user login, portal, self-service

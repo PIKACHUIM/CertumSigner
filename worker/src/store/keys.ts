@@ -119,6 +119,25 @@ export async function setApiKeyEnabled(env: Env, id: string, enabled: boolean): 
   return true;
 }
 
+/** 用户自助改名称 / 每日限额（0 = 不限） */
+export async function updateApiKey(
+  env: Env,
+  id: string,
+  patch: { name?: string; dailyQuota?: number },
+): Promise<boolean> {
+  const record = await findApiKeyById(env, id);
+  if (!record) return false;
+  if (patch.name !== undefined) {
+    const name = patch.name.trim();
+    if (!name) throw new Error("Key 名称不能为空");
+    if (name.length > 64) throw new Error("Key 名称过长（最多 64 字符）");
+    record.name = name;
+  }
+  if (patch.dailyQuota !== undefined) record.dailyQuota = Math.max(0, Math.floor(patch.dailyQuota));
+  await saveApiKey(env, record);
+  return true;
+}
+
 export async function deleteApiKey(env: Env, id: string): Promise<boolean> {
   const record = await findApiKeyById(env, id);
   if (!record) return false;
@@ -170,4 +189,20 @@ export async function getDailyUsage(env: Env, id: string): Promise<number> {
 export async function bumpDailyUsage(env: Env, id: string, count: number): Promise<void> {
   const current = await getDailyUsage(env, id);
   await env.CERTUM_KV.put(quotaKey(id), String(current + count), { expirationTtl: 2 * 24 * 60 * 60 });
+}
+
+/** 用户级每日用量：该用户名下所有 Key 的签名合计 */
+function userQuotaKey(id: string): string {
+  return `useruse:${id}:${new Date().toISOString().slice(0, 10)}`;
+}
+
+export async function getUserDailyUsage(env: Env, id: string): Promise<number> {
+  const value = await env.CERTUM_KV.get(userQuotaKey(id));
+  const parsed = Number(value ?? "0");
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+export async function bumpUserDailyUsage(env: Env, id: string, count: number): Promise<void> {
+  const current = await getUserDailyUsage(env, id);
+  await env.CERTUM_KV.put(userQuotaKey(id), String(current + count), { expirationTtl: 2 * 24 * 60 * 60 });
 }

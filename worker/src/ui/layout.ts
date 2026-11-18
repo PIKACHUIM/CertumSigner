@@ -150,8 +150,7 @@ html[data-mode="dark"][data-theme="${id}"] { ${ACCENTS[id].dark} }
 }
 
 const CSS = `
-html { ${LIGHT} }
-html[data-mode="dark"] { ${DARK} }
+html { ${LIGHT} }html[data-mode="dark"] { ${DARK} }
 @media (prefers-color-scheme: dark) { html[data-mode="auto"] { ${DARK} } }
 ${accentCss()}
 
@@ -369,7 +368,94 @@ textarea { min-height: 82px; resize: vertical; font-family: ui-monospace, Menlo,
   background: var(--grad); color: #fff; font-weight: 800;
 }
 .login-foot { margin: 18px 0 0; font-size: 12.5px; color: var(--muted); }
-.login-tools { position: fixed; right: 20px; top: 18px; }
+.login-tools { position: absolute; right: 20px; top: 18px; z-index: 20; }
+
+/* ------------------------------- 登录 / 认证 ------------------------------ */
+.auth { display: grid; grid-template-columns: minmax(0, 1.04fr) minmax(0, 1fr); min-height: 100vh; background: var(--bg); }
+.auth__aside {
+  position: relative; overflow: hidden; display: flex; flex-direction: column; min-height: 100vh;
+  padding: 40px 56px 30px; color: #e8eefb;
+  background:
+    radial-gradient(760px 420px at 12% -10%, color-mix(in srgb, var(--brand) 42%, transparent), transparent 68%),
+    radial-gradient(620px 420px at 92% 108%, color-mix(in srgb, var(--brand-2) 20%, transparent), transparent 70%),
+    #0d1526;
+}
+.auth__brand { display: flex; align-items: center; gap: 12px; color: #fff; font-weight: 700; letter-spacing: .2px; }
+.auth__brand:hover { text-decoration: none; }
+.auth__brand .logo {
+  width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; flex: none;
+  background: var(--grad); color: #fff; font-weight: 800; font-size: 15px;
+  box-shadow: 0 10px 26px -12px color-mix(in srgb, var(--brand) 90%, transparent);
+}
+.auth__brand .tag {
+  display: block; font-size: 10px; letter-spacing: .18em; text-transform: uppercase;
+  color: #8fa1c2; font-weight: 650; margin-top: 3px;
+}
+.auth__intro { margin-top: auto; max-width: 560px; padding: 56px 0 40px; }
+.auth__kicker { font-size: 10.5px; letter-spacing: .2em; text-transform: uppercase; color: #8ea0c0; font-weight: 650; }
+.auth__intro h1 { margin: 15px 0 34px; font-size: clamp(27px, 3vw, 40px); line-height: 1.2; letter-spacing: -.025em; font-weight: 650; color: #fff; }
+.auth__steps { list-style: none; margin: 0; padding: 0; display: grid; }
+.auth__steps li {
+  position: relative; display: grid; grid-template-columns: 42px minmax(0, 1fr) auto; gap: 14px; align-items: center;
+  padding: 15px 0; border-top: 1px solid rgba(255, 255, 255, .09);
+}
+.auth__steps li:last-child { border-bottom: 1px solid rgba(255, 255, 255, .09); }
+.auth__steps .n { font-size: 11px; letter-spacing: .1em; color: #6e81a2; font-variant-numeric: tabular-nums; }
+.auth__steps b { display: block; font-size: 13.5px; font-weight: 600; color: #c3cfe4; }
+.auth__steps small { display: block; font-size: 11.5px; color: #7c8dab; margin-top: 2px; }
+.auth__steps em { font-style: normal; font-size: 11px; color: #6e81a2; white-space: nowrap; }
+.auth__steps li.done b { color: #fff; }
+.auth__steps li.now b { color: #fff; }
+.auth__steps li.now { padding-left: 18px; }
+.auth__steps li.now::before { content: ""; position: absolute; left: 0; top: 15px; bottom: 15px; width: 2px; border-radius: 2px; background: var(--brand-2); }
+.auth__steps li.now .n, .auth__steps li.now em { color: var(--brand-2); }
+.auth__foot { margin-top: auto; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 11px; color: #7386a6; }
+.auth__foot svg { width: 14px; height: 14px; }
+.auth__foot span + span::before { content: "·"; margin-right: 8px; color: #4e6080; }
+
+.auth__main { position: relative; display: flex; align-items: center; justify-content: center; padding: 56px 40px; background: var(--bg); background-image: var(--bg-glow); background-repeat: no-repeat; background-attachment: fixed; }
+.auth__panel { width: 100%; max-width: 352px; }
+.auth__panel--wide { max-width: 420px; }
+.auth__back { position: absolute; left: 26px; top: 24px; font-size: 12.5px; color: var(--muted); }
+.auth__back:hover { color: var(--brand); text-decoration: none; }
+.auth__mobilebrand { display: none; align-items: center; gap: 10px; font-weight: 700; margin-bottom: 26px; color: var(--ink); }
+.auth__mobilebrand .logo { width: 32px; height: 32px; border-radius: 9px; display: grid; place-items: center; background: var(--grad); color: #fff; font-weight: 800; }
+.auth__eyebrow { display: flex; align-items: center; gap: 8px; font-size: 11.5px; font-weight: 650; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+.auth__eyebrow i { width: 6px; height: 6px; border-radius: 50%; background: var(--brand); flex: none; }
+.auth__panel h2 { margin: 10px 0 10px; font-size: 28px; letter-spacing: -.03em; font-weight: 650; }
+.auth__panel .sub { margin: 0 0 26px; color: var(--muted); font-size: 13px; line-height: 1.6; }
+.auth__panel .note { margin-bottom: 16px; }
+.auth__field { display: grid; gap: 7px; margin-bottom: 14px; font-size: 12.5px; font-weight: 600; color: var(--muted); }
+.auth__box { display: flex; align-items: stretch; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; transition: border-color .15s ease, box-shadow .15s ease; }
+.auth__box:focus-within { border-color: var(--brand); box-shadow: 0 0 0 3px var(--ring); }
+.auth__box input { border: 0; border-radius: 0; background: transparent; padding: 11px 12px; box-shadow: none; }
+.auth__box input:focus { border: 0; box-shadow: none; }
+.auth__peek {
+  border: 0; border-left: 1px solid var(--line); background: transparent; color: var(--muted);
+  font: inherit; font-size: 12px; font-weight: 600; padding: 0 13px; cursor: pointer; flex: none;
+}
+.auth__peek:hover { color: var(--brand); }
+.auth__captcha { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.auth__captcha .cap { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; line-height: 0; background: #f4f5f9; flex: none; }
+.auth__captcha .cap svg { display: block; }
+.auth__captcha input[type=text] { width: 96px; flex: none; text-align: center; letter-spacing: .22em; font-weight: 650; }
+.auth__captcha .refresh { flex: none; height: 40px; padding: 0 12px; font-size: 12px; }
+.auth__hint { margin: -2px 0 16px; font-size: 11.5px; line-height: 1.6; color: var(--muted-2); }
+.auth__submit { width: 100%; height: 44px; justify-content: space-between; padding: 0 16px; margin-top: 8px; border-radius: 9px; }
+.auth__submit .arrow { font-size: 16px; line-height: 1; opacity: .9; }
+.auth__links { display: flex; justify-content: space-between; align-items: center; gap: 10px 16px; flex-wrap: wrap; margin-top: 16px; font-size: 12.5px; color: var(--muted); }
+.auth__meta { display: flex; justify-content: space-between; gap: 12px; margin-top: 44px; padding-top: 14px; border-top: 1px solid var(--line); font-size: 10.5px; letter-spacing: .06em; color: var(--muted-2); text-transform: uppercase; }
+.auth__done { display: grid; gap: 10px; justify-items: start; }
+.auth__done .mark { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; background: var(--ok-soft); color: var(--ok); border: 1px solid var(--ok-line); font-size: 20px; }
+
+@media (max-width: 900px) {
+  .auth { grid-template-columns: 1fr; }
+  .auth__aside { display: none; }
+  .auth__main { min-height: 100vh; padding: 54px 22px 40px; }
+  .auth__mobilebrand { display: flex; }
+  .auth__back { display: none; }
+  .auth__meta { margin-top: 34px; }
+}
 
 @media (max-width: 960px) {
   .shell { grid-template-columns: 1fr; align-content: start; }
@@ -417,8 +503,10 @@ textarea { min-height: 82px; resize: vertical; font-family: ui-monospace, Menlo,
 }
 `;
 
-/* --------------------------------- 图标 ---------------------------------- */
+/** 主页等自定义页面复用同一套主题变量与基础组件样式 */
+export const PAGE_CSS = CSS;
 
+/* --------------------------------- 图标 ---------------------------------- */
 const ICONS = {
   overview:
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></svg>',
@@ -430,6 +518,8 @@ const ICONS = {
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="8" cy="8" r="4"/><path d="M11 11l8 8"/><path d="M16 16l2-2"/><path d="M18.5 18.5l2-2"/></svg>',
   logs:
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M5 4h9l5 5v11a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z"/><path d="M14 4v5h5"/><path d="M8 13h8M8 17h5"/></svg>',
+  settings:
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="3.1"/><path d="M19.4 14.4a1.7 1.7 0 0 0 .34 1.88l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V21a2 2 0 1 1-4 0v-.11a1.7 1.7 0 0 0-1.11-1.56 1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.88 1.7 1.7 0 0 0-1.56-1.03H3a2 2 0 1 1 0-4h.11a1.7 1.7 0 0 0 1.56-1.11 1.7 1.7 0 0 0-.34-1.88l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.88.34H9.1A1.7 1.7 0 0 0 10.13 3.7V3a2 2 0 1 1 4 0v.11a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.88v.05a1.7 1.7 0 0 0 1.56 1.03H21a2 2 0 1 1 0 4h-.11a1.7 1.7 0 0 0-1.49 1.03z"/></svg>',
   sun: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.2 5.2l1.4 1.4M17.4 17.4l1.4 1.4M18.8 5.2l-1.4 1.4M6.6 17.4l-1.4 1.4"/></svg>',
   moon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a7 7 0 1 0 10.5 10.5z"/></svg>',
   auto: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="4.5" width="18" height="12" rx="2"/><path d="M8.5 20h7M12 16.5V20"/></svg>',
@@ -439,7 +529,7 @@ const ICONS = {
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M12 3a9 9 0 1 0 0 18c1.4 0 2-.9 2-1.9 0-1.6-1.2-1.9-1.2-3.1 0-1 .8-1.8 1.9-1.8H17a4 4 0 0 0 4-4C21 6.3 17 3 12 3z"/><circle cx="7.8" cy="10.5" r="1.1" fill="currentColor" stroke="none"/><circle cx="11" cy="7.4" r="1.1" fill="currentColor" stroke="none"/><circle cx="15.4" cy="8.4" r="1.1" fill="currentColor" stroke="none"/></svg>',
 };
 
-export function navIcon(name: "overview" | "users" | "credentials" | "keys" | "logs"): string {
+export function navIcon(name: "overview" | "users" | "credentials" | "keys" | "logs" | "settings"): string {
   return ICONS[name];
 }
 
@@ -594,6 +684,66 @@ ${SCRIPT}
 </html>`;
 }
 
+export interface CaptchaView {
+  id: string;
+  svg: string;
+}
+
+/** 登录 / 注册 / 找回密码共用的验证码字段 */
+export function captchaField(captcha: CaptchaView, t: Translate): string {
+  return `<div class="auth__field">${escapeHtml(t("login.captcha"))}
+      <div class="auth__captcha">
+        <span class="cap" data-captcha-img>${captcha.svg}</span>
+        <input type="hidden" name="captchaId" value="${escapeHtml(captcha.id)}" data-captcha-id>
+        <input type="text" name="captcha" inputmode="numeric" autocomplete="off" maxlength="4" required
+          aria-label="${escapeHtml(t("login.captcha"))}">
+        <button type="button" class="btn btn--sm refresh" data-captcha-refresh>${escapeHtml(
+          t("login.captchaRefresh"),
+        )}</button>
+      </div>
+    </div>
+    <p class="auth__hint">${escapeHtml(t("login.captchaHint"))}</p>`;
+}
+
+const AUTH_SCRIPT = `<script>
+(() => {
+  document.querySelectorAll('[data-peek]').forEach((button) => {
+    const box = button.closest('.auth__box');
+    const input = box && box.querySelector('input');
+    if (!input) return;
+    button.addEventListener('click', () => {
+      const show = input.type === 'password';
+      input.type = show ? 'text' : 'password';
+      button.textContent = show ? button.dataset.hide : button.dataset.show;
+    });
+  });
+  document.querySelectorAll('[data-captcha-refresh]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const form = button.closest('form') || document;
+      button.disabled = true;
+      try {
+        const response = await fetch('/captcha', { cache: 'no-store', headers: { accept: 'application/json' } });
+        if (!response.ok) return;
+        const data = await response.json();
+        const image = form.querySelector('[data-captcha-img]');
+        const id = form.querySelector('[data-captcha-id]');
+        const answer = form.querySelector('input[name="captcha"]');
+        if (image) image.innerHTML = data.svg;
+        if (id) id.value = data.id;
+        if (answer) { answer.value = ''; answer.focus(); }
+      } catch (error) {
+        /* 刷新失败时保留旧图，用户可以再点一次 */
+      } finally {
+        button.disabled = false;
+      }
+    });
+  });
+})();
+</script>`;
+
+const SHIELD =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M12 3l7 3v5.2c0 4.3-2.9 7.7-7 9.8-4.1-2.1-7-5.5-7-9.8V6l7-3z"/><path d="M9 12l2.2 2.2L15.4 10"/></svg>';
+
 export function loginShell(options: {
   title: string;
   subtitle: string;
@@ -603,8 +753,29 @@ export function loginShell(options: {
   t: Translate;
   self: string;
   error?: string;
+  notice?: string;
   footer?: string;
+  captcha?: CaptchaView;
+  /** 注册 / 找回密码用更宽的卡片 */
+  wide?: boolean;
+  /** 纯结果页：不套 <form>，正文直接渲染 */
+  formless?: boolean;
 }): string {
+  const { t } = options;
+  const steps = [
+    { cls: "done", n: "01", title: t("auth.step1Title"), text: t("auth.step1Text"), state: t("auth.step1State") },
+    { cls: "now", n: "02", title: t("auth.step2Title"), text: t("auth.step2Text"), state: t("auth.step2State") },
+    { cls: "", n: "03", title: t("auth.step3Title"), text: t("auth.step3Text"), state: t("auth.step3State") },
+  ]
+    .map(
+      (step) => `<li class="${step.cls}">
+        <span class="n">${step.n}</span>
+        <div><b>${escapeHtml(step.title)}</b><small>${escapeHtml(step.text)}</small></div>
+        <em>${escapeHtml(step.state)}</em>
+      </li>`,
+    )
+    .join("");
+
   return `<!doctype html>
 <html lang="${options.prefs.lang === "zh" ? "zh-CN" : "en"}" data-theme="${options.prefs.theme}" data-mode="${
     options.prefs.mode
@@ -618,17 +789,42 @@ export function loginShell(options: {
 </head>
 <body>
 <div class="login-tools">${toolbar(options.prefs, options.t, options.self)}</div>
-<div class="login-wrap">
-  <div class="login-card">
-    <div class="login-brand"><span class="logo">C</span><span>CertumSigner</span></div>
-    <h1>${escapeHtml(options.title)}</h1>
-    <p class="sub">${escapeHtml(options.subtitle)}</p>
-    ${options.error ? `<div class="note note--bad">${escapeHtml(options.error)}</div>` : ""}
-    <form method="post" action="${escapeHtml(options.action)}" class="stack">${options.body}</form>
-    ${options.footer ?? ""}
-  </div>
+<div class="auth">
+  <aside class="auth__aside">
+    <a class="auth__brand" href="/">
+      <span class="logo">C</span>
+      <span>CertumSigner<span class="tag">${escapeHtml(t("brand.tagline"))}</span></span>
+    </a>
+    <div class="auth__intro">
+      <div class="auth__kicker">${escapeHtml(t("auth.kicker"))}</div>
+      <h1>${escapeHtml(t("auth.heading"))}</h1>
+      <ol class="auth__steps">${steps}</ol>
+    </div>
+    <div class="auth__foot">${SHIELD}<span>${escapeHtml(t("auth.security"))}</span></div>
+  </aside>
+  <main class="auth__main">
+    <a class="auth__back" href="/">← ${escapeHtml(t("login.backHome"))}</a>
+    <div class="auth__panel${options.wide ? " auth__panel--wide" : ""}">
+      <div class="auth__mobilebrand"><span class="logo">C</span>CertumSigner</div>
+      <div class="auth__eyebrow"><i></i>${escapeHtml(t("auth.identity"))}</div>
+      <h2>${escapeHtml(options.title)}</h2>
+      <p class="sub">${escapeHtml(options.subtitle)}</p>
+      ${options.notice ? `<div class="note note--ok">${escapeHtml(options.notice)}</div>` : ""}
+      ${options.error ? `<div class="note note--bad">${escapeHtml(options.error)}</div>` : ""}
+      ${
+        options.formless
+          ? options.body
+          : `<form method="post" action="${escapeHtml(options.action)}" class="stack">${options.body}</form>`
+      }
+      ${options.footer ?? ""}
+      <div class="auth__meta"><span>${escapeHtml(t("auth.footer"))}</span><span>${escapeHtml(
+        t("auth.footerMeta"),
+      )}</span></div>
+    </div>
+  </main>
 </div>
 ${SCRIPT}
+${AUTH_SCRIPT}
 </body>
 </html>`;
 }

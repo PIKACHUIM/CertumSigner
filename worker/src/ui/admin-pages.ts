@@ -3,6 +3,7 @@ import type { ApiKeyRecord, CredentialRecord, SignLogRecord, StatsBucket, UserRe
 import type { Translate } from "./i18n";
 import type { Prefs } from "./prefs";
 import {
+  captchaField,
   detailModal,
   emptyRow,
   escapeHtml,
@@ -14,8 +15,10 @@ import {
   pill,
   shell,
   statCard,
+  type CaptchaView,
   type NavItem,
 } from "./layout";
+import type { SystemSettings } from "../store/settings";
 
 export interface CredentialStatus {
   sessionExpiresAt?: number;
@@ -40,6 +43,7 @@ function nav(t: Translate): NavItem[] {
     { href: "/admin/credentials", label: t("nav.credentials"), icon: navIcon("credentials") },
     { href: "/admin/keys", label: t("nav.keys"), icon: navIcon("keys") },
     { href: "/admin/logs", label: t("nav.logs"), icon: navIcon("logs") },
+    { href: "/admin/settings", label: t("nav.settings"), icon: navIcon("settings") },
   ];
 }
 
@@ -60,7 +64,14 @@ function page(active: string, title: string, subtitle: string, data: AdminNavDat
   });
 }
 
-export function adminLoginPage(data: { prefs: Prefs; t: Translate; self: string; error?: string }): string {
+export function adminLoginPage(data: {
+  prefs: Prefs;
+  t: Translate;
+  self: string;
+  error?: string;
+  notice?: string;
+  captcha?: CaptchaView;
+}): string {
   const { t } = data;
   return loginShell({
     title: t("login.adminTitle"),
@@ -70,13 +81,23 @@ export function adminLoginPage(data: { prefs: Prefs; t: Translate; self: string;
     t,
     self: data.self,
     error: data.error,
-    body: `<label class="field">${escapeHtml(t("login.password"))}
-      <input type="password" name="password" autocomplete="current-password" autofocus required>
+    notice: data.notice,
+    captcha: data.captcha,
+    body: `<label class="auth__field">${escapeHtml(t("login.password"))}
+      <div class="auth__box">
+        <input type="password" name="password" autocomplete="current-password" autofocus required>
+        <button type="button" class="auth__peek" data-peek data-show="${escapeHtml(
+          t("login.show"),
+        )}" data-hide="${escapeHtml(t("login.hide"))}">${escapeHtml(t("login.show"))}</button>
+      </div>
     </label>
-    <button class="btn btn--primary" type="submit">${escapeHtml(t("login.submit"))}</button>`,
-    footer: `<p class="login-foot">${escapeHtml(t("login.toUser"))} <a href="/user/login">${escapeHtml(
+    ${data.captcha ? captchaField(data.captcha, t) : ""}
+    <button class="btn btn--primary auth__submit" type="submit">
+      <span>${escapeHtml(t("login.submit"))}</span><span class="arrow">→</span>
+    </button>
+    <div class="auth__links"><span>${escapeHtml(t("login.toUser"))} <a href="/user/login">${escapeHtml(
       t("login.userLink"),
-    )}</a></p>`,
+    )}</a></span><a href="/">${escapeHtml(t("login.backHome"))}</a></div>`,
   });
 }
 
@@ -224,6 +245,7 @@ export function adminUsersPage(data: UsersPageData): string {
         <td>${status}</td>
         <td class="small">${user.expiresAt ? fmtTime(user.expiresAt) : escapeHtml(t("common.forever"))}</td>
         <td class="small">${escapeHtml(t("common.items", { n: user.credentialIds.length }))}</td>
+        <td class="small">${user.dailyQuota ? escapeHtml(t("common.perDay", { n: user.dailyQuota })) : escapeHtml(t("common.unlimited"))}</td>
         <td class="small">${data.keyCounts[user.id] ?? 0}</td>
         <td class="small muted">${user.lastLoginAt ? fmtTime(user.lastLoginAt) : escapeHtml(t("common.never"))}</td>
         <td><div class="row">
@@ -255,8 +277,14 @@ export function adminUsersPage(data: UsersPageData): string {
       <label class="field">${escapeHtml(t("users.password"))}
         <input type="password" name="password" autocomplete="new-password" required>
       </label>
-      <label class="field wide">${escapeHtml(t("users.expiresField"))}
+      <label class="field wide">${escapeHtml(t("users.emailField"))}
+        <input type="email" name="email" autocomplete="off">
+      </label>
+      <label class="field">${escapeHtml(t("users.expiresField"))}
         <input type="datetime-local" name="expiresAt">
+      </label>
+      <label class="field">${escapeHtml(t("users.quotaField"))}
+        <input type="number" name="dailyQuota" min="0" value="0">
       </label>
       <div class="field wide">${escapeHtml(t("users.assign"))}
         <div class="checks">${credentialChecks(data.credentials, [], t) || `<span class="small muted">${escapeHtml(
@@ -282,10 +310,10 @@ export function adminUsersPage(data: UsersPageData): string {
         <table class="table">
           <thead><tr><th>${escapeHtml(t("users.user"))}</th><th>${escapeHtml(t("common.status"))}</th><th>${escapeHtml(
             t("users.expires"),
-          )}</th><th>${escapeHtml(t("users.certs"))}</th><th>${escapeHtml(t("users.keys"))}</th><th>${escapeHtml(
-            t("users.lastLogin"),
-          )}</th><th></th></tr></thead>
-          <tbody>${rows || emptyRow(7, t("users.empty"))}</tbody>
+          )}</th><th>${escapeHtml(t("users.certs"))}</th><th>${escapeHtml(t("users.quota"))}</th><th>${escapeHtml(
+            t("users.keys"),
+          )}</th><th>${escapeHtml(t("users.lastLogin"))}</th><th></th></tr></thead>
+          <tbody>${rows || emptyRow(8, t("users.empty"))}</tbody>
         </table>
       </div>
     </div>
@@ -344,8 +372,14 @@ export function adminUserPage(data: UserDetailData): string {
     submit: t("common.save"),
     cancel: t("common.cancel"),
     body: `<div class="form-grid">
+      <label class="field wide">${escapeHtml(t("users.emailField"))}
+        <input type="email" name="email" autocomplete="off" value="${escapeHtml(user.email ?? "")}">
+      </label>
       <label class="field wide">${escapeHtml(t("users.expiresField"))}
         <input type="datetime-local" name="expiresAt" value="${fmtDateInput(user.expiresAt)}">
+      </label>
+      <label class="field wide">${escapeHtml(t("users.quotaField"))}
+        <input type="number" name="dailyQuota" min="0" value="${user.dailyQuota}">
       </label>
       <label class="field wide">${escapeHtml(t("users.resetPassword"))}
         <input type="password" name="password" autocomplete="new-password" placeholder="${escapeHtml(
@@ -399,6 +433,16 @@ export function adminUserPage(data: UserDetailData): string {
         </div>
         <dl class="dl">
           <dt>${escapeHtml(t("users.userId"))}</dt><dd class="mono">${escapeHtml(user.id)}</dd>
+          <dt>${escapeHtml(t("users.email"))}</dt><dd>${
+            user.email
+              ? `${escapeHtml(user.email)} ${
+                  user.emailVerified === false ? pill(t("users.emailUnverified"), "warn") : pill(t("users.emailVerified"), "ok")
+                }`
+              : `<span class="muted">${escapeHtml(t("users.emailMissing"))}</span>`
+          }</dd>
+          <dt>${escapeHtml(t("users.quota"))}</dt><dd>${
+            user.dailyQuota ? escapeHtml(t("common.perDay", { n: user.dailyQuota })) : escapeHtml(t("common.unlimited"))
+          }</dd>
           <dt>${escapeHtml(t("common.status"))}</dt><dd>${
             !user.enabled
               ? pill(t("common.disabled"), "bad")
@@ -786,5 +830,64 @@ export function adminLogsPage(data: LogsPageData): string {
       </div>
     </div>
     ${data.logs.map((log) => logDetailDialog(log, data)).join("")}`,
+  );
+}
+
+/* -------------------------------- 系统设置 -------------------------------- */
+
+export interface SettingsPageData extends AdminNavData {
+  settings: SystemSettings;
+  mailReady: boolean;
+}
+
+function toggle(name: string, label: string, hint: string, checked: boolean): string {
+  return `<div class="field" style="margin-bottom:14px">
+    <div class="checks">
+      <label><input type="checkbox" name="${name}" value="1" ${checked ? "checked" : ""}> ${escapeHtml(label)}</label>
+    </div>
+    <p class="small muted" style="margin:0">${escapeHtml(hint)}</p>
+  </div>`;
+}
+
+export function adminSettingsPage(data: SettingsPageData): string {
+  const { t, settings } = data;
+  return page(
+    "/admin/settings",
+    t("settings.title"),
+    t("settings.subtitle"),
+    data,
+    `<form method="post" action="/admin/settings">
+      <input type="hidden" name="csrf" value="${escapeHtml(data.csrf)}">
+      <div class="grid cols-2" style="margin-bottom:16px">
+        <div class="card">
+          <h2>${escapeHtml(t("settings.security"))}</h2>
+          ${toggle("loginCaptcha", t("settings.loginCaptcha"), t("settings.loginCaptchaHint"), settings.loginCaptcha)}
+        </div>
+        <div class="card">
+          <h2>${escapeHtml(t("settings.accounts"))}</h2>
+          ${toggle("registerEnabled", t("settings.register"), t("settings.registerHint"), settings.registerEnabled)}
+          ${toggle("resetEnabled", t("settings.reset"), t("settings.resetHint"), settings.resetEnabled)}
+          ${toggle("emailCaptcha", t("settings.emailCaptcha"), t("settings.emailCaptchaHint"), settings.emailCaptcha)}
+        </div>
+      </div>
+      <div class="card" style="margin-bottom:16px">
+        <h2>${escapeHtml(t("settings.mail"))} ${
+          data.mailReady ? pill(t("settings.mailReady"), "ok") : pill(t("settings.mailOff"), "warn")
+        }</h2>
+        <p class="small muted" style="margin:0">${escapeHtml(
+          data.mailReady ? t("settings.mailReadyHint") : t("settings.mailMissing"),
+        )}</p>
+        ${
+          settings.updatedAt
+            ? `<p class="small muted" style="margin:8px 0 0">${escapeHtml(t("settings.updatedAt"))}：${fmtTime(
+                settings.updatedAt,
+              )}</p>`
+            : ""
+        }
+      </div>
+      <div class="row row--end">
+        <button class="btn btn--primary" type="submit">${escapeHtml(t("settings.save"))}</button>
+      </div>
+    </form>`,
   );
 }

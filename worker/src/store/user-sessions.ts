@@ -67,3 +67,17 @@ export async function revokeUserSession(env: Env, cookieValue: string | undefine
   const sid = cookieValue.split(".")[0];
   if (sid) await env.CERTUM_KV.delete(`${PREFIX}${sid}`);
 }
+
+/** 重置口令后强制下线该用户的所有会话 */
+export async function revokeUserSessionsOf(env: Env, userId: string): Promise<number> {
+  const list = await env.CERTUM_KV.list({ prefix: PREFIX, limit: 1000 });
+  let removed = 0;
+  for (const item of list.keys) {
+    const record = await env.CERTUM_KV.get<UserSessionRecord>(item.name, "json");
+    if (record?.userId === userId) {
+      await env.CERTUM_KV.delete(item.name);
+      removed += 1;
+    }
+  }
+  return removed;
+}

@@ -9,7 +9,10 @@ import type { AdminSessionRecord, ApiKeyRecord, CredentialRecord, Env, UserRecor
 import { CertumError } from "../certum/errors";
 import { getCardFor, getSessionFor, peekCard, peekSession, refreshCardFor } from "../certum/session";
 import { constantTimeEqual } from "../lib/encoding";
+import { createCaptcha, verifyCaptcha } from "../lib/captcha";
+import { mailConfigured } from "../lib/mail";
 import { ADMIN_COOKIE, createAdminSession, readAdminSession, revokeAdminSession } from "../store/admin";
+import { readSettings, writeSettings } from "../store/settings";
 import { createApiKey, deleteApiKey, deleteKeysOfUser, listApiKeys, listKeysOfUser, setApiKeyEnabled } from "../store/keys";
 import {
   createCredential,
@@ -39,6 +42,7 @@ import {
   adminKeysPage,
   adminLoginPage,
   adminLogsPage,
+  adminSettingsPage,
   adminUserPage,
   adminUsersPage,
   type CredentialStatus,
@@ -172,11 +176,13 @@ admin.get("/admin/login", async (c) => {
   const existing = await readAdminSession(c.env, getCookie(c, ADMIN_COOKIE));
   if (existing) return c.redirect("/admin");
   const context = pageContext(c);
+  const settings = await readSettings(c.env);
   return c.html(
     adminLoginPage({
       prefs: context.prefs,
       t: context.t,
       self: context.self,
+      captcha: settings.loginCaptcha ? await createCaptcha(c.env) : undefined,
     }),
   );
 });
@@ -184,28 +190,41 @@ admin.get("/admin/login", async (c) => {
 admin.post("/admin/login", async (c) => {
   const context = pageContext(c);
   const { t } = context;
-  const loginPage = (error?: string) =>
-    c.html(adminLoginPage({ prefs: context.prefs, t, self: "/admin/login", error }));
+  const settings = await readSettings(c.env);
+  // 验证码是一次性的：任何失败页都要重新生成一张
+  const loginPage = async (error?: string, status: 401 | 429 | 500 = 401) =>
+    c.html(
+      adminLoginPage({
+        prefs: context.prefs,
+        t,
+        self: "/admin/login",
+        error,
+        captcha: settings.loginCaptcha ? await createCaptcha(c.env) : undefined,
+      }),
+      status,
+    );
 
   const ip = clientIp(c);
   if ((await loginFailures(c.env, "admin", ip)) >= LOGIN_MAX_FAILURES) {
-    return loginPage(t("login.errTooMany"));
+    return loginPage(t("login.errTooMany"), 429);
   }
 
   const form = await readForm(c);
+  if (settings.loginCaptcha && !(await verifyCaptcha(c.env, one(form, "captchaId"), one(form, "captcha")))) {
+    await bumpLoginFailure(c.env, "admin", ip);
+    return loginPage(t("login.errCaptcha"), 401);
+  }
+
   const password = one(form, "password");
   const expected = (c.env.ADMIN_PASSWORD ?? "").trim();
 
   if (!expected) {
-    return c.html(
-      adminLoginPage({ prefs: context.prefs, t, self: "/admin/login", error: t("login.errNoPassword") }),
-      500,
-    );
+    return loginPage(t("login.errNoPassword"), 500);
   }
 
   if (!password || !constantTimeEqual(password, expected)) {
     await bumpLoginFailure(c.env, "admin", ip);
-    return c.html(adminLoginPage({ prefs: context.prefs, t, self: "/admin/login", error: t("login.errBadPassword") }), 401);
+    return loginPage(t("login.errBadPassword"), 401);
   }
 
   await c.env.CERTUM_KV.delete(`adminfail:${ip}`);
@@ -306,8 +325,10 @@ secure.post("/users", async (c) => {
     const user = await createUser(c.env, {
       username: one(form, "username"),
       password: one(form, "password"),
+      email: one(form, "email") || undefined,
       expiresAt: expiresAt ?? undefined,
       credentialIds: many(form, "credentialIds"),
+      dailyQuota: Number(one(form, "dailyQuota") || "0") || 0,
       createdBy: c.get("adminSession").id,
     });
     return backWith(c, "/admin/users", "ok", tr(c)("msg.userCreated", { name: user.username }));
@@ -359,6 +380,10 @@ secure.post("/users/:id/update", async (c) => {
       expiresAt: expiresAt === undefined ? null : expiresAt,
       credentialIds: many(form, "credentialIds"),
       password: one(form, "password") || undefined,
+      email: one(form, "email") || null,
+      // 管理员改邮箱视为已核验，避免把用户锁在验证邮件之外
+      emailVerified: true,
+      dailyQuota: Number(one(form, "dailyQuota") || "0") || 0,
     });
     return backWith(c, `/admin/users/${c.req.param("id")}`, ok ? "ok" : "error", ok ? tr(c)("msg.saved") : tr(c)("msg.notFoundUser"));
   } catch (error) {
@@ -560,6 +585,35 @@ secure.post("/keys/:id/delete", async (c) => {
   if (!(await checkCsrf(c, form))) return csrfFail(c);
   const ok = await deleteApiKey(c.env, c.req.param("id"));
   return backWith(c, "/admin/keys", ok ? "ok" : "error", ok ? tr(c)("msg.keyDeleted") : tr(c)("msg.notFoundKey"));
+});
+
+/* -------------------------------- 系统设置 -------------------------------- */
+
+secure.get("/settings", async (c) => {
+  const settings = await readSettings(c.env);
+  return c.html(
+    adminSettingsPage({
+      ...pageContext(c),
+      ...queryMessages(c),
+      csrf: c.get("adminSession").csrf,
+      settings,
+      mailReady: mailConfigured(c.env),
+    }),
+  );
+});
+
+secure.post("/settings", async (c) => {
+  const form = await readForm(c);
+  if (!(await checkCsrf(c, form))) return csrfFail(c);
+
+  const on = (name: string) => one(form, name) === "1";
+  await writeSettings(c.env, {
+    loginCaptcha: on("loginCaptcha"),
+    registerEnabled: on("registerEnabled"),
+    resetEnabled: on("resetEnabled"),
+    emailCaptcha: on("emailCaptcha"),
+  });
+  return backWith(c, "/admin/settings", "ok", tr(c)("settings.saved"));
 });
 
 /* --------------------------------- 日志/API -------------------------------- */
