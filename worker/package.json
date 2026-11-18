@@ -23,5 +23,15 @@
     "@cloudflare/workers-types": "^5.20261118.1",
     "typescript": "^5.7.2",
     "wrangler": "^4.164.0"
+  },
+  "cloudflare": {
+    "bindings": {
+      "ADMIN_PASSWORD": {
+        "description": "Password for the /admin console. Pick something long."
+      },
+      "SESSION_SECRET": {
+        "description": "Random string (32+ chars) used to sign session cookies — generate one with `openssl rand -hex 32`."
+      }
+    }
   }
 }
