@@ -333,8 +333,12 @@ At runtime the email and seed come from the KV credential, so `CERTUM_*` is no l
   `npx tsc --noEmit`, `npm test` and the `wrangler dev` checks below are green; on the C++ side
   `digest` / `settings` / `spc` / `signer` / `cli` / `api` / `gui_win` compile warning-free per file with
   MSVC `/W4 /permissive-`; `pe.cpp` / `pkcs7.cpp` (no OpenSSL dev package on this machine) and
-  `gui_gtk.cpp` (no GTK3 here) are left to CI. The license page, the digest pills and the
-  `WinVerifyTrust` result for a file carrying several signatures still need a CI build to confirm.
+  `gui_gtk.cpp` (no GTK3 here) were left to CI, and Actions run `44295635910` finished green on all four
+  platforms, refreshing the eight artifacts in the
+  [latest release](https://github.com/PIKACHUIM/CertumSigner/releases/tag/latest) — so both the Win32 and
+  the GTK3 GUI do build (that run also caught a `tsa.cpp` call still passing `false` where `hash_bytes`
+  now wants an algorithm name; fixed). Still to confirm by hand: the license page and digest pills at
+  runtime, and the `WinVerifyTrust` result for a file carrying several signatures.
 - **Real Certum path verified** (Nov 2026, Windows x64): email + TOTP login works; `/v1/certificate`
   returns the EV code signing certificate with the configured fingerprint (card `7507400891785917`);
   `/v1/sign` returns a 512-byte signature for a real SHA-256 digest, and after the client writes it into

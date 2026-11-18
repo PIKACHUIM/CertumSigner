@@ -255,7 +255,8 @@ GUI 是自绘的 Win32 界面（手写绘制，不依赖任何 UI 框架），�
 | 中文 + 空格路径 | `hash` / `sign` / `verify` 对 `D:\下载\测试目录\签名 副本.exe` 均正常（摘要 `27264aac…79ec`） |
 | Win32 GUI | 125% DPI 下 1043×1062 窗口，1025×1015 客户区，逐像素核对无裁切；自绘按钮无系统灰边 |
 
-未实测：Linux（libcurl + GTK3）构建、GUI 交互。
+未实测：GUI 交互。Linux（libcurl + GTK3）在 GitHub Actions 上已真实编译通过（run `44295635910`，
+四个平台任务全部 success），但没有在 Linux 桌面上实际运行过。
 
 真实 Certum 云端（2026-11，同一台 Windows x64 机器）：
 
@@ -295,8 +296,9 @@ GUI 是自绘的 Win32 界面（手写绘制，不依赖任何 UI 框架），�
 | `sha1` | 云端 `digest.algorithm.error` → `digest_algorithm_unsupported` |
 | 写法容错 | `sha-384`、`SHA512`、`sha_256` 都能识别（去 `-`/`_` 转小写后匹配） |
 
-未验证：客户端把多份 PKCS#7 一起写进证书表后 `WinVerifyTrust` 的表现（本机缺 OpenSSL 开发包，
-`pe.cpp` / `pkcs7.cpp` 编不出可执行文件，只做了逐文件编译与人工审查）。
+未验证：客户端把多份 PKCS#7 一起写进证书表后 `WinVerifyTrust` 的表现。本机缺 OpenSSL 开发包，
+`pe.cpp` / `pkcs7.cpp` 编不出可执行文件；CI（run `44295635910`）已经把包含这两个文件的 Windows / Linux
+GUI 与 CLI 全部编译链接通过，但产物没有下载下来跑签名验证。
 
 ## 许可
 

@@ -329,8 +329,13 @@ npm run deploy
 - 本轮改动（手机端适配、MIT 应用内许可页、摘要算法多选）的验证进度：Worker 侧 `npx tsc --noEmit`、
   `npm test` 与 `wrangler dev` 实测已通过（见下）；C++ 侧 `digest` / `settings` / `spc` / `signer` /
   `cli` / `api` / `gui_win` 用 MSVC `/W4 /permissive-` 单文件编译零告警；
-  `pe.cpp` / `pkcs7.cpp`（本机缺 OpenSSL 开发包）与 `gui_gtk.cpp`（本机无 GTK3）留给 CI 编译；
-  许可页、算法胶囊多选、以及「一份文件多份签名」后的 `WinVerifyTrust` 结果，需要用 CI 产物再实测。
+  `pe.cpp` / `pkcs7.cpp`（本机缺 OpenSSL 开发包）与 `gui_gtk.cpp`（本机无 GTK3）交给 CI，
+  Actions 运行 `44295635910` 四个平台任务全部 success，8 个产物已刷新到
+  [latest release](https://github.com/PIKACHUIM/CertumSigner/releases/tag/latest)，
+  说明 Win32 与 GTK3 两个 GUI 都真实编译通过（这次 CI 还抓出了 `tsa.cpp` 里一处
+  `hash_bytes(…, false)` 没跟着改成算法名的编译错误，已修）。
+  仍待人工验证：许可页与算法胶囊的实际交互、「一份文件多份签名」后的 `WinVerifyTrust` 结果
+  —— 需要把产物下载到 Windows 上跑一遍。
 - **真实 Certum 链路已跑通**（2026-11，Windows x64）：邮箱 + TOTP 登录成功；
   `/v1/certificate` 返回 EV 代码签名证书，指纹与凭据配置一致（卡片 `7507400891785917`）；
   `/v1/sign` 用真实 SHA-256 摘要换回 512 字节签名，客户端写进 PE 后
