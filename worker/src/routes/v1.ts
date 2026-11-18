@@ -306,7 +306,7 @@ v1.get("/whoami", async (c) => {
       userId: key.userId ?? null,
     },
     user: owner
-      ? { id: owner.id, username: owner.username, dailyQuota: owner.dailyQuota, usedToday: userUsed }
+      ? { id: owner.id, email: owner.email, dailyQuota: owner.dailyQuota, usedToday: userUsed }
       : null,
     credential: {
       id: credential.id,
@@ -327,7 +327,7 @@ v1.get("/stats", async (c) => {
     ok: true,
     key: { id: key.id, name: key.name, dailyQuota: key.dailyQuota, usedToday: used, totalSigns: key.totalSigns },
     user: owner
-      ? { id: owner.id, username: owner.username, dailyQuota: owner.dailyQuota, usedToday: userUsed }
+      ? { id: owner.id, email: owner.email, dailyQuota: owner.dailyQuota, usedToday: userUsed }
       : null,
     today: stats.today,
     total: stats.total,

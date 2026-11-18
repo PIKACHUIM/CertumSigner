@@ -340,7 +340,7 @@ secure.get("/", async (c) => {
       statuses: await credentialStatuses(c.env, credentials),
       stats,
       logs,
-      userName: new Map(users.map((user) => [user.id, user.username])),
+      userName: new Map(users.map((user) => [user.id, user.email])),
       credName: new Map(credentials.map((cred) => [cred.id, cred.label])),
       ...(revealedKey ? { notice: t("msg.newKey", { key: revealedKey }) } : {}),
     }),
@@ -384,15 +384,14 @@ secure.post("/users", async (c) => {
     const expiresAt = parseWhen(one(form, "expiresAt"));
     if (expiresAt === null) throw new Error(tr(c)("msg.badExpiry"));
     const user = await createUser(c.env, {
-      username: one(form, "username"),
+      email: one(form, "email"),
       password: one(form, "password"),
-      email: one(form, "email") || undefined,
       expiresAt: expiresAt ?? undefined,
       credentialIds: many(form, "credentialIds"),
       dailyQuota: Number(one(form, "dailyQuota") || "0") || 0,
       createdBy: c.get("adminSession").id,
     });
-    return backWith(c, "/admin/users", "ok", tr(c)("msg.userCreated", { name: user.username }));
+    return backWith(c, "/admin/users", "ok", tr(c)("msg.userCreated", { name: user.email }));
   } catch (error) {
     return backWith(c, "/admin/users", "error", localizeError(tr(c), error instanceof Error ? error.message : String(error)));
   }
@@ -441,7 +440,7 @@ secure.post("/users/:id/update", async (c) => {
       expiresAt: expiresAt === undefined ? null : expiresAt,
       credentialIds: many(form, "credentialIds"),
       password: one(form, "password") || undefined,
-      email: one(form, "email") || null,
+      email: one(form, "email"),
       // 管理员改邮箱视为已核验，避免把用户锁在验证邮件之外
       emailVerified: true,
       dailyQuota: Number(one(form, "dailyQuota") || "0") || 0,
@@ -745,7 +744,7 @@ secure.get("/logs", async (c) => {
       ...queryMessages(c),
       csrf: c.get("adminSession").csrf,
       logs,
-      userName: new Map(users.map((user) => [user.id, user.username])),
+      userName: new Map(users.map((user) => [user.id, user.email])),
       credName: new Map(credentials.map((cred) => [cred.id, cred.label])),
     }),
   );

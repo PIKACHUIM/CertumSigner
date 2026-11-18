@@ -50,7 +50,7 @@ function userShell(active: string, title: string, subtitle: string, data: UserPa
     self: data.self,
     nav: nav(data.t),
     csrf: data.csrf,
-    userLabel: `${data.t("chrome.signedInAs")}：${data.user.username}`,
+    userLabel: `${data.t("chrome.signedInAs")}：${data.user.email}`,
     prefs: data.prefs,
     t: data.t,
     notice: data.notice,
@@ -89,8 +89,8 @@ export function userLoginPage(data: {
     error: data.error,
     notice: data.notice,
     captcha: data.captcha,
-    body: `<label class="auth__field">${escapeHtml(t("login.username"))}
-      <div class="auth__box"><input type="text" name="username" autocomplete="username" autofocus required></div>
+    body: `<label class="auth__field">${escapeHtml(t("login.email"))}
+      <div class="auth__box"><input type="email" name="email" autocomplete="username" autofocus required></div>
     </label>
     <label class="auth__field">${escapeHtml(t("login.userPassword"))}
       <div class="auth__box">
@@ -163,11 +163,8 @@ export function userRegisterPage(data: {
     notice: data.notice,
     captcha: data.captcha,
     wide: true,
-    body: `<label class="auth__field">${escapeHtml(t("register.username"))}
-      <div class="auth__box"><input type="text" name="username" autocomplete="username" autofocus required></div>
-    </label>
-    <label class="auth__field">${escapeHtml(t("register.email"))}
-      <div class="auth__box"><input type="email" name="email" autocomplete="email" required></div>
+    body: `<label class="auth__field">${escapeHtml(t("register.email"))}
+      <div class="auth__box"><input type="email" name="email" autocomplete="username" autofocus required></div>
     </label>
     <label class="auth__field">${escapeHtml(t("register.password"))}
       <div class="auth__box">
@@ -288,7 +285,7 @@ export function userResetPage(data: {
     notice: data.notice,
     captcha: data.captcha,
     body: `<label class="auth__field">${escapeHtml(t("reset.account"))}
-      <div class="auth__box"><input type="text" name="account" autocomplete="username" autofocus required></div>
+      <div class="auth__box"><input type="email" name="account" autocomplete="username" autofocus required></div>
     </label>
     ${data.captcha ? captchaField(data.captcha, t) : ""}
     <button class="btn btn--primary auth__submit" type="submit">

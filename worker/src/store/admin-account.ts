@@ -6,9 +6,17 @@ import type { AdminAccountRecord, Env } from "../types";
 import { constantTimeEqual, randomId } from "../lib/encoding.ts";
 import { hashPassword, verifyPassword } from "../lib/passwords.ts";
 import { ensureSessionSecret } from "../lib/session-secret.ts";
-import { validUsername } from "./users.ts";
 
 const ACCOUNT_KEY = "admin:account";
+
+/** 管理员用户名只用于登录控制台，和普通用户的邮箱是两套东西 */
+function validAdminUsername(raw: string): string {
+  const name = raw.trim();
+  if (!/^[A-Za-z0-9_.-]{3,32}$/.test(name)) {
+    throw new Error("用户名只能是 3~32 位字母、数字、下划线、点或短横线");
+  }
+  return name;
+}
 
 /** 管理员口令下限：比普通用户更严一点，控制台权限更大 */
 export const ADMIN_PASSWORD_MIN = 10;
@@ -43,7 +51,7 @@ export async function createAdminAccount(
   env: Env,
   input: { username: string; password: string },
 ): Promise<AdminAccountRecord> {
-  const username = validUsername(input.username);
+  const username = validAdminUsername(input.username);
   checkPasswordLength(input.password);
   if (await readAdminAccount(env)) throw new Error("已经初始化过管理员账号");
 

@@ -6,7 +6,7 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import type { Env, UserRecord, UserSessionRecord } from "../types";
-import { authenticateUserDetailed, createUser, deleteUser, findUserByLogin, getUser, updateUser, userExpired } from "../store/users";
+import { authenticateUserDetailed, createUser, deleteUser, findUserByEmail, getUser, updateUser, userExpired } from "../store/users";
 import { listCredentials } from "../store/credentials";
 import {
   createApiKey,
@@ -189,7 +189,7 @@ async function sendVerifyMail(c: Context<UserEnv>, account: UserRecord, token: s
   const { t } = pageContext(c);
   const link = `${(await siteBase(c.env, c.req.url))}/user/verify?token=${encodeURIComponent(token)}`;
   await sendMail(c.env, {
-    to: account.email!,
+    to: account.email,
     subject: t("register.mailSubject"),
     text: `${t("register.mailLead")}\n\n${t("register.mailText")}\n${link}`,
     html: mailTemplate({
@@ -207,7 +207,7 @@ async function sendResetMail(c: Context<UserEnv>, account: UserRecord, token: st
   const { t } = pageContext(c);
   const link = `${(await siteBase(c.env, c.req.url))}/user/reset/confirm?token=${encodeURIComponent(token)}`;
   await sendMail(c.env, {
-    to: account.email!,
+    to: account.email,
     subject: t("reset.mailSubject"),
     text: `${t("reset.mailLead")}\n\n${link}`,
     html: mailTemplate({
@@ -263,9 +263,9 @@ user.post("/user/login", async (c) => {
     return loginPage(t("login.errCaptcha"), 401);
   }
 
-  const username = one(form, "username");
+  const email = one(form, "email");
   const password = one(form, "password");
-  const result = await authenticateUserDetailed(c.env, username, password);
+  const result = await authenticateUserDetailed(c.env, email, password);
 
   if (result.status === "unverified") {
     await bumpFailure(c.env, ip);
@@ -370,9 +370,8 @@ user.post("/user/register", async (c) => {
 
   try {
     const account = await createUser(c.env, {
-      username: one(form, "username"),
-      password,
       email: one(form, "email"),
+      password,
       emailVerified: false,
       createdBy: "self-register",
       dailyQuota: 0,
@@ -380,7 +379,7 @@ user.post("/user/register", async (c) => {
 
     const token = await createEmailToken(c.env, {
       userId: account.id,
-      email: account.email!,
+      email: account.email,
       purpose: "verify",
       ttlMs: VERIFY_TTL_MS,
     });
@@ -394,7 +393,7 @@ user.post("/user/register", async (c) => {
     }
 
     return c.html(
-      userRegisterDonePage({ ...context, email: account.email ?? one(form, "email") }),
+      userRegisterDonePage({ ...context, email: account.email }),
     );
   } catch (error) {
     return registerPage(localizeError(t, error instanceof Error ? error.message : String(error)));
@@ -422,7 +421,7 @@ user.post("/user/verify", async (c) => {
   if (!record) return c.html(userVerifyPage({ ...context, error: t("register.verifyFail") }), 400);
 
   const account = await getUser(c.env, record.userId);
-  if (!account || !account.email || account.email !== record.email) {
+  if (!account || account.email !== record.email) {
     return c.html(userVerifyPage({ ...context, error: t("register.verifyFail") }), 400);
   }
   await updateUser(c.env, account.id, { emailVerified: true });
@@ -513,8 +512,8 @@ user.post("/user/reset", async (c) => {
   }
 
   // 无论账号是否存在都返回同一句话，避免用找回密码探测用户
-  const account = await findUserByLogin(c.env, one(form, "account"));
-  if (account?.email) {
+  const account = await findUserByEmail(c.env, one(form, "account"));
+  if (account) {
     try {
       const token = await createEmailToken(c.env, {
         userId: account.id,
@@ -558,7 +557,7 @@ user.post("/user/reset/confirm", async (c) => {
   if (!record) return c.html(userResetConfirmPage({ ...context, error: t("reset.fail") }), 400);
 
   const account = await getUser(c.env, record.userId);
-  if (!account || !account.email || account.email !== record.email) {
+  if (!account || account.email !== record.email) {
     return c.html(userResetConfirmPage({ ...context, error: t("reset.fail") }), 400);
   }
 

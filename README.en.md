@@ -66,8 +66,9 @@ Then open `https://<your-domain>/`:
 2. In `/admin`: **Credentials → New credential**: label, Certum email, TOTP seed (`otpauth://` URI or raw
    Base32), plus the certificate SHA-1 when you need a specific card. Use **Test login** to confirm the
    email/password pair can obtain a token.
-3. **Users → New user**: set a password (PBKDF2-SHA256), an optional expiry, a user-level daily quota,
-   an optional email and the certificates this user may sign with.
+3. **Users → New user**: enter the email (it *is* the login name) and a password (PBKDF2-SHA256), plus
+   an optional expiry, a user-level daily quota and the certificates this user may sign with. Emails are
+   unique globally; there is no separate username field.
 4. **Settings → Services and addresses**: set the base URL used in email links (for example
    `https://sign.example.com`), Certum API base, TSA upstream, sender, intermediate PEM and whether to
    keep per-request logs. Values live in KV and apply immediately — no `wrangler.jsonc` edit or redeploy.
@@ -84,7 +85,7 @@ Then open `https://<your-domain>/`:
   self-registration, password reset and email captcha.
 - **Home page** (`/`): feature overview plus Windows / Linux × x64 / arm64 × GUI / CLI downloads,
   built by GitHub Actions and published to the latest release.
-- **User portal** (`/user`): log in with username/password, create a key from the certificates the admin
+- **User portal** (`/user`): log in with email + password, create a key from the certificates the admin
   assigned to you (the secret is shown once, for 5 minutes), adjust each key's daily limit, disable or
   delete it later, and inspect your own call history.
 - **Quotas**: per-key and per-user daily limits apply together (0 = unlimited). Users can change their
@@ -113,7 +114,7 @@ Sign in ──► Sign ⇄ Credentials ⇄ Settings
         (after sign-in it lands on Sign; visit Credentials to switch keys)
 ```
 
-1. **Sign in**: server URL (your Worker domain), username, password. Enter in the password box submits.
+1. **Sign in**: server URL (your Worker domain), email, password. Enter in the password box submits.
 2. **Credentials**: lists the keys of your account (with daily quota). Picking an existing key
    **issues a new secret** and invalidates the old one (you are asked first); or type a name, pick a
    certificate and create a new key right there. Key selection is automatic after sign-in: a saved
@@ -130,8 +131,8 @@ Sign in ──► Sign ⇄ Credentials ⇄ Settings
    - Appearance: language (中文 / English / system) and theme (system / dark / light).
    - About: license (MIT — opens an in-app license page, not a modal dialog), project URL, sign in again.
 
-The bottom of the sidebar holds the account block — round avatar (first letter of the username), user
-name and current key name — above three icon buttons for language, light/dark and sign-out. They stay
+The bottom of the sidebar holds the account block — round avatar (first letter of the email), email
+address and current key name — above three icon buttons for language, light/dark and sign-out. They stay
 pinned to the real window bottom when the window grows, and the drop-downs are custom-drawn so no white
 native list box appears in dark mode.
 
@@ -199,7 +200,7 @@ Errors are `{"ok":false,"error":{"code":"...","message":"..."}}` with codes such
 
 | Endpoint | Purpose |
 | --- | --- |
-| `POST /api/client/login` | username + password → session token, plus the available keys and certificates |
+| `POST /api/client/login` | email + password → session token, plus the available keys and certificates; the body also accepts the legacy `username` field |
 | `GET /api/client/session` | validate the token |
 | `POST /api/client/logout` | revoke the token |
 | `GET /api/client/keys` | list keys of the account |
@@ -305,10 +306,10 @@ At runtime the Certum email and TOTP seed come from the KV credential; no `CERTU
 
 ## Verification
 
-- Worker: `npx tsc --noEmit` clean; `npm test` 35 passing (TOTP against RFC 6238 vectors, multipart,
+- Worker: `npx tsc --noEmit` clean; `npm test` 39 passing (TOTP against RFC 6238 vectors, multipart,
   encoding/hashing, KV storage, password hashing including the 100k iteration cap guard and rejection of
-  other iteration counts, admin account setup/password change, runtime config defaults / save and read
-  back).
+  other iteration counts, user email uniqueness and index rebuild on email change, admin account
+  setup/password change, runtime config defaults / save and read back).
 - New features exercised under `wrangler dev` (Nov 2026): home page downloads, two-column sign-in with
   captcha (wrong code → 401 and a new image, refresh button issues a new id, password show/hide),
   persisted settings toggles, registration reporting a clear error without Resend, email verification

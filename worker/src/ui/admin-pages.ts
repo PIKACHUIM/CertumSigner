@@ -297,7 +297,7 @@ export function adminUsersPage(data: UsersPageData): string {
           ? pill(t("common.expired"), "warn")
           : pill(t("common.normal"), "ok");
       return `<tr>
-        <td><strong>${escapeHtml(user.username)}</strong><div class="small muted mono hide-xs">${escapeHtml(user.id)}</div></td>
+        <td><strong>${escapeHtml(user.email)}</strong><div class="small muted mono hide-xs">${escapeHtml(user.id)}</div></td>
         <td>${status}</td>
         <td class="small">${user.expiresAt ? fmtTime(user.expiresAt) : escapeHtml(t("common.forever"))}</td>
         <td class="small hide-xs">${escapeHtml(t("common.items", { n: user.credentialIds.length }))}</td>
@@ -327,14 +327,11 @@ export function adminUsersPage(data: UsersPageData): string {
     submit: t("users.create"),
     cancel: t("common.cancel"),
     body: `<div class="form-grid">
-      <label class="field">${escapeHtml(t("users.username"))}
-        <input type="text" name="username" placeholder="alice" required>
+      <label class="field wide">${escapeHtml(t("users.email"))}
+        <input type="email" name="email" autocomplete="off" placeholder="user@example.com" required>
       </label>
       <label class="field">${escapeHtml(t("users.password"))}
         <input type="password" name="password" autocomplete="new-password" required>
-      </label>
-      <label class="field wide">${escapeHtml(t("users.emailField"))}
-        <input type="email" name="email" autocomplete="off">
       </label>
       <label class="field">${escapeHtml(t("users.expiresField"))}
         <input type="datetime-local" name="expiresAt">
@@ -428,8 +425,8 @@ export function adminUserPage(data: UserDetailData): string {
     submit: t("common.save"),
     cancel: t("common.cancel"),
     body: `<div class="form-grid">
-      <label class="field wide">${escapeHtml(t("users.emailField"))}
-        <input type="email" name="email" autocomplete="off" value="${escapeHtml(user.email ?? "")}">
+      <label class="field wide">${escapeHtml(t("users.email"))}
+        <input type="email" name="email" autocomplete="off" value="${escapeHtml(user.email)}" required>
       </label>
       <label class="field wide">${escapeHtml(t("users.expiresField"))}
         <input type="datetime-local" name="expiresAt" value="${fmtDateInput(user.expiresAt)}">
@@ -471,7 +468,7 @@ export function adminUserPage(data: UserDetailData): string {
 
   return page(
     "/admin/users",
-    t("users.detailTitle", { name: user.username }),
+    t("users.detailTitle", { name: user.email }),
     t("users.detailSubtitle"),
     data,
     `${
@@ -489,12 +486,8 @@ export function adminUserPage(data: UserDetailData): string {
         </div>
         <dl class="dl">
           <dt>${escapeHtml(t("users.userId"))}</dt><dd class="mono">${escapeHtml(user.id)}</dd>
-          <dt>${escapeHtml(t("users.email"))}</dt><dd>${
-            user.email
-              ? `${escapeHtml(user.email)} ${
-                  user.emailVerified === false ? pill(t("users.emailUnverified"), "warn") : pill(t("users.emailVerified"), "ok")
-                }`
-              : `<span class="muted">${escapeHtml(t("users.emailMissing"))}</span>`
+          <dt>${escapeHtml(t("users.email"))}</dt><dd>${escapeHtml(user.email)} ${
+            user.emailVerified ? pill(t("users.emailVerified"), "ok") : pill(t("users.emailUnverified"), "warn")
           }</dd>
           <dt>${escapeHtml(t("users.quota"))}</dt><dd>${
             user.dailyQuota ? escapeHtml(t("common.perDay", { n: user.dailyQuota })) : escapeHtml(t("common.unlimited"))
@@ -700,7 +693,7 @@ export interface KeysPageData extends AdminNavData {
 
 export function adminKeysPage(data: KeysPageData): string {
   const { t } = data;
-  const userName = new Map(data.users.map((user) => [user.id, user.username]));
+  const userName = new Map(data.users.map((user) => [user.id, user.email]));
   const credName = new Map(data.credentials.map((cred) => [cred.id, cred.label]));
 
   const rows = data.keys
@@ -738,7 +731,7 @@ export function adminKeysPage(data: KeysPageData): string {
     .join("");
 
   const userOptions = data.users
-    .map((user) => `<option value="${escapeHtml(user.id)}">${escapeHtml(user.username)}</option>`)
+    .map((user) => `<option value="${escapeHtml(user.id)}">${escapeHtml(user.email)}</option>`)
     .join("");
   const credOptions = data.credentials
     .map((cred) => `<option value="${escapeHtml(cred.id)}">${escapeHtml(cred.label)}（${escapeHtml(cred.email)}）</option>`)

@@ -62,13 +62,12 @@ export interface CredentialRecord {
 /** 普通用户：可以登录门户、自己建 API Key，只能使用分配给自己的凭据 */
 export interface UserRecord {
   id: string;
-  username: string;
+  /** 登录标识就是邮箱，全局唯一 */
+  email: string;
   /** pbkdf2$迭代次数$salt$hash（Base64） */
   passwordHash: string;
-  /** 注册/找回密码用的邮箱；管理员创建的用户可以没有 */
-  email?: string;
-  /** 通过邮件验证过邮箱；未设置时按已验证处理（管理员直接建的账号） */
-  emailVerified?: boolean;
+  /** 自助注册要验证邮箱；管理员直接建的账号默认已验证 */
+  emailVerified: boolean;
   enabled: boolean;
   expiresAt?: number;
   credentialIds: string[];

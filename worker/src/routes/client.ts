@@ -1,5 +1,5 @@
 /**
- * 桌面客户端用的 JSON 接口：用户名口令登录 → 选择/新建 API Key。
+ * 桌面客户端用的 JSON 接口：邮箱 + 口令登录 → 选择/新建 API Key。
  *
  * 客户端只在首次登录时用这些接口拿 Key，之后签名直接走 /v1/*（Bearer csk_…），
  * 所以这里的会话 token 复用了用户门户的会话（sid.hmac），可以随时在 KV 里吊销。
@@ -35,6 +35,11 @@ interface CredentialView {
   id: string;
   label: string;
   email: string;
+}
+
+/** 老客户端读 `user.username`，这里用邮箱填同一个值 */
+function userView(record: UserRecord) {
+  return { id: record.id, email: record.email, username: record.email, expiresAt: record.expiresAt ?? 0 };
 }
 
 function keyView(record: ApiKeyRecord): KeyView {
@@ -109,16 +114,17 @@ clientApi.post("/login", async (c) => {
   }
 
   const body = await readBody(c);
-  const username = body.username ?? "";
+  // 登录名就是邮箱；username 只为兼容 v1.1.1 及更早的桌面客户端
+  const email = body.email ?? body.username ?? "";
   const password = body.password ?? "";
-  if (!username || !password) {
-    return fail(c, 400, "missing_fields", "请填写用户名和口令");
+  if (!email || !password) {
+    return fail(c, 400, "missing_fields", "请填写邮箱和口令");
   }
 
-  const account = await authenticateUser(c.env, username, password);
+  const account = await authenticateUser(c.env, email, password);
   if (!account) {
     await bumpFailure(c.env, ip);
-    return fail(c, 401, "bad_credentials", "用户名或口令错误");
+    return fail(c, 401, "bad_credentials", "邮箱或口令错误");
   }
 
   await c.env.CERTUM_KV.delete(`clientfail:${ip}`);
@@ -133,7 +139,7 @@ clientApi.post("/login", async (c) => {
     ok: true,
     token: cookie,
     expiresAt: record.expiresAt,
-    user: { id: account.id, username: account.username, expiresAt: account.expiresAt ?? 0 },
+    user: userView(account),
     credentials: credentials
       .filter((cred) => account.credentialIds.includes(cred.id))
       .map((cred): CredentialView => ({ id: cred.id, label: cred.label, email: cred.email })),
@@ -172,7 +178,7 @@ secure.get("/session", async (c) => {
   return c.json({
     ok: true,
     expiresAt: session.expiresAt,
-    user: { id: account.id, username: account.username, expiresAt: account.expiresAt ?? 0 },
+    user: userView(account),
     credentials: credentials
       .filter((cred) => account.credentialIds.includes(cred.id))
       .map((cred): CredentialView => ({ id: cred.id, label: cred.label, email: cred.email })),
