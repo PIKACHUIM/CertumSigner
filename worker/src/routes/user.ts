@@ -5,7 +5,7 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
-import type { Env, UserRecord, UserSessionRecord } from "../types";
+import type { ApiKeyRecord, Env, UserRecord, UserSessionRecord } from "../types";
 import { authenticateUserDetailed, createUser, deleteUser, findUserByEmail, getUser, updateUser, userExpired } from "../store/users";
 import { listCredentials } from "../store/credentials";
 import {
@@ -116,19 +116,33 @@ function queryMessages(c: Context<UserEnv>): { notice?: string; error?: string }
   return { notice: url.searchParams.get("ok") ?? undefined, error: url.searchParams.get("error") ?? undefined };
 }
 
-async function consumeReveal(c: Context<UserEnv>): Promise<string | undefined> {
+/** 新建 Key 后把明文和整条记录一起暂存：KV 的 list 是最终一致的，列表里可能还看不到它 */
+interface RevealedKey {
+  plaintext: string;
+  key: ApiKeyRecord;
+}
+
+async function consumeReveal(c: Context<UserEnv>): Promise<RevealedKey | undefined> {
   const id = new URL(c.req.url).searchParams.get("reveal");
   if (!id) return undefined;
-  const value = await c.env.CERTUM_KV.get(`reveal:${id}`);
-  if (value) await c.env.CERTUM_KV.delete(`reveal:${id}`);
-  return value ?? undefined;
+  const raw = await c.env.CERTUM_KV.get(`reveal:${id}`);
+  if (!raw) return undefined;
+  await c.env.CERTUM_KV.delete(`reveal:${id}`);
+  try {
+    return JSON.parse(raw) as RevealedKey;
+  } catch {
+    return undefined;
+  }
 }
 
 async function loadUser(c: Context<UserEnv>): Promise<UserRecord | null> {
   return getUser(c.env, c.get("userSession").userId);
 }
 
-async function renderDashboard(c: Context<UserEnv>, extra: { notice?: string; error?: string; revealedKey?: string } = {}): Promise<string> {
+async function renderDashboard(
+  c: Context<UserEnv>,
+  extra: { notice?: string; error?: string; revealedKey?: string; freshKey?: ApiKeyRecord } = {},
+): Promise<string> {
   const user = c.get("user") ?? (await loadUser(c));
   const context = pageContext(c);
   if (!user) {
@@ -141,6 +155,8 @@ async function renderDashboard(c: Context<UserEnv>, extra: { notice?: string; er
     readUserLogs(c.env, user.id, 30),
   ]);
   const credentials = allCredentials.filter((cred) => user.credentialIds.includes(cred.id));
+  const shownKeys =
+    extra.freshKey && !keys.some((key) => key.id === extra.freshKey!.id) ? [extra.freshKey, ...keys] : keys;
 
   const usage: Record<string, number> = {};
   for (const key of keys) usage[key.id] = await getDailyUsage(c.env, key.id);
@@ -153,7 +169,7 @@ async function renderDashboard(c: Context<UserEnv>, extra: { notice?: string; er
     csrf: c.get("userSession").csrf,
     user,
     credentials,
-    keys,
+    keys: shownKeys,
     usage,
     userUsage,
     logs,
@@ -600,7 +616,8 @@ secure.use("*", async (c, next) => {
 });
 
 secure.get("/", async (c) => {
-  return c.html(await renderDashboard(c, { revealedKey: await consumeReveal(c) }));
+  const revealed = await consumeReveal(c);
+  return c.html(await renderDashboard(c, { revealedKey: revealed?.plaintext, freshKey: revealed?.key }));
 });
 
 secure.post("/logout", async (c) => {
@@ -630,7 +647,9 @@ secure.post("/keys", async (c) => {
     });
 
     const revealId = crypto.randomUUID();
-    await c.env.CERTUM_KV.put(`reveal:${revealId}`, created.plaintext, { expirationTtl: 300 });
+    await c.env.CERTUM_KV.put(`reveal:${revealId}`, JSON.stringify({ plaintext: created.plaintext, key: created.record }), {
+      expirationTtl: 300,
+    });
     return c.redirect(`/user?reveal=${revealId}`);
   } catch (error) {
     return backWith(c, "/user", "error", localizeError(tr(c), error instanceof Error ? error.message : String(error)));

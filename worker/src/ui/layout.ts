@@ -63,6 +63,7 @@ const LIGHT = `
   --panel-2: #f8fafc;
   --line: #e3e8f2;
   --line-2: #eef2f8;
+  --line-strong: #cfd8ea;
   --ink: #0e1626;
   --muted: #5c6b85;
   --muted-2: #8a97ad;
@@ -87,6 +88,7 @@ const DARK = `
   --panel-2: #131c2e;
   --line: #1e2a40;
   --line-2: #182234;
+  --line-strong: #2f3f5d;
   --ink: #e8eefb;
   --muted: #94a3bd;
   --muted-2: #6b7a95;
@@ -152,6 +154,9 @@ html[data-mode="dark"][data-theme="${id}"] { ${ACCENTS[id].dark} }
 const CSS = `
 html { ${LIGHT} }html[data-mode="dark"] { ${DARK} }
 @media (prefers-color-scheme: dark) { html[data-mode="auto"] { ${DARK} } }
+html[data-mode="light"] { color-scheme: light; }
+html[data-mode="dark"] { color-scheme: dark; }
+@media (prefers-color-scheme: dark) { html[data-mode="auto"] { color-scheme: dark; } }
 ${accentCss()}
 
 * { box-sizing: border-box; }
@@ -311,12 +316,35 @@ form.inline { display: inline; }
 .stack { display: grid; gap: 12px; }
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 14px; }
 .form-grid .wide { grid-column: 1 / -1; }
-label.field { display: grid; gap: 6px; font-size: 12.5px; color: var(--muted); font-weight: 600; }
-input[type=text], input[type=password], input[type=number], input[type=datetime-local], select, textarea {
-  width: 100%; border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px; font: inherit;
-  color: var(--ink); background: var(--panel-2); outline: none; transition: border-color .15s ease, box-shadow .15s ease;
+label.field { display: grid; gap: 7px; font-size: 12.5px; color: var(--muted); font-weight: 600; }
+/* 文本类控件统一外观：所有 input 类型都覆盖，避免 email/url 掉回浏览器原生样式 */
+input:not([type=checkbox]):not([type=radio]):not([type=hidden]):not([type=submit]):not([type=button]):not([type=reset]):not([type=file]):not([type=range]):not([type=color]),
+select, textarea {
+  width: 100%; min-height: 38px; box-sizing: border-box; margin: 0; padding: 8px 12px;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--panel); color: var(--ink);
+  font: inherit; font-size: 13.5px; line-height: 1.45; outline: none;
+  box-shadow: inset 0 1px 2px rgba(15, 23, 42, .05);
+  transition: border-color .15s ease, box-shadow .15s ease, background .15s ease;
+  appearance: none; -webkit-appearance: none;
 }
-input:focus, select:focus, textarea:focus { border-color: var(--brand); box-shadow: 0 0 0 3px var(--ring); }
+input:not([type=checkbox]):not([type=radio]):not([type=hidden]):not([type=submit]):not([type=button]):not([type=reset]):not([type=file]):not([type=range]):not([type=color]):hover,
+select:hover, textarea:hover { border-color: var(--line-strong); }
+input:focus, select:focus, textarea:focus {
+  border-color: var(--brand); box-shadow: 0 0 0 3px var(--ring), inset 0 1px 2px rgba(15, 23, 42, .04);
+}
+input::placeholder, textarea::placeholder { color: var(--muted-2); opacity: 1; }
+input:disabled, select:disabled, textarea:disabled { background: var(--panel-2); color: var(--muted); cursor: not-allowed; }
+input[type=number]::-webkit-outer-spin-button, input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+input[type=number] { -moz-appearance: textfield; }
+select {
+  padding-right: 34px; cursor: pointer;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5 6 6.5l5-5' fill='none' stroke='%2394a3b8' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 12px center; background-size: 11px 7px;
+}
+input[type=datetime-local]::-webkit-calendar-picker-indicator,
+input[type=date]::-webkit-calendar-picker-indicator { opacity: .45; cursor: pointer; border-radius: 4px; }
+input[type=datetime-local]::-webkit-calendar-picker-indicator:hover,
+input[type=date]::-webkit-calendar-picker-indicator:hover { opacity: .75; }
 textarea { min-height: 82px; resize: vertical; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12.5px; }
 .checks { display: grid; gap: 6px; }
 .checks label { display: flex; gap: 8px; align-items: center; font-size: 13px; color: var(--ink); font-weight: 500; }

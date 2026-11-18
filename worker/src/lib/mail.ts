@@ -1,6 +1,6 @@
 /**
  * 发信：Resend HTTP API（Workers 里不能直接发 SMTP）。
- * API Key / 发件人走 secret，代码里不出现任何真实凭据。
+ * API Key 与发件人都存在 KV 的运行时配置里，后台「服务与地址」改，代码里不出现真实凭据。
  */
 import type { Env } from "../types";
 import { readConfig } from "../store/config.ts";
@@ -16,7 +16,7 @@ export interface MailMessage {
 
 export async function mailConfigured(env: Env): Promise<boolean> {
   const config = await readConfig(env);
-  return !!((env.RESEND_API_KEY ?? "").trim() && config.resendFrom);
+  return !!(config.resendApiKey && config.resendFrom);
 }
 
 /** 邮件里的绝对地址：优先后台配置的基础地址，否则按本次请求推导 */
@@ -61,10 +61,10 @@ export function mailTemplate(options: {
 }
 
 export async function sendMail(env: Env, message: MailMessage): Promise<void> {
-  const apiKey = (env.RESEND_API_KEY ?? "").trim();
   const config = await readConfig(env);
+  const apiKey = config.resendApiKey;
   const from = config.resendFrom;
-  if (!apiKey || !from) throw new Error("邮件服务未配置（缺少 RESEND_API_KEY 或发件人）");
+  if (!apiKey || !from) throw new Error("邮件服务未配置（系统设置里填 API Key 与发件人）");
 
   const response = await fetch(ENDPOINT, {
     method: "POST",

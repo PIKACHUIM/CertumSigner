@@ -22,14 +22,10 @@ const CARD_TTL_MS = 12 * 60 * 60 * 1000;
 const memorySessions = new Map<string, CertumSession>();
 const pendingLogins = new Map<string, Promise<CertumSession>>();
 
-/** API 根地址来自 KV 配置（后台可改），客户端常量仍用环境变量兜底 */
+/** API 根地址来自 KV 配置（后台可改），OAuth 客户端用内置的公开常量 */
 async function endpointsFor(env: Env): Promise<CertumEndpoints> {
   const config = await readConfig(env);
-  return resolveEndpoints({
-    apiBase: config.certumApiBase,
-    clientId: env.CERTUM_CLIENT_ID,
-    clientSecret: env.CERTUM_CLIENT_SECRET,
-  });
+  return resolveEndpoints({ apiBase: config.certumApiBase });
 }
 
 function sessionKey(cred: CredentialRecord): string {

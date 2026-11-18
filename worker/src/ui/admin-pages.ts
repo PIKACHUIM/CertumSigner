@@ -881,6 +881,8 @@ export function adminLogsPage(data: LogsPageData): string {
 export interface SettingsPageData extends AdminNavData {
   settings: SystemSettings;
   config: RuntimeConfig;
+  /** 只暴露「有没有填过」，密钥本身不回传 */
+  hasResendApiKey: boolean;
   mailReady: boolean;
   adminUsername?: string;
 }
@@ -939,6 +941,11 @@ export function adminSettingsPage(data: SettingsPageData): string {
               placeholder="CertumSigner &lt;noreply@example.com&gt;">
             <span class="small muted">${escapeHtml(t("settings.resendFromHint"))}</span>
           </label>
+          <label class="field">${escapeHtml(t("settings.resendApiKey"))}
+            <input type="password" name="resendApiKey" autocomplete="new-password" spellcheck="false"
+              placeholder="${escapeHtml(data.hasResendApiKey ? t("settings.resendApiKeySet") : "re_…")}">
+            <span class="small muted">${escapeHtml(t("settings.resendApiKeyHint"))}</span>
+          </label>
           <label class="field wide">${escapeHtml(t("settings.chainPem"))}
             <textarea name="certumChainPem" rows="4" spellcheck="false"
               placeholder="-----BEGIN CERTIFICATE-----">${escapeHtml(data.config.certumChainPem)}</textarea>
@@ -949,6 +956,13 @@ export function adminSettingsPage(data: SettingsPageData): string {
           <label><input type="checkbox" name="logSignatures" value="1" ${
             data.config.logSignatures ? "checked" : ""
           }> ${escapeHtml(t("settings.logSignatures"))}</label>
+          ${
+            data.hasResendApiKey
+              ? `<label><input type="checkbox" name="clearResendApiKey" value="1"> ${escapeHtml(
+                  t("settings.clearResendApiKey"),
+                )}</label>`
+              : ""
+          }
         </div>
         <p class="small muted" style="margin:6px 0 0">${escapeHtml(t("settings.logSignaturesHint"))}</p>
       </div>

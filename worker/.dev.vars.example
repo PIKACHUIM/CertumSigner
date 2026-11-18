@@ -1,15 +1,8 @@
 # 复制为 .dev.vars 后填写，仅用于本地 wrangler dev（不要提交真实值）
 #
-# 运行时配置（基础地址、Certum API、TSA、发件人、证书链、签名日志）都在后台
+# 运行时配置（基础地址、Certum API、TSA、Resend API Key 与发件人、证书链、签名日志）都在后台
 # 「系统设置 → 服务与地址」里改，存 KV；Certum 邮箱与 TOTP 种子在「凭据」页建。
-# 这里只剩两个可选的 secret。
+# 这里只剩一个可选的 secret。发信用的 Resend API Key 与发件人也在「服务与地址」里填。
 
 # 可选：会话签名密钥；不填则用初始化时自动生成并存 KV 的随机值
 # SESSION_SECRET=
-
-# 可选：本地测试发信时填（线上用 wrangler secret put RESEND_API_KEY）
-# RESEND_API_KEY=re_xxxxxxxxxxxxxxxxxxxxxxxx
-
-# 可选：覆盖 Certum OAuth 客户端常量，一般不用动
-# CERTUM_CLIENT_ID=
-# CERTUM_CLIENT_SECRET=

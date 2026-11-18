@@ -163,12 +163,29 @@ async function credentialStatuses(env: Env, credentials: CredentialRecord[]): Pr
   return out;
 }
 
-async function consumeReveal(c: Context<AdminEnv>): Promise<string | undefined> {
+/** 新建 Key 后把明文和整条记录一起暂存：KV 的 list 是最终一致的，列表里可能还看不到它 */
+interface RevealedKey {
+  plaintext: string;
+  key: ApiKeyRecord;
+}
+
+async function consumeReveal(c: Context<AdminEnv>): Promise<RevealedKey | undefined> {
   const id = new URL(c.req.url).searchParams.get("reveal");
   if (!id) return undefined;
-  const value = await c.env.CERTUM_KV.get(`reveal:${id}`);
-  if (value) await c.env.CERTUM_KV.delete(`reveal:${id}`);
-  return value ?? undefined;
+  const raw = await c.env.CERTUM_KV.get(`reveal:${id}`);
+  if (!raw) return undefined;
+  await c.env.CERTUM_KV.delete(`reveal:${id}`);
+  try {
+    return JSON.parse(raw) as RevealedKey;
+  } catch {
+    return undefined;
+  }
+}
+
+/** 刚建的 Key 先塞进列表，避免用户刷新半天看不到 */
+function withRevealedKey(keys: ApiKeyRecord[], revealed?: RevealedKey): ApiKeyRecord[] {
+  if (!revealed || keys.some((key) => key.id === revealed.key.id)) return keys;
+  return [revealed.key, ...keys];
 }
 
 function queryMessages(c: Context<AdminEnv>): { notice?: string; error?: string } {
@@ -342,7 +359,7 @@ secure.get("/", async (c) => {
       logs,
       userName: new Map(users.map((user) => [user.id, user.email])),
       credName: new Map(credentials.map((cred) => [cred.id, cred.label])),
-      ...(revealedKey ? { notice: t("msg.newKey", { key: revealedKey }) } : {}),
+      ...(revealedKey ? { notice: t("msg.newKey", { key: revealedKey.plaintext }) } : {}),
     }),
   );
 });
@@ -400,10 +417,11 @@ secure.post("/users", async (c) => {
 secure.get("/users/:id", async (c) => {
   const user = await getUser(c.env, c.req.param("id"));
   if (!user) return backWith(c, "/admin/users", "error", tr(c)("msg.notFoundUser"));
-  const [credentials, keys, stats] = await Promise.all([
+  const [credentials, keys, stats, revealed] = await Promise.all([
     listCredentials(c.env),
     listKeysOfUser(c.env, user.id),
     readStats(c.env, 1),
+    consumeReveal(c),
   ]);
   return c.html(
     adminUserPage({
@@ -412,9 +430,9 @@ secure.get("/users/:id", async (c) => {
       csrf: c.get("adminSession").csrf,
       user,
       credentials,
-      keys,
+      keys: withRevealedKey(keys, revealed),
       stats: { total: stats.total },
-      revealedKey: await consumeReveal(c),
+      revealedKey: revealed?.plaintext,
     }),
   );
 });
@@ -569,16 +587,21 @@ secure.post("/credentials/:id/certificate", async (c) => {
 /* ---------------------------------- Key ---------------------------------- */
 
 secure.get("/keys", async (c) => {
-  const [keys, users, credentials] = await Promise.all([listApiKeys(c.env), listUsers(c.env), listCredentials(c.env)]);
+  const [keys, users, credentials, revealed] = await Promise.all([
+    listApiKeys(c.env),
+    listUsers(c.env),
+    listCredentials(c.env),
+    consumeReveal(c),
+  ]);
   return c.html(
     adminKeysPage({
       ...pageContext(c),
       ...queryMessages(c),
       csrf: c.get("adminSession").csrf,
-      keys,
+      keys: withRevealedKey(keys, revealed),
       users,
       credentials,
-      revealedKey: await consumeReveal(c),
+      revealedKey: revealed?.plaintext,
     }),
   );
 });
@@ -612,7 +635,9 @@ secure.post("/keys", async (c) => {
     });
 
     const revealId = crypto.randomUUID();
-    await c.env.CERTUM_KV.put(`reveal:${revealId}`, created.plaintext, { expirationTtl: 300 });
+    await c.env.CERTUM_KV.put(`reveal:${revealId}`, JSON.stringify({ plaintext: created.plaintext, key: created.record }), {
+      expirationTtl: 300,
+    });
     return c.redirect(`${backPath}?reveal=${revealId}`);
   } catch (error) {
     return backWith(c, backPath, "error", localizeError(tr(c), error instanceof Error ? error.message : String(error)));
@@ -648,7 +673,9 @@ secure.get("/settings", async (c) => {
       ...queryMessages(c),
       csrf: c.get("adminSession").csrf,
       settings,
-      config,
+      // 密钥不回传给浏览器，页面只显示「已配置/未配置」
+      config: { ...config, resendApiKey: "" },
+      hasResendApiKey: !!config.resendApiKey,
       mailReady: (await mailConfigured(c.env)),
       adminUsername: state.account?.username,
     }),
@@ -689,6 +716,11 @@ secure.post("/settings", async (c) => {
     resendFrom: one(form, "resendFrom"),
     certumChainPem,
     logSignatures: on("logSignatures"),
+    ...(on("clearResendApiKey")
+      ? { resendApiKey: "" }
+      : one(form, "resendApiKey").trim()
+        ? { resendApiKey: one(form, "resendApiKey").trim() }
+        : {}),
   });
   return backWith(c, "/admin/settings", "ok", tr(c)("settings.saved"));
 });

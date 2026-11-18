@@ -49,12 +49,9 @@ docs/          Certum 云签名协议逆向记录
 | --- | --- |
 | `SESSION_SECRET` | 可选，会话 cookie 的 HMAC 密钥 |
 
-需要「注册 / 找回密码」时再配置邮件（可选，不配置则这两个开关不可用）：
-
-| 名称 | 说明 |
-| --- | --- |
-| `RESEND_API_KEY` | secret，Resend 的 API Key |
-| 发件人 | 在后台「系统设置 → 服务与地址」填，例如 `CertumSigner <noreply@example.com>` |
+需要「注册 / 找回密码」时，登录后台在「系统设置 → 服务与地址」里填 Resend 的 **API Key** 与
+**发件人**（例如 `CertumSigner <noreply@example.com>`），两项都存在 KV、保存即生效，
+不需要再 `wrangler secret put`。
 
 自定义域名在 `worker/wrangler.jsonc` 的 `routes` 里改（本仓库写的是 `sign.example.com`），
 部署后把同一个地址填进「系统设置 → 基础地址」，邮件里的链接就会用它。
@@ -245,7 +242,7 @@ npm run typecheck
 ```bash
 npm run deploy
 # 打开 https://<你的域名>/admin ，按提示创建管理员账号
-npx wrangler secret put RESEND_API_KEY   # 可选，开启注册/找回密码时再配
+# 需要发信时：登录后台 → 系统设置 → 服务与地址，填 Resend API Key 与发件人
 ```
 
 
@@ -254,15 +251,14 @@ npx wrangler secret put RESEND_API_KEY   # 可选，开启注册/找回密码时
 
 ## 环境变量
 
-只保留两个可选 secret；其余配置全部在后台「系统设置 → 服务与地址」里改（存 KV）：
+只剩一个可选 secret；其余配置全部在后台「系统设置 → 服务与地址」里改（存 KV）：
 
 | 名称 | 类型 | 说明 |
 | --- | --- | --- |
 | `SESSION_SECRET` | secret | 可选，会话 cookie 的 HMAC 密钥；不设则用初始化时生成并存 KV 的随机值 |
-| `RESEND_API_KEY` | secret | 可选，Resend 发信 Key；不填则注册 / 找回密码不可用 |
 
-后台可改的运行时配置：基础地址、Certum API 根地址、TSA 上游、Resend 发件人、中间证书 PEM、
-签名明细日志开关。`wrangler.jsonc` 里没有 `vars`，登录用的邮箱与 TOTP 种子来自 KV 里的凭据。
+后台可改的运行时配置：基础地址、Certum API 根地址、TSA 上游、Resend API Key 与发件人、
+中间证书 PEM、签名明细日志开关。验证码（登录 / 发信）的开关同样在「系统设置」里。`wrangler.jsonc` 里没有 `vars`，登录用的邮箱与 TOTP 种子来自 KV 里的凭据。
 
 ## 安全设计
 
@@ -306,6 +302,11 @@ npx wrangler secret put RESEND_API_KEY   # 可选，开启注册/找回密码时
   注册在未配置 Resend 时给出明确错误、邮箱验证令牌（未验证登录 401 → 验证后登录 302）、
   找回密码重置后旧口令 401 / 新口令 302、用户级配额（用量 5 / 上限 1 时 `/v1/sign` 返回 429
   「已超出账号今日限额」）、用户自助修改 Key 限额。
+- 2026-11 修补实测（`wrangler dev`）：输入框统一样式（`input[type=email]` 等此前没吃到样式，
+  现在与其它控件一致，暗色下原生日期/下拉图标跟随主题）；新建 Key 后立刻出现在列表里
+  （KV `list` 是最终一致的，新建记录随 `reveal` 一起回传并合并进列表）；
+  Resend API Key 改到「系统设置 → 服务与地址」，保存后卡片显示「已配置 Resend」、留空不改、
+  可勾选清除，环境变量里不再需要 `RESEND_API_KEY`。
 - GitHub Actions 已跑通（run `44286722376`，4 个平台任务全部 success），8 个产物发布到
   [latest release](https://github.com/PIKACHUIM/CertumSigner/releases/tag/latest)：
   `certumsigner-windows-{x64,arm64}-{gui,cli}.zip`（1.7~2.1 MB）与

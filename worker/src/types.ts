@@ -8,12 +8,6 @@ export interface Env {
 
   /** 管理员 / 用户会话签名密钥（secret）；不配置时用初始化生成并存 KV 的随机值 */
   SESSION_SECRET?: string;
-  /** Resend 发信 API Key（secret）；不配置则注册/找回密码不可用 */
-  RESEND_API_KEY?: string;
-
-  /** SimplySign Desktop 内置的公开 OAuth 客户端常量，一般不用改 */
-  CERTUM_CLIENT_ID?: string;
-  CERTUM_CLIENT_SECRET?: string;
 }
 
 export type SignAlgorithm = "sha1" | "sha256" | "sha384" | "sha512";

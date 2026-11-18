@@ -54,7 +54,7 @@ For registration / password reset, also configure email (optional; both toggles 
 
 | Name | Purpose |
 | --- | --- |
-| `RESEND_API_KEY` | secret, Resend API key |
+| Resend API key | filled in under Settings → Services and addresses |
 | Sender | set under Settings → Services and addresses, e.g. `CertumSigner <noreply@example.com>` |
 
 The custom domain is configured in `routes` in `worker/wrangler.jsonc` (this repo uses
@@ -245,7 +245,7 @@ Manual deploy:
 ```bash
 npm run deploy
 # open https://<your-domain>/admin and create the administrator account
-npx wrangler secret put RESEND_API_KEY   # optional, needed for registration/reset
+# For email: Settings → Services and addresses, fill the Resend API key and sender
 ```
 
 
@@ -255,15 +255,15 @@ links straight to those files.
 
 ## Environment variables
 
-Only two optional secrets remain; everything else lives under **Settings → Services and addresses** (KV):
+Only one optional secret remains; everything else lives under **Settings → Services and addresses** (KV):
 
 | Name | Type | Purpose |
 | --- | --- | --- |
 | `SESSION_SECRET` | secret | optional cookie HMAC key; defaults to the random value generated at setup |
-| `RESEND_API_KEY` | secret | optional Resend key; registration/reset stay disabled without it |
+| Resend API key, sender | Settings → Services and addresses | registration/reset stay disabled without them |
 
-Runtime settings editable in the console: base URL, Certum API base, TSA upstream, Resend sender,
-intermediate PEM, per-request logging. `wrangler.jsonc` has no `vars`; the Certum email and TOTP seed come
+Runtime settings editable in the console: base URL, Certum API base, TSA upstream, Resend API key and
+sender, intermediate PEM, per-request logging. The captcha toggles (sign-in / email) live there too. `wrangler.jsonc` has no `vars`; the Certum email and TOTP seed come
 from the KV credential records.
 
 At runtime the Certum email and TOTP seed come from the KV credential; no `CERTUM_*` env var is read.
@@ -315,7 +315,14 @@ At runtime the Certum email and TOTP seed come from the KV credential; no `CERTU
   persisted settings toggles, registration reporting a clear error without Resend, email verification
   tokens (unverified sign-in 401 → verified sign-in 302), reset token (old password 401 / new password
   302), user-level quota (usage 5 / limit 1 → `/v1/sign` 429 `已超出账号今日限额`), self-service key quota
-  updates. GitHub Actions run `44286722376` finished green (all four platform jobs) and published the
+  updates.
+- Fixes verified under `wrangler dev` (Nov 2026): every text control now shares one style
+  (`input[type=email]` and friends previously fell back to browser defaults; native date/select
+  affordances follow the theme); a newly created key shows up immediately (KV `list` is eventually
+  consistent, so the fresh record travels with `reveal` and is merged into the list); the Resend API
+  key moved into Settings → Services and addresses (blank keeps it, a checkbox clears it), so
+  `RESEND_API_KEY` is no longer an environment variable.
+- GitHub Actions run `44286722376` finished green (all four platform jobs) and published the
   eight artifacts to the [latest release](https://github.com/PIKACHUIM/CertumSigner/releases/tag/latest):
   `certumsigner-windows-{x64,arm64}-{gui,cli}.zip` (1.7-2.1 MB) and
   `certumsigner-linux-{x64,arm64}-{gui,cli}.tar.gz` (110-132 KB). Windows links OpenSSL statically via
