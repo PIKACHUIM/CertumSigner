@@ -33,15 +33,9 @@ function memoryKV() {
   };
 }
 
-function makeEnv(patch: Partial<Record<string, string>> = {}) {
+function makeEnv() {
   const kv = memoryKV();
-  const env = {
-    CERTUM_KV: kv,
-    CERTUM_EMAIL: "",
-    ADMIN_PASSWORD: "",
-    SESSION_SECRET: "",
-    ...patch,
-  } as unknown as Env;
+  const env = { CERTUM_KV: kv } as unknown as Env;
   return { env, kv };
 }
 
@@ -51,12 +45,6 @@ test("全新部署是 unconfigured，且没有会话密钥", async () => {
   const { env } = makeEnv();
   assert.equal((await adminAuthState(env)).mode, "unconfigured");
   assert.equal(await readSessionSecret(env), "");
-});
-
-test("只有 ADMIN_PASSWORD 的旧部署仍是 env 模式", async () => {
-  const { env } = makeEnv({ ADMIN_PASSWORD: "legacy-pass-123" });
-  assert.equal((await adminAuthState(env)).mode, "env");
-  assert.equal(await readSessionSecret(env), "legacy-pass-123");
 });
 
 test("初始化后变成 account 模式，口令只存哈希", async () => {

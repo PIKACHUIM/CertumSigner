@@ -64,14 +64,14 @@ test("解析 otpauth URI", () => {
 
 test("URI 优先于裸种子，且非法种子立刻报错", () => {
   const cfg = resolveOtpConfig({
-    CERTUM_OTP_URI: "otpauth://totp/x?secret=JBSWY3DPEHPK3PXP&algorithm=SHA1&digits=6&period=30",
-    CERTUM_OTP_SECRET: "SHOULD_NOT_WIN",
+    uri: "otpauth://totp/x?secret=JBSWY3DPEHPK3PXP&algorithm=SHA1&digits=6&period=30",
+    secret: "SHOULD_NOT_WIN",
   });
   assert.equal(cfg.secret, "JBSWY3DPEHPK3PXP");
   assert.equal(cfg.algorithm, "SHA1");
 
-  assert.throws(() => resolveOtpConfig({ CERTUM_OTP_SECRET: "!!!!" }), /Base32/);
-  assert.throws(() => resolveOtpConfig({}), /CERTUM_OTP_URI/);
+  assert.throws(() => resolveOtpConfig({ secret: "!!!!" }), /Base32/);
+  assert.throws(() => resolveOtpConfig({}), /OTP 种子不能为空/);
 });
 
 test("剩余有效时间在 1..period 之间", () => {

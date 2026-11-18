@@ -22,9 +22,9 @@ function memoryKV() {
   };
 }
 
-function makeEnv(patch: Partial<Record<string, string>> = {}) {
+function makeEnv() {
   const kv = memoryKV();
-  const env = { CERTUM_KV: kv, CERTUM_EMAIL: "", ADMIN_PASSWORD: "", SESSION_SECRET: "", ...patch } as unknown as Env;
+  const env = { CERTUM_KV: kv } as unknown as Env;
   return { env, kv };
 }
 
@@ -39,24 +39,8 @@ test("没有任何配置时用默认值", async () => {
   assert.equal(config.logSignatures, true);
 });
 
-test("环境变量作为回退，LOG_SIGNATURES=0 关闭日志", async () => {
-  const { env } = makeEnv({
-    PUBLIC_BASE_URL: "https://env.example.com/",
-    CERTUM_API_BASE: "https://api.env.example.com/",
-    TSA_UPSTREAM: "https://tsa.env.example.com/",
-    RESEND_FROM: "Env <env@example.com>",
-    LOG_SIGNATURES: "0",
-  });
-  const config = await readConfig(env);
-  assert.equal(config.publicBaseUrl, "https://env.example.com");
-  assert.equal(config.certumApiBase, "https://api.env.example.com");
-  assert.equal(config.tsaUpstream, "https://tsa.env.example.com");
-  assert.equal(config.resendFrom, "Env <env@example.com>");
-  assert.equal(config.logSignatures, false);
-});
-
-test("KV 配置覆盖环境变量并去掉尾部斜杠", async () => {
-  const { env } = makeEnv({ PUBLIC_BASE_URL: "https://env.example.com", LOG_SIGNATURES: "0" });
+test("保存后读回 KV 配置并去掉尾部斜杠", async () => {
+  const { env } = makeEnv();
   await writeConfig(env, {
     publicBaseUrl: "https://sign.example.com/",
     certumApiBase: "https://api.kv.example.com/",
@@ -69,12 +53,20 @@ test("KV 配置覆盖环境变量并去掉尾部斜杠", async () => {
   assert.equal(config.logSignatures, true);
 });
 
-test("清空字段等于回到默认值/环境变量", async () => {
-  const { env } = makeEnv({ TSA_UPSTREAM: "https://tsa.env.example.com/" });
+test("清空的字段回落到默认值，其他字段保留", async () => {
+  const { env } = makeEnv();
   await writeConfig(env, { tsaUpstream: "", publicBaseUrl: "https://a.example.com" });
   const config = await readConfig(env);
-  assert.equal(config.tsaUpstream, "https://tsa.env.example.com");
+  assert.equal(config.tsaUpstream, DEFAULT_TSA_UPSTREAM.replace(/\/+$/, ""));
   assert.equal(config.publicBaseUrl, "https://a.example.com");
+});
+
+test("日志开关可以关掉再打开", async () => {
+  const { env } = makeEnv();
+  await writeConfig(env, { logSignatures: false });
+  assert.equal((await readConfig(env)).logSignatures, false);
+  await writeConfig(env, { logSignatures: true });
+  assert.equal((await readConfig(env)).logSignatures, true);
 });
 
 test("证书链 PEM 的换行原样保存", async () => {

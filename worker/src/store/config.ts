@@ -1,8 +1,6 @@
 /**
- * 运行时配置：能在后台改的都放 KV（`settings:config`），环境变量只作为回退。
- *
- * 这样部署时不用把基础地址、TSA、发件人、证书链塞进 wrangler.jsonc，
- * 改完保存即可生效；老部署里已有的环境变量仍然会被读到。
+ * 运行时配置：全部存在 KV（`settings:config`），后台「系统设置 → 服务与地址」改。
+ * 部署时不用把基础地址、TSA、发件人、证书链塞进 wrangler.jsonc，保存即生效。
  */
 import type { Env } from "../types";
 import { DEFAULT_API_BASE } from "../certum/config.ts";
@@ -29,25 +27,20 @@ export interface RuntimeConfig {
 
 type StoredConfig = Partial<Omit<RuntimeConfig, "updatedAt">> & { updatedAt?: number };
 
-function text(...values: Array<string | undefined>): string {
-  for (const value of values) {
-    const trimmed = (value ?? "").trim();
-    if (trimmed) return trimmed;
-  }
-  return "";
+function text(value?: string): string {
+  return (value ?? "").trim();
 }
 
-/** KV 里存了就用存储值，否则退回环境变量，再否则用默认值 */
+/** KV 里的值优先，缺失时用默认值 */
 export async function readConfig(env: Env): Promise<RuntimeConfig> {
   const stored = (await env.CERTUM_KV.get<StoredConfig>(CONFIG_KEY, "json")) ?? {};
   return {
-    publicBaseUrl: text(stored.publicBaseUrl, env.PUBLIC_BASE_URL).replace(/\/+$/, ""),
-    certumApiBase: (text(stored.certumApiBase, env.CERTUM_API_BASE) || DEFAULT_API_BASE).replace(/\/+$/, ""),
-    certumChainPem: text(stored.certumChainPem, env.CERTUM_CHAIN_PEM),
-    resendFrom: text(stored.resendFrom, env.RESEND_FROM),
-    tsaUpstream: (text(stored.tsaUpstream, env.TSA_UPSTREAM) || DEFAULT_TSA_UPSTREAM).replace(/\/+$/, ""),
-    logSignatures:
-      typeof stored.logSignatures === "boolean" ? stored.logSignatures : env.LOG_SIGNATURES !== "0",
+    publicBaseUrl: text(stored.publicBaseUrl).replace(/\/+$/, ""),
+    certumApiBase: (text(stored.certumApiBase) || DEFAULT_API_BASE).replace(/\/+$/, ""),
+    certumChainPem: text(stored.certumChainPem),
+    resendFrom: text(stored.resendFrom),
+    tsaUpstream: (text(stored.tsaUpstream) || DEFAULT_TSA_UPSTREAM).replace(/\/+$/, ""),
+    logSignatures: typeof stored.logSignatures === "boolean" ? stored.logSignatures : true,
     updatedAt: stored.updatedAt,
   };
 }
@@ -56,7 +49,7 @@ export async function readConfig(env: Env): Promise<RuntimeConfig> {
 export async function writeConfig(env: Env, patch: Partial<Omit<RuntimeConfig, "updatedAt">>): Promise<RuntimeConfig> {
   const stored = (await env.CERTUM_KV.get<StoredConfig>(CONFIG_KEY, "json")) ?? {};
   const next: StoredConfig = { ...stored, ...patch, updatedAt: Date.now() };
-  // 空值不必落盘，交给默认值/环境变量兜底
+  // 空值不必落盘，交给默认值兜底
   for (const key of ["publicBaseUrl", "certumApiBase", "certumChainPem", "resendFrom", "tsaUpstream"] as const) {
     if (typeof next[key] === "string" && !next[key]!.trim()) delete next[key];
   }

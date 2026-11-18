@@ -562,7 +562,6 @@ export function adminUserPage(data: UserDetailData): string {
 export interface CredentialsPageData extends AdminNavData {
   credentials: CredentialRecord[];
   statuses: Record<string, CredentialStatus>;
-  importedFromEnv: boolean;
 }
 
 export function adminCredentialsPage(data: CredentialsPageData): string {
@@ -672,11 +671,6 @@ export function adminCredentialsPage(data: CredentialsPageData): string {
       <div class="row" style="justify-content:space-between;margin-bottom:6px">
         <h2 style="margin:0">${escapeHtml(t("cred.list"))}</h2>
         <div class="row">
-          <form class="inline" method="post" action="/admin/credentials/import-env"
-            title="${escapeHtml(t("cred.importEnvHint"))}">
-            <input type="hidden" name="csrf" value="${escapeHtml(data.csrf)}">
-            <button class="btn btn--sm btn--ghost" type="submit">${escapeHtml(t("cred.importEnv"))}</button>
-          </form>
           <button class="btn btn--primary btn--sm" type="button" data-open="dlg-cred-new">＋ ${escapeHtml(
             t("cred.new"),
           )}</button>
@@ -895,8 +889,6 @@ export interface SettingsPageData extends AdminNavData {
   settings: SystemSettings;
   config: RuntimeConfig;
   mailReady: boolean;
-  /** account = KV 里的管理员账号；env = 旧版 ADMIN_PASSWORD */
-  adminMode: "unconfigured" | "account" | "env";
   adminUsername?: string;
 }
 
@@ -990,26 +982,11 @@ export function adminSettingsPage(data: SettingsPageData): string {
   );
 }
 
-/** 管理员账号卡片：KV 账号可以改口令；旧版环境变量模式只展示说明 */
+/** 管理员账号卡片：显示当前用户名 + 改口令（改完会踢掉其他会话） */
 function adminAccountCard(data: SettingsPageData): string {
   const { t } = data;
-  const modePill =
-    data.adminMode === "account"
-      ? pill(t("settings.adminModeAccount"), "ok")
-      : pill(t("settings.adminModeEnv"), "warn");
-  const heading = `<div class="row" style="justify-content:space-between;margin-bottom:10px">
-      <h2 style="margin:0">${escapeHtml(t("settings.adminAccount"))}</h2>${modePill}
-    </div>`;
-
-  if (data.adminMode !== "account") {
-    return `<div class="card" style="margin-top:16px">
-      ${heading}
-      <p class="small muted" style="margin:0">${escapeHtml(t("settings.passwordEnvMode"))}</p>
-    </div>`;
-  }
-
   return `<div class="card" style="margin-top:16px">
-    ${heading}
+    <h2 style="margin:0 0 10px">${escapeHtml(t("settings.adminAccount"))}</h2>
     <p class="small muted" style="margin:0 0 12px">${escapeHtml(
       t("settings.adminUser", { name: data.adminUsername ?? "" }),
     )}</p>

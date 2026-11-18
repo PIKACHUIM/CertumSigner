@@ -222,7 +222,7 @@ export async function loginWithOtp(
   otp: OtpConfig,
   attempts = 3,
 ): Promise<LoginResult> {
-  if (!email) throw new CertumError("config", "缺少 CERTUM_EMAIL", 500);
+  if (!email) throw new CertumError("config", "凭据缺少登录邮箱", 500);
   let lastError: unknown = null;
 
   for (let attempt = 1; attempt <= attempts; attempt++) {

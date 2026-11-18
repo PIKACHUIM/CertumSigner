@@ -62,34 +62,24 @@ export function parseOtpUri(uri: string): Partial<OtpConfig> {
   };
 }
 
-/** 从环境变量拼出完整的 TOTP 配置；缺什么报什么，不要静默用默认值掩盖配置错误 */
-export function resolveOtpConfig(env: {
-  CERTUM_OTP_URI?: string;
-  CERTUM_OTP_SECRET?: string;
-  CERTUM_OTP_ALGORITHM?: string;
-  CERTUM_OTP_DIGITS?: string;
-  CERTUM_OTP_PERIOD?: string;
-}): OtpConfig {
+/** 从 otpauth URI 或裸 Base32 种子拼出完整的 TOTP 配置；缺种子直接报错 */
+export function resolveOtpConfig(input: { uri?: string; secret?: string }): OtpConfig {
   const base: OtpConfig = { secret: "", digits: 6, period: 30, algorithm: "SHA1" };
   let merged: Partial<OtpConfig> = {};
 
-  if (env.CERTUM_OTP_URI && env.CERTUM_OTP_URI.trim()) {
-    merged = parseOtpUri(env.CERTUM_OTP_URI.trim());
-  } else if (env.CERTUM_OTP_SECRET && env.CERTUM_OTP_SECRET.trim()) {
-    merged = { secret: env.CERTUM_OTP_SECRET.trim() };
+  if (input.uri && input.uri.trim()) {
+    merged = parseOtpUri(input.uri.trim());
+  } else if (input.secret && input.secret.trim()) {
+    merged = { secret: input.secret.trim() };
   }
 
-  if (!merged.secret) {
-    throw new Error("缺少 CERTUM_OTP_URI 或 CERTUM_OTP_SECRET");
-  }
+  if (!merged.secret) throw new Error("OTP 种子不能为空");
 
   const cfg: OtpConfig = {
     secret: merged.secret,
-    digits: merged.digits ?? (env.CERTUM_OTP_DIGITS ? Number(env.CERTUM_OTP_DIGITS) : base.digits),
-    period: merged.period ?? (env.CERTUM_OTP_PERIOD ? Number(env.CERTUM_OTP_PERIOD) : base.period),
-    algorithm:
-      merged.algorithm ??
-      (env.CERTUM_OTP_ALGORITHM ? normalizeAlgorithm(env.CERTUM_OTP_ALGORITHM) : base.algorithm),
+    digits: merged.digits ?? base.digits,
+    period: merged.period ?? base.period,
+    algorithm: merged.algorithm ?? base.algorithm,
   };
 
   if (!Number.isInteger(cfg.digits) || cfg.digits < 6 || cfg.digits > 10) {

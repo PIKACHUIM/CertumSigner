@@ -55,7 +55,7 @@ export function maskOtpUri(uri: string): string {
 }
 
 export function credentialOtp(cred: CredentialRecord): OtpConfig {
-  return resolveOtpConfig({ CERTUM_OTP_URI: cred.otpUri });
+  return resolveOtpConfig({ uri: cred.otpUri });
 }
 
 export async function createCredential(env: Env, input: CreateCredentialInput): Promise<CredentialRecord> {
@@ -147,25 +147,3 @@ export async function pickDefaultCredential(env: Env): Promise<CredentialRecord 
   return all.find((item) => item.enabled) ?? null;
 }
 
-/**
- * 把 .dev.vars / 环境变量里的老配置导成一条 KV 凭据（一次性）。
- * 已经存在同邮箱 + 同指纹的凭据时直接返回它。
- */
-export async function importCredentialFromEnv(env: Env, createdBy: string): Promise<CredentialRecord | null> {
-  const email = (env.CERTUM_EMAIL ?? "").trim();
-  const otp = (env.CERTUM_OTP_URI ?? "").trim() || (env.CERTUM_OTP_SECRET ?? "").trim();
-  if (!email || !otp) return null;
-
-  const sha1 = normalizeSha1(env.CERTUM_CERTIFICATE_SHA1);
-  const existing = await listCredentials(env);
-  const match = existing.find((item) => item.email === email && (item.certificateSha1 ?? "") === (sha1 ?? ""));
-  if (match) return match;
-
-  return createCredential(env, {
-    label: `${email} 的环境变量凭据`,
-    email,
-    otp,
-    certificateSha1: sha1,
-    createdBy,
-  });
-}

@@ -1,10 +1,6 @@
 /**
  * 管理员账号：首次打开后台时由 /admin/setup 创建，口令以 PBKDF2 存在 KV。
- *
- * 三种状态：
- *   unconfigured —— 既没有 KV 账号也没有 ADMIN_PASSWORD，只能进初始化页
- *   account      —— 有 KV 账号，用户名 + 口令登录（推荐）
- *   env          —— 只有 ADMIN_PASSWORD secret，沿用旧版单密码登录
+ * 两种状态：unconfigured（只能进初始化页）/ account（用户名 + 口令登录）。
  */
 import type { AdminAccountRecord, Env } from "../types";
 import { constantTimeEqual, randomId } from "../lib/encoding.ts";
@@ -17,7 +13,7 @@ const ACCOUNT_KEY = "admin:account";
 /** 管理员口令下限：比普通用户更严一点，控制台权限更大 */
 export const ADMIN_PASSWORD_MIN = 10;
 
-export type AdminAuthMode = "unconfigured" | "account" | "env";
+export type AdminAuthMode = "unconfigured" | "account";
 
 export interface AdminAuthState {
   mode: AdminAuthMode;
@@ -33,7 +29,6 @@ export async function readAdminAccount(env: Env): Promise<AdminAccountRecord | n
 export async function adminAuthState(env: Env): Promise<AdminAuthState> {
   const account = await readAdminAccount(env);
   if (account) return { mode: "account", account };
-  if ((env.ADMIN_PASSWORD ?? "").trim()) return { mode: "env" };
   return { mode: "unconfigured" };
 }
 

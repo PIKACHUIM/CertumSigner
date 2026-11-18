@@ -3,44 +3,17 @@
  */
 
 export interface Env {
-  /** KV：API Key、统计、日志、会话、证书缓存都在这里 */
+  /** KV：API Key、统计、日志、会话、证书缓存、运行配置都在这里 */
   CERTUM_KV: KVNamespace;
 
-  /** SimplySign 登录邮箱 */
-  CERTUM_EMAIL: string;
-  /** otpauth:// URI（优先） */
-  CERTUM_OTP_URI?: string;
-  /** 或者直接给 Base32 种子 */
-  CERTUM_OTP_SECRET?: string;
-  CERTUM_OTP_ALGORITHM?: string;
-  CERTUM_OTP_DIGITS?: string;
-  CERTUM_OTP_PERIOD?: string;
+  /** 管理员 / 用户会话签名密钥（secret）；不配置时用初始化生成并存 KV 的随机值 */
+  SESSION_SECRET?: string;
+  /** Resend 发信 API Key（secret）；不配置则注册/找回密码不可用 */
+  RESEND_API_KEY?: string;
 
-  /** 云签名 API 根地址，默认 https://cloudsign.webnotarius.pl */
-  CERTUM_API_BASE?: string;
   /** SimplySign Desktop 内置的公开 OAuth 客户端常量，一般不用改 */
   CERTUM_CLIENT_ID?: string;
   CERTUM_CLIENT_SECRET?: string;
-  /** 额外中间证书（PEM），返回给客户端拼 PKCS#7 用 */
-  CERTUM_CHAIN_PEM?: string;
-  /** 账号下有多张卡片时，用证书 DER 的 SHA-1 指纹挑出要用的那张 */
-  CERTUM_CERTIFICATE_SHA1?: string;
-
-  /** 旧版管理员密码（secret）；没有 KV 管理员账号时作为回退登录方式 */
-  ADMIN_PASSWORD: string;
-  /** 管理员会话签名密钥（secret）；不配置时由初始化流程生成并存 KV */
-  SESSION_SECRET: string;
-  /** 设为 "0" 可关闭签名明细日志 */
-  LOG_SIGNATURES?: string;
-  /** /v1/timestamp 转发用的 RFC3161 服务，默认 http://time.certum.pl/ */
-  TSA_UPSTREAM?: string;
-
-  /** Resend 发信 API Key（secret）；不配置则注册/找回密码不可用 */
-  RESEND_API_KEY?: string;
-  /** 发件人，例如 "CertumSigner <noreply@example.com>" */
-  RESEND_FROM?: string;
-  /** 站点对外地址（可选），用于邮件里的绝对链接；默认按请求推导 */
-  PUBLIC_BASE_URL?: string;
 }
 
 export type SignAlgorithm = "sha1" | "sha256" | "sha384" | "sha512";

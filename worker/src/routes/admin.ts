@@ -27,7 +27,6 @@ import {
   createCredential,
   deleteCredential,
   getCredential,
-  importCredentialFromEnv,
   listCredentials,
   setCredentialEnabled,
   updateCredential,
@@ -186,7 +185,7 @@ export const admin = new Hono<AdminEnv>();
 
 admin.get("/admin/setup", async (c) => {
   const state = await adminAuthState(c.env);
-  // 已经初始化过（KV 账号或旧版 ADMIN_PASSWORD）就没必要再暴露这个页面
+  // 已经初始化过就没必要再暴露这个页面
   if (state.mode !== "unconfigured") return c.redirect("/admin/login");
   const context = pageContext(c);
   return c.html(adminSetupPage({ prefs: context.prefs, t: context.t, self: context.self }));
@@ -278,12 +277,8 @@ admin.post("/admin/login", async (c) => {
 
   const username = one(form, "username");
   const password = one(form, "password");
-  const ok =
-    state.mode === "account"
-      ? await checkAdminCredentials(c.env, username, password)
-      : constantTimeEqual(password, (c.env.ADMIN_PASSWORD ?? "").trim());
 
-  if (!password || !ok) {
+  if (!(await checkAdminCredentials(c.env, username, password))) {
     await bumpLoginFailure(c.env, "admin", ip);
     return loginPage(t("login.errBadPassword"), 401, username);
   }
@@ -477,7 +472,6 @@ secure.get("/credentials", async (c) => {
       csrf: c.get("adminSession").csrf,
       credentials,
       statuses: await credentialStatuses(c.env, credentials),
-      importedFromEnv: false,
     }),
   );
 });
@@ -517,18 +511,6 @@ secure.post("/credentials/:id/update", async (c) => {
       certificateSha1: one(form, "certificateSha1"),
     });
     return backWith(c, "/admin/credentials", ok ? "ok" : "error", ok ? tr(c)("msg.credUpdated", { name: existing.label }) : tr(c)("msg.notFoundCred"));
-  } catch (error) {
-    return backWith(c, "/admin/credentials", "error", localizeError(tr(c), error instanceof Error ? error.message : String(error)));
-  }
-});
-
-secure.post("/credentials/import-env", async (c) => {
-  const form = await readForm(c);
-  if (!(await checkCsrf(c, form))) return csrfFail(c);
-  try {
-    const cred = await importCredentialFromEnv(c.env, c.get("adminSession").id);
-    if (!cred) return backWith(c, "/admin/credentials", "error", tr(c)("msg.credMissingEnv"));
-    return backWith(c, "/admin/credentials", "ok", tr(c)("msg.credImported", { name: cred.label }));
   } catch (error) {
     return backWith(c, "/admin/credentials", "error", localizeError(tr(c), error instanceof Error ? error.message : String(error)));
   }
@@ -669,7 +651,6 @@ secure.get("/settings", async (c) => {
       settings,
       config,
       mailReady: (await mailConfigured(c.env)),
-      adminMode: state.mode,
       adminUsername: state.account?.username,
     }),
   );
@@ -719,7 +700,7 @@ secure.post("/settings/password", async (c) => {
 
   const state = await adminAuthState(c.env);
   if (state.mode !== "account" || !state.account) {
-    return backWith(c, "/admin/settings", "error", tr(c)("settings.passwordEnvMode"));
+    return backWith(c, "/admin/settings", "error", tr(c)("settings.passwordNotReady"));
   }
 
   const current = one(form, "current");
