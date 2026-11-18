@@ -84,10 +84,12 @@ sudo cmake --install build
 登录后的 Key 与偏好写进配置文件，下次启动直接进签名页；Key 失效会自动退回登录页。
 把文件拖到 `certumsigner.exe` 图标上、或用「打开方式」选它，文件会直接进队列。
 
-**设置页**：平台地址、API Key（可显示/隐藏）、SHA-256/SHA-1、是否加时间戳 +
+**设置页**：平台地址、API Key（可显示/隐藏）、摘要算法（SHA-1 / SHA-256 / SHA-384 / SHA-512
+四个胶囊，**可多选**，默认只勾 SHA-256，至少保留一个）、是否加时间戳 +
 内置 TSA 下拉（DigiCert / Symantec / GeoTrust / Comodo / WoSign / GlobalSign / Entrust /
 GoDaddy / Certum，默认 DigiCert）、是否备份原文件、语言（中文 / English / 跟随系统）、
-主题（跟随系统 / 暗色 / 亮色）、软件许可、项目地址、重新登录。
+主题（跟随系统 / 暗色 / 亮色）、软件许可（点开是应用内的许可页，与设置页同一套卡片样式，
+不是系统弹窗）、项目地址、重新登录。
 
 ### 1. 配置（只做一次）
 
@@ -108,7 +110,8 @@ certumsigner config --server https://sign.example.com --api-key csk_xxxxxxxx
 | --- | --- |
 | `server` / `api_key` | 平台地址与 API Key |
 | `username` / `key_name` | 上次登录的账号与 Key 名，只用于界面显示 |
-| `algorithm` | `sha256`（默认）或 `sha1` |
+| `algorithms` | 要用的摘要算法数组，取值 `sha1` / `sha256` / `sha384` / `sha512`，默认 `["sha256"]`；空数组按 `["sha256"]` 处理 |
+| `algorithm` | 兼容旧配置的单个算法字段，写入时取 `algorithms` 第一项；读取时只有 `algorithm` 也能用 |
 | `timestamp` | 是否加 RFC3161 时间戳，默认 `true` |
 | `tsa_name` | 内置 TSA 名字，默认 `DigiCert` |
 | `tsa_url` | 自定义 TSA 地址，非空时优先于 `tsa_name`（也支持 `worker` / `auto`） |
@@ -122,8 +125,15 @@ certumsigner config --server https://sign.example.com --api-key csk_xxxxxxxx
 # 单文件，SHA-256 + 时间戳
 certumsigner sign app.exe
 
-# SHA-1（老系统要求时）
+# 一次写三种签名（同一张证书表里每种算法一条）
+certumsigner sign app.exe --sha256 --sha384 --sha512
+certumsigner sign app.exe --alg sha256,sha384
+
+# SHA-1（老系统要求时；Certum EV 卡片会拒绝）
 certumsigner sign legacy.dll --sha1
+
+# 算摘要而不签名，可叠加多个算法
+certumsigner hash app.exe --sha1 --sha256 --sha384 --sha512
 
 # 整个目录递归，跳过确认
 certumsigner sign dist/ --recursive --yes
@@ -182,7 +192,7 @@ GUI 是自绘的 Win32 界面（手写绘制，不依赖任何 UI 框架），�
 ## 签名流程（和 signtool 的差别）
 
 ```
-文件 ──Authenticode 摘要(SHA1/SHA256)──►  SpcIndirectDataContent
+文件 ──Authenticode 摘要(SHA1/SHA256/SHA384/SHA512)──►  SpcIndirectDataContent
                                               │
                         ┌─────────────────────┴──────────────┐
                         │ 组装 authenticatedAttributes       │
@@ -198,7 +208,10 @@ GUI 是自绘的 Win32 界面（手写绘制，不依赖任何 UI 框架），�
 
 几点实现约定：
 
-- 摘要算法、SignerInfo 里的摘要算法、证书里的签名算法三者保持一致（SHA-1 或 SHA-256）。
+- 摘要算法、SignerInfo 里的摘要算法、证书里的签名算法三者保持一致（SHA-1 / SHA-256 / SHA-384 /
+  SHA-512）。OID 与摘要长度集中在 `src/digest.*`，PE 摘要、PKCS#7、SPC 都从那里取值。
+- 勾选多个算法时，每个算法各算一次摘要、各请求一次云端、各取一次时间戳、各生成一个 PKCS#7，
+  最后**一次性**写进同一张证书表（多个 `WIN_CERTIFICATE` 顺序排列）。
 - PKCS#7 用**老式**结构：`eContent` 是 `SpcIndirectDataContent` 本身，不是 OCTET STRING 包装。
   这也是为什么没有用 OpenSSL 的 CMS API，而是自己拼 DER。
 - 云端返回签名后，本地会先用证书公钥验一遍（`EVP_DigestVerify`），
@@ -253,7 +266,7 @@ GUI 是自绘的 Win32 界面（手写绘制，不依赖任何 UI 框架），�
 | `certumsigner verify` | **`签名有效`**（Certum EV 根链被 Windows 信任） |
 | 篡改 1 字节 | `0x80096010` 摘要与签名不符 |
 | 真实 Certum 时间戳 | 令牌写入 `unsignedAttrs` 后仍 `签名有效` |
-| `sign`（`--sha1`） | 云端拒绝：`digest.algorithm.error`，Worker 映射为「这张证书只能签 SHA256」 |
+| `sign`（`--sha1`） | 云端拒绝：`digest.algorithm.error`，Worker 映射为「EV 证书通常只签 SHA256 / SHA384 / SHA512，SHA1 会被拒绝」 |
 
 注意：本机装了腾讯 iOA，未签名的 `certumsigner.exe` 直连 `time.certum.pl` 会被拦（HTTP 403，
 响应体提示“检测到风险软件的网络连接”），与签名逻辑无关；把 exe 加白名单或改用可访问的时间戳源即可。
@@ -266,10 +279,25 @@ GUI 是自绘的 Win32 界面（手写绘制，不依赖任何 UI 框架），�
 | 选 Key | 列表显示 `alice-cli` 与每日额度；换发前弹确认框，换发后弹窗显示新明文并落盘 |
 | 批量签名 | 命令行带 3 个文件参数启动，队列 3 条，全部 `成功`，日志含 DigiCert 时间戳 |
 | 验证 | `WinVerifyTrust` 返回 `签名有效`，日志列出文件名 |
-| 设置页 | SHA-256/SHA-1、TSA 下拉（默认 DigiCert）、备份开关、语言、主题切换均即时生效并写盘 |
+| 设置页 | 摘要算法、TSA 下拉（默认 DigiCert）、备份开关、语言、主题切换均即时生效并写盘 |
 | 界面 | 明/暗 × 中/英 逐屏截图核对，125% 缩放下无裁切、无控件重叠 |
 | 重新登录 | 清空本地 Key、回到登录页，配置文件里 `api_key` 变空 |
 
+摘要算法多选的验证（2026-11，`wrangler dev` 本地 Worker + 真实 Certum 凭据）：
+
+| 项 | 结果 |
+| --- | --- |
+| `POST /v1/sign`，`sha384` + 96 位十六进制 | `ok:true`、`algorithm:"sha384"` |
+| `sha384` + 64 位十六进制 | `bad_hash`：「第 1 个摘要长度 64，SHA384 要求 96 位十六进制」 |
+| `sha512` + 128 位 / 64 位 | 前者 `ok:true`，后者 `bad_hash`（要求 128） |
+| `sha256` + 64 位 | `ok:true` |
+| 返回的签名 | 用 Python `cryptography` 的 `Prehashed` 分别验 SHA256 / SHA384 / SHA512，三种都与对应 DigestInfo 匹配 |
+| `sha1` | 云端 `digest.algorithm.error` → `digest_algorithm_unsupported` |
+| 写法容错 | `sha-384`、`SHA512`、`sha_256` 都能识别（去 `-`/`_` 转小写后匹配） |
+
+未验证：客户端把多份 PKCS#7 一起写进证书表后 `WinVerifyTrust` 的表现（本机缺 OpenSSL 开发包，
+`pe.cpp` / `pkcs7.cpp` 编不出可执行文件，只做了逐文件编译与人工审查）。
+
 ## 许可
 
-[GNU Affero General Public License v3.0](../LICENSE)（AGPL-3.0）。
+[MIT](../LICENSE)（© 2026 pikachuren）。

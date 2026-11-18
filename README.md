@@ -3,7 +3,7 @@
 **中文** · [English](README.en.md)
 
 [![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/PIKACHUIM/CertumSigner/tree/main/worker)
-[![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-orange.svg)](https://workers.cloudflare.com/)
 
 用 Cloudflare Workers 把 Certum SimplySign 云签名变成 HTTP 接口，再配一个 C++ 桌面客户端，
@@ -94,10 +94,12 @@ docs/          Certum 云签名协议逆向记录
   主题（极光 / 星云 / 青碧 / 石墨），首次访问按浏览器的 `Accept-Language` 与
   `prefers-color-scheme` 决定，选择结果写进 cookie（`cs_lang` / `cs_mode` / `cs_theme`，一年有效）。
   全部服务端渲染，弹窗用原生 `<dialog>`，没有前端构建步骤。
-- **按哈希代理签名**：`POST /v1/sign` 传一条或一批 SHA-1/SHA-256 摘要，返回 RSA 签名；
+- **按哈希代理签名**：`POST /v1/sign` 传一条或一批摘要，`algorithm` 支持 SHA-1 / SHA-256 /
+  SHA-384 / SHA-512；返回对应算法的 RSA 签名；
   支持单次最多 16 个摘要（云端一次调用签完）。
 - **客户端**：C++ 自己算 Authenticode 摘要、自己拼 PKCS#7、自己写 PE 证书表；
-  带 RFC3161 时间戳，签名前会用证书公钥自检，签完可以先 `verify`。
+  摘要算法可多选并用一份文件写多份签名；带 RFC3161 时间戳，签名前会用证书公钥自检，
+  签完可以先 `verify`。
 
 ## 客户端
 
@@ -118,10 +120,12 @@ Windows 是一个自绘 Win32 程序，侧边栏四个入口走完整个流程�
    每行有等待 / 签名中 / 成功 / 失败状态胶囊，签完可以 `验证签名`（`WinVerifyTrust`）。
 4. **设置**：
    - 连接：平台地址、API Key（可显示/隐藏）、当前账号与 Key 名。
-   - 签名选项：SHA-256 / SHA-1、是否加时间戳、内置 TSA（DigiCert / Symantec / GeoTrust /
-     Comodo / WoSign / GlobalSign / Entrust / GoDaddy / Certum，默认 **DigiCert**）、是否备份原文件。
+   - 签名选项：摘要算法 **可多选**（SHA-1 / SHA-256 / SHA-384 / SHA-512，默认只勾 SHA-256，
+     每种算法各生成一份签名写进同一张证书表）、是否加时间戳、内置 TSA（DigiCert / Symantec /
+     GeoTrust / Comodo / WoSign / GlobalSign / Entrust / GoDaddy / Certum，默认 **DigiCert**）、
+     是否备份原文件。
    - 界面：语言（中文 / English / 跟随系统）、主题（跟随系统 / 暗色 / 亮色）。
-   - 关于：软件许可（AGPL-3.0）、项目地址、重新登录。
+   - 关于：软件许可（MIT，点开是应用内的许可页，不是弹窗）、项目地址、重新登录。
 
 侧边栏底部是账号区：圆形头像（用户名首字母）+ 用户名 + 当前 Key 名，下面是语言、明暗、退出登录
 三个图标按钮，位置跟着窗口实际高度贴底（下拉框同样是自绘的，暗色下不会出现白色原生列表）。
@@ -157,8 +161,12 @@ curl -X POST https://sign.example.com/v1/sign \
 批量（一次云端调用，最多 16 条）：
 
 ```json
-{"hashes": ["<hash1>", "<hash2>"], "algorithm": "sha1", "encoding": "hex"}
+{"hashes": ["<hash1>", "<hash2>"], "algorithm": "sha256", "encoding": "hex"}
 ```
+
+`algorithm` 取 `sha256`（默认）/ `sha1` / `sha384` / `sha512`，也接受 `sha-256`、`SHA256` 之类写法；
+摘要长度分别要求 64 / 40 / 96 / 128 位十六进制，长度不符返回 `bad_hash`，取值不认识返回
+`bad_algorithm`。
 
 成功响应：
 
@@ -268,7 +276,7 @@ npm run deploy
 - **用户口令**用 PBKDF2-SHA256（15 万次）加盐存储；用户会话 7 天，管理员会话 12 小时，
   都记在 KV 里可吊销，写操作校验 CSRF，登录失败按 IP 限速（10 分钟 8 次，
   客户端登录接口 8 次/10 分钟）。
-- 签名接口不放任任何字节：摘要长度必须精确匹配算法（40 / 64 位十六进制），
+- 签名接口不放任任何字节：摘要长度必须精确匹配算法（40 / 64 / 96 / 128 位十六进制），
   单次最多 16 条，Key 级与用户级每日限额同时生效。
 - 云端返回的签名在客户端本地会用证书公钥验一遍再写文件，防止摘要错位。
 
@@ -276,8 +284,9 @@ npm run deploy
 
 - 统计用 KV 读-改-写实现，**高并发时会丢计数**；要精确计数请换成 Durable Object。
 - 打开后台或凭据页会按需触发 Certum 登录（未登录时最多重试 3 次 OTP），凭据错误时会有几次失败请求。
-- `SHA1` 摘要对 Certum EV 卡片会被云端拒绝（`digest.algorithm.error`），实际只能用 `SHA256`；
-  `/v1/sign` 会返回 `digest_algorithm_unsupported`。
+- `SHA1` 摘要对 Certum EV 卡片会被云端拒绝（`digest.algorithm.error`），`/v1/sign` 返回
+  `digest_algorithm_unsupported`；实测可用的是 `SHA256` / `SHA384` / `SHA512`，要签老系统兼容的
+  SHA-1 只能换一张支持它的证书。
 - 只签 PE 文件（`.exe/.dll/.sys/.ocx` 等），不支持 MSI / CAB / 脚本。
 - Workers 有子请求数限制：一次签名通常 3~8 个请求，批量签名请控制在十几条摘要内。
 - 注册 / 找回密码默认关闭；没配 Resend 时只能由管理员在用户详情页重置口令。
@@ -307,11 +316,21 @@ npm run deploy
 - 界面逐项实测：四套主题 × 明暗切换、`/prefs` 写 cookie 后 302 回原页、中英文切换
   （含登录失败、CSRF、表单校验等提示）、新建/编辑弹窗、记录详情弹窗、
   900px 与手机宽度下侧边栏不换行错位、页面无横向滚动。
+- 手机端（2026-11）：390px 与 563px 视口逐页核对（`/`、`/user/login`、`/admin/login`、`/admin`、
+  `/admin/users`、`/admin/credentials`、`/admin/keys`、`/admin/logs`、`/admin/settings`、`/user`、
+  `/user/logs`），`documentElement.scrollWidth == clientWidth`，整页不再被裁到右边；
+  次要列（时间、邮箱、备注、脚本等）在窄屏隐藏，表格只在自己的容器里横向滚动，
+  导航在 700px 以下隐藏图标并允许换行，弹窗收窄到视口内。
 - C++ 客户端：MSVC 14.44 + Windows SDK 10.0.22621 + 静态 OpenSSL 3.5.9 编译通过
   （`/W4 /permissive-` 零告警）；CLI 与 Win32 GUI 都链接成可执行文件。
 - Win32 GUI 实测：登录 → 选 Key（换发明文弹窗）→ 拖拽批量签名 3 个文件全部成功 →
   `WinVerifyTrust` 校验通过 → 设置页 TSA / 算法 / 备份 / 语言（中英）/ 主题（明暗）切换 →
-  重新登录、许可弹窗；125% 缩放下布局无裁切；暗色与英文界面逐屏截图核对。
+  重新登录、设置页的软件许可入口；125% 缩放下布局无裁切；暗色与英文界面逐屏截图核对。
+- 本轮改动（手机端适配、MIT 应用内许可页、摘要算法多选）的验证进度：Worker 侧 `npx tsc --noEmit`、
+  `npm test` 与 `wrangler dev` 实测已通过（见下）；C++ 侧 `digest` / `settings` / `spc` / `signer` /
+  `cli` / `api` / `gui_win` 用 MSVC `/W4 /permissive-` 单文件编译零告警；
+  `pe.cpp` / `pkcs7.cpp`（本机缺 OpenSSL 开发包）与 `gui_gtk.cpp`（本机无 GTK3）留给 CI 编译；
+  许可页、算法胶囊多选、以及「一份文件多份签名」后的 `WinVerifyTrust` 结果，需要用 CI 产物再实测。
 - **真实 Certum 链路已跑通**（2026-11，Windows x64）：邮箱 + TOTP 登录成功；
   `/v1/certificate` 返回 EV 代码签名证书，指纹与凭据配置一致（卡片 `7507400891785917`）；
   `/v1/sign` 用真实 SHA-256 摘要换回 512 字节签名，客户端写进 PE 后
@@ -320,6 +339,7 @@ npm run deploy
 
 ## 许可
 
-[GNU Affero General Public License v3.0](LICENSE)（AGPL-3.0）。
+[MIT](LICENSE)（© 2026 pikachuren）。
 
-这是一个网络服务程序：如果你修改后把它作为服务提供给他人使用，必须同时提供修改后的源码。
+客户端「设置 → 软件许可」打开的是应用内页面，正文就是 `LICENSE` 的 MIT 原文，和 APP 其它页面同一套
+卡片样式，不再是系统模态弹窗。

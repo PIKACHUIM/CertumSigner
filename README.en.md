@@ -3,7 +3,7 @@
 [中文](README.md) · **English**
 
 [![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/PIKACHUIM/CertumSigner/tree/main/worker)
-[![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-orange.svg)](https://workers.cloudflare.com/)
 
 Turn Certum SimplySign cloud signing into an HTTP API on Cloudflare Workers, and pair it with a C++
@@ -89,11 +89,11 @@ Then open `https://<your-domain>/`:
 - **UI preferences**: language (中文 / English), light/dark (system/dark/light) and four accent themes,
   picked from the browser on first visit and remembered in cookies (`cs_lang` / `cs_mode` / `cs_theme`)
   for a year. Server rendered, native `<dialog>` modals, no frontend build step.
-- **Sign by digest**: `POST /v1/sign` accepts one or up to 16 SHA-1/SHA-256 digests and returns the RSA
-  signatures — one upstream call per batch.
+- **Sign by digest**: `POST /v1/sign` accepts one or up to 16 digests per call (`algorithm`: SHA-1 /
+  SHA-256 / SHA-384 / SHA-512) and returns the matching RSA signatures — one upstream call per batch.
 - **Client**: computes the Authenticode digest, builds PKCS#7, writes the PE certificate table, adds an
   RFC3161 timestamp, self-checks the signature with the certificate's public key before writing, and can
-  verify the result afterwards.
+  verify the result afterwards. Digests are a multi-select, so one file can carry several signatures.
 
 ## Client
 
@@ -114,10 +114,12 @@ Sign in ──► Sign ⇄ Credentials ⇄ Settings
    Each row shows queued / signing / signed / failed; `Verify` runs `WinVerifyTrust` on the selected file.
 4. **Settings**:
    - Connection: server URL, API key (show/hide), current account and key name.
-   - Signing: SHA-256 / SHA-1, timestamp on/off, built-in TSA list (DigiCert / Symantec / GeoTrust /
-     Comodo / WoSign / GlobalSign / Entrust / GoDaddy / Certum, **DigiCert** by default), keep a backup.
+   - Signing: digest algorithms are a **multi-select** (SHA-1 / SHA-256 / SHA-384 / SHA-512, only
+     SHA-256 ticked by default; each ticked algorithm produces its own signature in the same certificate
+     table), timestamp on/off, built-in TSA list (DigiCert / Symantec / GeoTrust / Comodo / WoSign /
+     GlobalSign / Entrust / GoDaddy / Certum, **DigiCert** by default), keep a backup.
    - Appearance: language (中文 / English / system) and theme (system / dark / light).
-   - About: license (AGPL-3.0), project URL, sign in again.
+   - About: license (MIT — opens an in-app license page, not a modal dialog), project URL, sign in again.
 
 The bottom of the sidebar holds the account block — round avatar (first letter of the username), user
 name and current key name — above three icon buttons for language, light/dark and sign-out. They stay
@@ -155,8 +157,12 @@ curl -X POST https://sign.example.com/v1/sign \
 Batch (one upstream call, up to 16 digests):
 
 ```json
-{"hashes": ["<hash1>", "<hash2>"], "algorithm": "sha1", "encoding": "hex"}
+{"hashes": ["<hash1>", "<hash2>"], "algorithm": "sha256", "encoding": "hex"}
 ```
+
+`algorithm` is one of `sha256` (default), `sha1`, `sha384`, `sha512`; spellings such as `sha-256` or
+`SHA256` are normalised. Digests must be 64 / 40 / 96 / 128 hex chars respectively — a length mismatch
+returns `bad_hash`, an unknown name returns `bad_algorithm`.
 
 Success:
 
@@ -268,8 +274,8 @@ At runtime the email and seed come from the KV credential, so `CERTUM_*` is no l
 - **Passwords** use salted PBKDF2-SHA256 (150k iterations). User sessions last 7 days, admin sessions
   12 hours, both revocable in KV. Writes check CSRF, logins are rate limited per IP (8 failures per
   10 minutes; 8 per 10 minutes for the client API).
-- The signing API is strict: digest length must match the algorithm (40 / 64 hex chars), at most 16
-  digests per call, with per-key and per-user daily quotas.
+- The signing API is strict: digest length must match the algorithm (40 / 64 / 96 / 128 hex chars), at
+  most 16 digests per call, with per-key and per-user daily quotas.
 - The client verifies the returned signature with the certificate's public key before writing the file.
 
 ## Known limitations
@@ -278,8 +284,9 @@ At runtime the email and seed come from the KV credential, so `CERTUM_*` is no l
   Object if you need exact numbers.
 - Opening the console or the credentials page may trigger a Certum login on demand (up to 3 OTP retries
   when the session is missing), so a wrong credential produces a few failed requests.
-- SHA-1 digests are rejected by Certum EV cards (`digest.algorithm.error`); only SHA-256 works in
-  practice and `/v1/sign` returns `digest_algorithm_unsupported`.
+- SHA-1 digests are rejected by Certum EV cards (`digest.algorithm.error`), and `/v1/sign` returns
+  `digest_algorithm_unsupported`; `SHA256` / `SHA384` / `SHA512` all work in practice, so legacy SHA-1
+  signing needs a certificate that still accepts it.
 - PE files only (`.exe/.dll/.sys/.ocx`); no MSI, CAB or scripts.
 - Workers limits subrequests: one signature typically uses 3–8, so keep batches to a dozen digests.
 - Registration / password reset are off by default; without Resend only an admin can reset a password.
@@ -310,12 +317,24 @@ At runtime the email and seed come from the KV credential, so `CERTUM_*` is no l
 - Web UI: four themes × light/dark, `/prefs` cookie and 302, Chinese/English switch (including login
   failures, CSRF and validation messages), create/edit and detail dialogs, no overflow at 900px and
   phone widths.
+- Mobile (Nov 2026): every page checked at 390px and 563px viewports (`/`, `/user/login`,
+  `/admin/login`, `/admin`, `/admin/users`, `/admin/credentials`, `/admin/keys`, `/admin/logs`,
+  `/admin/settings`, `/user`, `/user/logs`) with `documentElement.scrollWidth == clientWidth`, so nothing
+  is cut off on the right; secondary columns (time, e-mail, notes, scripts) hide on narrow screens,
+  tables scroll only inside their own container, the nav drops its icons and wraps below 700px, and
+  dialogs shrink to the viewport.
 - C++ client: builds with MSVC 14.44 + Windows SDK 10.0.22621 + static OpenSSL 3.5.9, zero warnings
   under `/W4 /permissive-`; both the CLI and the Win32 GUI link.
 - Win32 GUI: sign-in → key selection (re-issue dialog) → batch signing of 3 files, all `signed` →
   `WinVerifyTrust` reports a valid signature → settings (TSA / digest / backup / language / theme) →
-  sign in again and the license dialog; layout checked at 125% scaling, dark and English screens
-  captured screen by screen.
+  sign in again and the software-license entry in Settings; layout checked at 125% scaling, dark and
+  English screens captured screen by screen.
+- Status of the current round (mobile layout, MIT in-app license page, multi-select digests): Worker side
+  `npx tsc --noEmit`, `npm test` and the `wrangler dev` checks below are green; on the C++ side
+  `digest` / `settings` / `spc` / `signer` / `cli` / `api` / `gui_win` compile warning-free per file with
+  MSVC `/W4 /permissive-`; `pe.cpp` / `pkcs7.cpp` (no OpenSSL dev package on this machine) and
+  `gui_gtk.cpp` (no GTK3 here) are left to CI. The license page, the digest pills and the
+  `WinVerifyTrust` result for a file carrying several signatures still need a CI build to confirm.
 - **Real Certum path verified** (Nov 2026, Windows x64): email + TOTP login works; `/v1/certificate`
   returns the EV code signing certificate with the configured fingerprint (card `7507400891785917`);
   `/v1/sign` returns a 512-byte signature for a real SHA-256 digest, and after the client writes it into
@@ -325,7 +344,7 @@ At runtime the email and seed come from the KV credential, so `CERTUM_*` is no l
 
 ## License
 
-[GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0).
+[MIT](LICENSE) (© 2026 pikachuren).
 
-This is a network service: if you modify it and let others use it over a network, you must offer the
-modified source as well.
+"Settings → License" in the client opens an in-app page holding the MIT text from `LICENSE`, using the
+same card style as the rest of the app instead of a system modal dialog.
