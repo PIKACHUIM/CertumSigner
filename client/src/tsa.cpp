@@ -53,7 +53,8 @@ bool request_timestamp(const std::string &tsa_url, const HttpHeaders &extra_head
         return false;
     }
 
-    const std::string imprint = hash_bytes(signature, false);
+    // 时间戳的 messageImprint 固定用 SHA-256，与签名本身用的摘要算法无关
+    const std::string imprint = hash_bytes(signature, "sha256");
     if (imprint.empty()) {
         err = "计算时间戳摘要失败";
         return false;
