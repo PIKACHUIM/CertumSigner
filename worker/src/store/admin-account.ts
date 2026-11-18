@@ -1,6 +1,6 @@
 /**
- * 管理员账号：首次打开后台时由 /admin/setup 创建，口令以 PBKDF2 存在 KV。
- * 两种状态：unconfigured（只能进初始化页）/ account（用户名 + 口令登录）。
+ * 管理员账号：首次打开后台时由 /admin/setup 创建，密码以 PBKDF2 存在 KV。
+ * 两种状态：unconfigured（只能进初始化页）/ account（用户名 + 密码登录）。
  */
 import type { AdminAccountRecord, Env } from "../types";
 import { constantTimeEqual, randomId } from "../lib/encoding.ts";
@@ -18,7 +18,7 @@ function validAdminUsername(raw: string): string {
   return name;
 }
 
-/** 管理员口令下限：比普通用户更严一点，控制台权限更大 */
+/** 管理员密码下限：比普通用户更严一点，控制台权限更大 */
 export const ADMIN_PASSWORD_MIN = 10;
 
 export type AdminAuthMode = "unconfigured" | "account";
@@ -42,9 +42,9 @@ export async function adminAuthState(env: Env): Promise<AdminAuthState> {
 
 function checkPasswordLength(password: string): void {
   if (password.length < ADMIN_PASSWORD_MIN) {
-    throw new Error(`管理员口令至少 ${ADMIN_PASSWORD_MIN} 位`);
+    throw new Error(`管理员密码至少 ${ADMIN_PASSWORD_MIN} 位`);
   }
-  if (password.length > 200) throw new Error("口令过长");
+  if (password.length > 200) throw new Error("密码过长");
 }
 
 export async function createAdminAccount(
@@ -80,7 +80,7 @@ export async function setAdminPassword(env: Env, password: string): Promise<Admi
 }
 
 /**
- * 校验用户名 + 口令。用户名不对时也走一遍 PBKDF2，
+ * 校验用户名 + 密码。用户名不对时也走一遍 PBKDF2，
  * 避免用响应时间判断用户名是否存在。
  */
 export async function checkAdminCredentials(env: Env, username: string, password: string): Promise<boolean> {

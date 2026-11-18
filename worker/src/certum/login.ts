@@ -99,7 +99,7 @@ async function follow(
   throw new CertumError("login_redirect_loop", "登录重定向次数过多，CAS 流程异常");
 }
 
-/** 单次登录尝试：失败多半是口令过期或邮箱不对 */
+/** 单次登录尝试：失败多半是密码过期或邮箱不对 */
 async function loginOnce(
   endpoints: CertumEndpoints,
   email: string,
@@ -166,7 +166,7 @@ async function loginOnce(
     const bodyText = await afterLogin.res.text().catch(() => "");
     throw new CertumError(
       "login_rejected",
-      `登录没有拿到授权码：邮箱或 TOTP 口令不对（也可能是本机时间偏差超过 30 秒）`,
+      `登录没有拿到授权码：邮箱或 TOTP 密码不对（也可能是本机时间偏差超过 30 秒）`,
       401,
       snippet(bodyText),
     );
@@ -213,8 +213,8 @@ async function loginOnce(
 }
 
 /**
- * 登录，失败自动换新口令重试。
- * 失败重试很重要：口令只有 30 秒寿命，网络慢或刚好跨时间片时会白跑一次。
+ * 登录，失败自动换新密码重试。
+ * 失败重试很重要：密码只有 30 秒寿命，网络慢或刚好跨时间片时会白跑一次。
  */
 export async function loginWithOtp(
   endpoints: CertumEndpoints,

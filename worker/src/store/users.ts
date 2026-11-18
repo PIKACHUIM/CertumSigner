@@ -85,7 +85,7 @@ export type UserAuthResult =
   | { status: "bad" };
 
 /**
- * 先校验口令再透露账号状态（停用 / 未验证），避免不知道口令就能探测账号。
+ * 先校验密码再透露账号状态（停用 / 未验证），避免不知道密码就能探测账号。
  * 用户不存在时也跑一次哈希，避免用响应时间探测邮箱。
  */
 export async function authenticateUserDetailed(

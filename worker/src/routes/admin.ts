@@ -762,8 +762,10 @@ secure.post("/settings", async (c) => {
   const certumChainPem = one(form, "certumChainPem");
   if (certumChainPem && !certumChainPem.includes("BEGIN CERTIFICATE")) return fail(tr(c)("settings.badPem"));
 
+  // 旧版设置页只提交 loginCaptcha；没有 captchaMode 字段时不要静默关掉验证码
+  const modeRaw = one(form, "captchaMode");
   await writeSettings(c.env, {
-    captchaMode: captchaModeOf(one(form, "captchaMode")),
+    captchaMode: modeRaw ? captchaModeOf(modeRaw) : on("loginCaptcha") ? "svg" : "off",
     registerEnabled: on("registerEnabled"),
     resetEnabled: on("resetEnabled"),
     emailCaptcha: on("emailCaptcha"),
@@ -814,7 +816,7 @@ secure.post("/settings/password", async (c) => {
   }
 
   await setAdminPassword(c.env, next);
-  // 旧会话全部作废，再给当前浏览器发一张新的，避免「改了口令但旧 cookie 还能用」
+  // 旧会话全部作废，再给当前浏览器发一张新的，避免「改了密码但旧 cookie 还能用」
   await revokeAllAdminSessions(c.env);
   const { cookie } = await createAdminSession(c.env, TTL_MS);
   setCookie(c, ADMIN_COOKIE, cookie, {

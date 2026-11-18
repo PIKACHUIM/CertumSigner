@@ -51,7 +51,7 @@ export async function sha1Hex(input: string | Uint8Array): Promise<string> {
   return toHex(new Uint8Array(digest));
 }
 
-/** 长度固定后逐字节比较，避免用 === 比较密钥/口令时的时间侧信道 */
+/** 长度固定后逐字节比较，避免用 === 比较密钥/密码时的时间侧信道 */
 export function constantTimeEqual(a: string, b: string): boolean {
   const left = new TextEncoder().encode(a);
   const right = new TextEncoder().encode(b);

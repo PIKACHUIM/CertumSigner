@@ -1,5 +1,5 @@
 /**
- * 口令哈希：PBKDF2-HMAC-SHA256（1 万次迭代）+ 16 字节随机盐。
+ * 密码哈希：PBKDF2-HMAC-SHA256（1 万次迭代）+ 16 字节随机盐。
  *
  * 为什么是 1 万次：Workers 运行时的 WebCrypto 对 PBKDF2 迭代次数有硬上限 100,000，
  * 超过就直接抛 `Pbkdf2 failed: iteration counts above 100000 are not supported`；
@@ -9,7 +9,7 @@
 import { base64Decode, base64Encode } from "./pem.ts";
 import { randomBytes } from "./encoding.ts";
 
-/** 改这个值等于让所有已存口令失效，只能配合重置口令使用 */
+/** 改这个值等于让所有已存密码失效，只能配合重置密码使用 */
 export const PASSWORD_HASH_ITERATIONS = 10_000;
 
 const SALT_BYTES = 16;
@@ -28,8 +28,8 @@ async function derive(password: string, salt: Uint8Array, iterations: number): P
 }
 
 export async function hashPassword(password: string): Promise<string> {
-  if (password.length < 8) throw new Error("口令至少 8 位");
-  if (password.length > 200) throw new Error("口令过长");
+  if (password.length < 8) throw new Error("密码至少 8 位");
+  if (password.length > 200) throw new Error("密码过长");
   const salt = randomBytes(SALT_BYTES);
   const hash = await derive(password, salt, PASSWORD_HASH_ITERATIONS);
   return `pbkdf2$${PASSWORD_HASH_ITERATIONS}$${base64Encode(salt)}$${base64Encode(hash)}`;

@@ -47,7 +47,7 @@ test("全新部署是 unconfigured，且没有会话密钥", async () => {
   assert.equal(await readSessionSecret(env), "");
 });
 
-test("初始化后变成 account 模式，口令只存哈希", async () => {
+test("初始化后变成 account 模式，密码只存哈希", async () => {
   const { env, kv } = makeEnv();
   const account = await createAdminAccount(env, { username: "ops", password: STRONG });
 
@@ -72,7 +72,7 @@ test("初始化会顺手生成并保存会话密钥", async () => {
   assert.equal(kv.store.get("admin:secret"), secret);
 });
 
-test("用户名或口令错误都返回 false", async () => {
+test("用户名或密码错误都返回 false", async () => {
   const { env } = makeEnv();
   await createAdminAccount(env, { username: "ops", password: STRONG });
 
@@ -83,7 +83,7 @@ test("用户名或口令错误都返回 false", async () => {
   assert.equal(await checkAdminCredentials(env, "ops", ""), false);
 });
 
-test("口令太短、用户名非法、重复初始化都被拒绝", async () => {
+test("密码太短、用户名非法、重复初始化都被拒绝", async () => {
   const { env } = makeEnv();
   await assert.rejects(
     () => createAdminAccount(env, { username: "ops", password: STRONG.slice(0, ADMIN_PASSWORD_MIN - 1) }),
@@ -95,7 +95,7 @@ test("口令太短、用户名非法、重复初始化都被拒绝", async () =>
   await assert.rejects(() => createAdminAccount(env, { username: "ops2", password: STRONG }), /已经初始化过/);
 });
 
-test("改口令后旧口令失效", async () => {
+test("改密码后旧密码失效", async () => {
   const { env } = makeEnv();
   await createAdminAccount(env, { username: "ops", password: STRONG });
   await setAdminPassword(env, "another-strong-pass");

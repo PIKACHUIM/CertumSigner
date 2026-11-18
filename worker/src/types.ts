@@ -139,7 +139,7 @@ export interface AdminSessionRecord {
   expiresAt: number;
 }
 
-/** 管理员账号：首次部署时在 /admin/setup 创建，口令只存 PBKDF2 哈希 */
+/** 管理员账号：首次部署时在 /admin/setup 创建，密码只存 PBKDF2 哈希 */
 export interface AdminAccountRecord {
   id: string;
   username: string;

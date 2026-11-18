@@ -1,6 +1,6 @@
 /**
  * RFC 6238 TOTP —— Certum 的二维码就是标准 otpauth URI，
- * 密码字段填的不是账号密码，而是每 30 秒一换的 6 位动态口令。
+ * 密码字段填的不是账号密码，而是每 30 秒一换的 6 位动态密码。
  *
  * 注意：Certum 的 URI 里 algorithm=SHA256，不是 RFC 默认的 SHA1。
  * 用 SHA-1 对 SHA-256 种子算出来的码永远是错的，而且不会报错，只会登录失败。
@@ -88,12 +88,12 @@ export function resolveOtpConfig(input: { uri?: string; secret?: string }): OtpC
   if (!Number.isInteger(cfg.period) || cfg.period < 10 || cfg.period > 120) {
     throw new Error(`TOTP period 不合法: ${cfg.period}`);
   }
-  // 提前解码一次，坏种子在启动/首次登录时暴露，而不是在切割口令时抛一个含糊的异常
+  // 提前解码一次，坏种子在启动/首次登录时暴露，而不是在切割密码时抛一个含糊的异常
   base32Decode(cfg.secret);
   return cfg;
 }
 
-/** 计算指定时间片（Unix 秒）的动态口令 */
+/** 计算指定时间片（Unix 秒）的动态密码 */
 export async function totpAt(cfg: OtpConfig, unixSeconds: number): Promise<string> {
   const key = base32Decode(cfg.secret);
   const counter = Math.floor(unixSeconds / cfg.period);
@@ -128,7 +128,7 @@ export function totpNow(cfg: OtpConfig): Promise<string> {
   return totpAt(cfg, Math.floor(Date.now() / 1000));
 }
 
-/** 当前口令还剩几秒，便于在日志里提示“验证码快过期” */
+/** 当前密码还剩几秒，便于在日志里提示“验证码快过期” */
 export function secondsLeft(cfg: OtpConfig, now = Date.now()): number {
   return cfg.period - (Math.floor(now / 1000) % cfg.period);
 }

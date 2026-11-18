@@ -73,7 +73,7 @@ export function adminLoginPage(data: {
   error?: string;
   notice?: string;
   captcha?: CaptchaView;
-  /** KV 里存的是「用户名 + 口令」，登录页要显示用户名输入框 */
+  /** KV 里存的是「用户名 + 密码」，登录页要显示用户名输入框 */
   useUsername?: boolean;
   username?: string;
 }): string {
@@ -1118,7 +1118,7 @@ export function adminSettingsPage(data: SettingsPageData): string {
   );
 }
 
-/** 管理员账号卡片：显示当前用户名 + 改口令（改完会踢掉其他会话） */
+/** 管理员账号卡片：显示当前用户名 + 改密码（改完会踢掉其他会话） */
 function adminAccountCard(data: SettingsPageData): string {
   const { t } = data;
   return `<div class="card" style="margin-top:16px">

@@ -7,7 +7,7 @@ test("Workers 运行时对 PBKDF2 迭代次数有 10 万硬上限", () => {
   assert.ok(PASSWORD_HASH_ITERATIONS <= 100_000, "超过 100,000 会直接抛 NotSupportedError");
 });
 
-test("PBKDF2 口令哈希可验证，错误口令被拒绝", async () => {
+test("PBKDF2 密码哈希可验证，错误密码被拒绝", async () => {
   const stored = await hashPassword("correct horse battery staple");
   assert.match(stored, new RegExp(`^pbkdf2\\$${PASSWORD_HASH_ITERATIONS}\\$[A-Za-z0-9+/=]+\\$[A-Za-z0-9+/=]+$`));
   assert.equal(await verifyPassword("correct horse battery staple", stored), true);
@@ -20,7 +20,7 @@ test("迭代次数不同的哈希一律校验失败（不做旧格式兼容）",
   assert.equal(await verifyPassword("legacy-password-123", upgraded), false);
 });
 
-test("同一口令每次哈希都不同（随机盐）", async () => {
+test("同一密码每次哈希都不同（随机盐）", async () => {
   const a = await hashPassword("same-password-123");
   const b = await hashPassword("same-password-123");
   assert.notEqual(a, b);
@@ -28,7 +28,7 @@ test("同一口令每次哈希都不同（随机盐）", async () => {
   assert.equal(await verifyPassword("same-password-123", b), true);
 });
 
-test("过短口令直接拒绝", async () => {
+test("过短密码直接拒绝", async () => {
   await assert.rejects(() => hashPassword("short"), /至少 8 位/);
 });
 

@@ -63,7 +63,7 @@ export async function revokeAdminSession(env: Env, cookieValue: string | undefin
   if (sid) await env.CERTUM_KV.delete(`${ADMIN_KEY_PREFIX}${sid}`);
 }
 
-/** 改口令后清掉所有管理员会话，别让旧 cookie 继续用下去 */
+/** 改密码后清掉所有管理员会话，别让旧 cookie 继续用下去 */
 export async function revokeAllAdminSessions(env: Env): Promise<number> {
   let cursor: string | undefined;
   let removed = 0;

@@ -65,7 +65,7 @@ export async function revokeUserSession(env: Env, cookieValue: string | undefine
   if (sid) await env.CERTUM_KV.delete(`${PREFIX}${sid}`);
 }
 
-/** 重置口令后强制下线该用户的所有会话 */
+/** 重置密码后强制下线该用户的所有会话 */
 export async function revokeUserSessionsOf(env: Env, userId: string): Promise<number> {
   const list = await env.CERTUM_KV.list({ prefix: PREFIX, limit: 1000 });
   let removed = 0;

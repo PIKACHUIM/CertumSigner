@@ -167,11 +167,11 @@ const TextRow kTexts[] = {
     {"login.sub", L"用平台账号登录，选择或新建一把 API Key", L"Sign in to pick or create an API key"},
     {"login.server", L"平台地址（如 https://xxx.workers.dev）", L"Server URL (e.g. https://xxx.workers.dev)"},
     {"login.user", L"邮箱", L"Email"},
-    {"login.pass", L"口令", L"Password"},
+    {"login.pass", L"登录密码", L"Password"},
     {"login.submit", L"登录", L"Sign in"},
     {"login.busy", L"登录中…", L"Signing in…"},
     {"login.hint", L"Key 会保存在本机，下次启动直接进入签名页。", L"Your key is stored locally; next launch skips this page."},
-    {"login.empty", L"请填写平台地址、邮箱和口令", L"Server, email and password are required"},
+    {"login.empty", L"请填写平台地址、邮箱和密码", L"Server, email and password are required"},
 
     {"keys.title", L"选择 API Key", L"Choose an API key"},
     {"keys.sub", L"选择已有 Key 会换发新值（旧值立即失效），也可以新建一把",
@@ -257,7 +257,7 @@ const TextRow kTexts[] = {
     {"lic.back", L"返回设置", L"Back to settings"},
     {"lic.readonly", L"只读", L"Read only"},
 
-    {"err.badCredentials", L"邮箱或口令错误", L"Wrong email or password"},
+    {"err.badCredentials", L"邮箱或密码错误", L"Wrong email or password"},
     {"err.tooMany", L"尝试次数过多，请稍后再试", L"Too many attempts, try again later"},
     {"err.expired", L"登录已过期，请重新登录", L"Session expired, please sign in again"},
     {"err.account", L"账号已停用或已过期", L"Account disabled or expired"},

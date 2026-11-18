@@ -1,5 +1,5 @@
 /**
- * 桌面客户端用的 JSON 接口：邮箱 + 口令登录 → 选择/新建 API Key。
+ * 桌面客户端用的 JSON 接口：邮箱 + 密码登录 → 选择/新建 API Key。
  *
  * 客户端只在首次登录时用这些接口拿 Key，之后签名直接走 /v1/*（Bearer csk_…），
  * 所以这里的会话 token 复用了用户门户的会话（sid.hmac），可以随时在 KV 里吊销。
@@ -166,13 +166,13 @@ clientApi.post("/login", async (c) => {
   }
 
   if (!email || !password) {
-    return fail(c, 400, "missing_fields", "请填写邮箱和口令");
+    return fail(c, 400, "missing_fields", "请填写邮箱和密码");
   }
 
   const account = await authenticateUser(c.env, email, password);
   if (!account) {
     await bumpFailure(c.env, ip);
-    return fail(c, 401, "bad_credentials", "邮箱或口令错误");
+    return fail(c, 401, "bad_credentials", "邮箱或密码错误");
   }
 
   await c.env.CERTUM_KV.delete(`clientfail:${ip}`);

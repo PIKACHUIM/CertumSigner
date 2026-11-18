@@ -63,7 +63,7 @@ scope         https://cloudsign.webnotarius.pl/idp/oauth2.0/profile
 
 要点：
 
-- **password 字段填的是 6 位动态口令**，不是账号密码。账号本身没有密码。
+- **password 字段填的是 6 位动态验证码（TOTP）**，不是账号密码。账号本身没有密码。
 - TOTP 参数来自 Certum 后台的二维码（`otpauth://`），默认 `algorithm=SHA256`。
   用 SHA-1 对 SHA-256 种子算出来的码永远是错的，而且不报错，只是登录失败。
 - 整个流程依赖 cookie（CAS 的 TGT），Workers 的 `fetch` 不带 cookie 语义，
@@ -72,7 +72,7 @@ scope         https://cloudsign.webnotarius.pl/idp/oauth2.0/profile
 - 会话有效期 30 分钟；可以用 `refresh_token` 续期，失败再回退到完整 OTP 登录。
 - Worker 里每条凭据各自缓存自己的 token 与卡片信息（KV key 按凭据 id 分隔），
   多套账号/多张卡可以同时在线，互不影响；停用某条凭据只影响绑在它上面的 Key。
-- 实测 CAS 偶发对正确的口令返回 HTTP 401（连续 2 次），同一口令再 POST 就成功；
+- 实测 CAS 偶发对正确的动态码返回 HTTP 401（连续 2 次），同一动态码再 POST 就成功；
   因此登录必须是“换新码重试”而不是一次定生死（Worker 默认 3 次）。
 - 症状对照：`Error: internal error; reference = …` 不是账号问题，是本机网络/安全软件
   让 Worker 到 `cloudsign.webnotarius.pl` 的连接失败（实测同一 URL 时好时坏，
