@@ -43,7 +43,7 @@ export interface Env {
   PUBLIC_BASE_URL?: string;
 }
 
-export type SignAlgorithm = "sha1" | "sha256";
+export type SignAlgorithm = "sha1" | "sha256" | "sha384" | "sha512";
 
 /** 云端凭据（登录后缓存到 KV，避免每次签名都走一遍 OTP 登录） */
 export interface CertumSession {
@@ -160,6 +160,8 @@ export interface StatsBucket {
   fail: number;
   sha1: number;
   sha256: number;
+  sha384: number;
+  sha512: number;
   /** 云端签发的签名个数（批量为一次请求多个摘要） */
   signatures: number;
 }

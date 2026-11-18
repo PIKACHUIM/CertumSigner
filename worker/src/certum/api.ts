@@ -9,8 +9,17 @@
  */
 import { findPart } from "../lib/multipart";
 import { derToPem } from "../lib/pem";
+import type { SignAlgorithm } from "../types";
 import type { CertumEndpoints } from "./config";
 import { CertumError, snippet } from "./errors";
+
+/** Certum 的 req.digesttype 取值 */
+const DIGEST_TYPE: Record<SignAlgorithm, string> = {
+  sha1: "SHA1",
+  sha256: "SHA256",
+  sha384: "SHA384",
+  sha512: "SHA512",
+};
 
 export interface CardInfo {
   serial: string;
@@ -103,7 +112,7 @@ export class CertumApi {
             if (reason === "digest.algorithm.error") {
               throw new CertumError(
                 "digest_algorithm_unsupported",
-                "云端不接受该摘要算法（digest.algorithm.error）：这张证书只能签 SHA256",
+                "云端不接受该摘要算法（digest.algorithm.error）：EV 证书通常只签 SHA256 / SHA384 / SHA512，SHA1 会被拒绝",
                 400,
                 snippet(text),
               );
@@ -186,11 +195,11 @@ export class CertumApi {
     serial: string,
     certificateRaw: Uint8Array,
     digests: string[],
-    algorithm: "sha1" | "sha256",
+    algorithm: SignAlgorithm,
   ): Promise<string[]> {
     const reqJson = JSON.stringify({
       digests: digests.map((d) => d.toLowerCase()),
-      digesttype: algorithm === "sha1" ? "SHA1" : "SHA256",
+      digesttype: DIGEST_TYPE[algorithm],
     });
 
     const form = new FormData();

@@ -17,6 +17,8 @@ export const emptyBucket = (): StatsBucket => ({
   fail: 0,
   sha1: 0,
   sha256: 0,
+  sha384: 0,
+  sha512: 0,
   signatures: 0,
 });
 
@@ -29,7 +31,9 @@ function bump(bucket: StatsBucket, algorithm: SignAlgorithm, ok: boolean, count:
   if (ok) bucket.ok += 1;
   else bucket.fail += 1;
   if (algorithm === "sha1") bucket.sha1 += 1;
-  else bucket.sha256 += 1;
+  else if (algorithm === "sha256") bucket.sha256 += 1;
+  else if (algorithm === "sha384") bucket.sha384 += 1;
+  else bucket.sha512 += 1;
   bucket.signatures += count;
   return bucket;
 }

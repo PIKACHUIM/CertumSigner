@@ -80,14 +80,27 @@ interface SignBody {
 }
 
 function normalizeAlgorithm(raw: string | undefined): SignAlgorithm {
-  const value = (raw ?? "sha256").toLowerCase();
-  if (value === "sha1" || value === "sha-1") return "sha1";
-  if (value === "sha256" || value === "sha-256") return "sha256";
-  throw new CertumError("bad_algorithm", `不支持的摘要算法: ${raw}（只支持 sha1 / sha256）`, 400);
+  const value = (raw ?? "sha256").toLowerCase().replace(/[-_]/g, "");
+  if (value === "sha1") return "sha1";
+  if (value === "sha256") return "sha256";
+  if (value === "sha384") return "sha384";
+  if (value === "sha512") return "sha512";
+  throw new CertumError("bad_algorithm", `不支持的摘要算法: ${raw}（支持 sha1 / sha256 / sha384 / sha512）`, 400);
+}
+
+const DIGEST_HEX_LENGTH: Record<SignAlgorithm, number> = { sha1: 40, sha256: 64, sha384: 96, sha512: 128 };
+
+/** 记日志用：算法非法时退回 sha256，别让日志本身抛错 */
+function safeAlgorithm(raw: string | undefined): SignAlgorithm {
+  try {
+    return normalizeAlgorithm(raw);
+  } catch {
+    return "sha256";
+  }
 }
 
 function normalizeDigests(input: string[], encoding: string, algorithm: SignAlgorithm): string[] {
-  const expected = algorithm === "sha1" ? 40 : 64;
+  const expected = DIGEST_HEX_LENGTH[algorithm];
   return input.map((item, index) => {
     const trimmed = item.trim();
     if (!trimmed) throw new CertumError("bad_hash", `第 ${index + 1} 个摘要为空`, 400);
@@ -227,7 +240,7 @@ v1.post("/sign", async (c) => {
       at: started,
       keyId: key.id,
       keyName: key.name,
-      algorithm: (body.algorithm ?? "sha256").toLowerCase() === "sha1" ? "sha1" : "sha256",
+      algorithm: safeAlgorithm(body.algorithm),
       digestPrefix: (body.hash ?? body.hashes?.[0] ?? "").slice(0, 16),
       count: body.hashes?.length ?? (body.hash ? 1 : 0),
       ok: false,
