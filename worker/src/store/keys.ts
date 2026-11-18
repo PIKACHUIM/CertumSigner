@@ -126,6 +126,25 @@ export async function deleteApiKey(env: Env, id: string): Promise<boolean> {
   return true;
 }
 
+/**
+ * 给已有 Key 换一个新的明文（旧值立即失效）。
+ * KV 里只存哈希，客户端「登录后选择已有 Key」只能走这条路拿到可用的明文。
+ */
+export async function rotateApiKey(env: Env, id: string): Promise<CreatedKey | null> {
+  const record = await findApiKeyById(env, id);
+  if (!record) return null;
+
+  const plaintext = `csk_${randomToken(24)}`;
+  const hash = await sha256Hex(plaintext);
+  await env.CERTUM_KV.delete(storageKey(record.hash));
+
+  record.hash = hash;
+  record.prefix = plaintext.slice(0, 12);
+  record.lastUsedAt = undefined;
+  await saveApiKey(env, record);
+  return { plaintext, record };
+}
+
 export function newKeyId(): string {
   return toHex(randomBytes(6));
 }

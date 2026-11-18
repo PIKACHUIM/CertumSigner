@@ -8,6 +8,7 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { admin } from "./routes/admin";
+import { clientApi } from "./routes/client";
 import { user } from "./routes/user";
 import { v1 } from "./routes/v1";
 import { applyPrefs, safeBack } from "./ui/prefs";
@@ -21,6 +22,16 @@ app.use(
     origin: "*",
     allowMethods: ["GET", "POST", "OPTIONS"],
     allowHeaders: ["Authorization", "Content-Type", "X-Api-Key"],
+    maxAge: 86_400,
+  }),
+);
+
+app.use(
+  "/api/client/*",
+  cors({
+    origin: "*",
+    allowMethods: ["GET", "POST", "OPTIONS"],
+    allowHeaders: ["Authorization", "Content-Type", "X-Session"],
     maxAge: 86_400,
   }),
 );
@@ -48,6 +59,7 @@ app.get("/prefs", (c) => {
 });
 
 app.route("/v1", v1);
+app.route("/api/client", clientApi);
 app.route("/", admin);
 app.route("/", user);
 
