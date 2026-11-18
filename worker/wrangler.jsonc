@@ -7,23 +7,23 @@
   "observability": {
     "enabled": true
   },
+  // 自定义域名：DNS 记录由 Cloudflare 自动创建（zone 需在本账号下）
+  "routes": [
+    {
+      "pattern": "sign.example.com",
+      "custom_domain": true
+    }
+  ],
   "kv_namespaces": [
     {
       // wrangler kv namespace create CERTUM_KV
       "binding": "CERTUM_KV",
       "id": "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
     }
-  ],
-  "vars": {
-    // 登录账号（邮箱）。OTP 种子与管理员密码请用 `wrangler secret put` 写入，不要写在这里。
-    "CERTUM_EMAIL": "",
-    // 可选：覆盖 API 端点 / OAuth 客户端常量
-    "CERTUM_API_BASE": "https://cloudsign.webnotarius.pl",
-    // 可选：证书链中间证书（PEM），多个用换行分隔；不填只返回签名证书本身
-    "CERTUM_CHAIN_PEM": "",
-    // 注册 / 找回密码的发件人；RESEND_API_KEY 请用 `wrangler secret put RESEND_API_KEY`
-    "RESEND_FROM": "",
-    // 站点对外地址（例如 https://sign.example.com），用于邮件里的绝对链接；留空按请求推导
-    "PUBLIC_BASE_URL": ""
-  }
+  ]
+  // 其余配置都在后台「系统设置 → 服务与地址」里改（存 KV）：
+  //   基础地址 / Certum API / TSA / 发件人 / 中间证书 PEM / 签名明细日志
+  // 只保留两个可选 secret：
+  //   SESSION_SECRET    会话签名密钥（不设则用初始化时生成在 KV 的随机值）
+  //   RESEND_API_KEY    发信 Key（不设则注册/找回密码不可用）
 }
