@@ -39,12 +39,16 @@ docs/          Certum 云签名协议逆向记录
 
 ## 一键部署
 
-点上面的 **Deploy to Cloudflare Workers** 按钮，按提示授权并创建 KV，然后设两个必填 secret：
+点上面的 **Deploy to Cloudflare Workers** 按钮，按提示授权并创建 KV。部署完成后打开
+`https://<你的域名>/admin`，会直接进入**初始化页**：设置管理员用户名与口令，提交后自动登录控制台。
+账号存在 KV 里，口令只保存 PBKDF2 哈希；会话密钥在初始化时自动生成，不需要再手动设 secret。
+
+旧版部署方式（直接设 `ADMIN_PASSWORD` secret）仍然有效，两者只能二选一：
 
 | Secret | 说明 |
 | --- | --- |
-| `ADMIN_PASSWORD` | `/admin` 登录口令 |
-| `SESSION_SECRET` | cookie 的 HMAC 密钥，随便 32+ 位随机串 |
+| `ADMIN_PASSWORD` | 旧版 `/admin` 登录口令；已经建了 KV 账号后不再使用 |
+| `SESSION_SECRET` | 可选，cookie 的 HMAC 密钥；不填则用 KV 里自动生成的密钥 |
 
 需要「注册 / 找回密码」时再配置邮件（可选，不配置则这两个开关不可用）：
 
@@ -227,21 +231,22 @@ HTTP 403 + `检测到风险软件的网络连接`。客户端的处理是：直�
 ```bash
 cd worker
 npm install
-cp .dev.vars.example .dev.vars   # ADMIN_PASSWORD / SESSION_SECRET / 可选的 CERTUM_* 导入用
+cp .dev.vars.example .dev.vars   # 可选的 CERTUM_* 导入用；ADMIN_PASSWORD 不填也能在 /admin/setup 建账号
 npx wrangler kv namespace create CERTUM_KV   # 把返回的 id 填进 wrangler.jsonc
-npm run dev                      # http://127.0.0.1:8787
-npm test                         # TOTP / multipart / 编码 / KV 存储的单元测试
+npm run dev                      # http://127.0.0.1:8787 ，首次打开 /admin 进初始化页
+npm test                         # TOTP / multipart / 编码 / KV 存储 / 管理员账号的单元测试
 npm run typecheck
 ```
 
 手工部署（不用一键按钮）：
 
 ```bash
-npx wrangler secret put ADMIN_PASSWORD
-npx wrangler secret put SESSION_SECRET
-npx wrangler secret put RESEND_API_KEY   # 可选，开启注册/找回密码时再配
 npm run deploy
+# 打开 https://<你的域名>/admin ，按提示创建管理员账号
+npx wrangler secret put RESEND_API_KEY   # 可选，开启注册/找回密码时再配
 ```
+
+只想沿用旧方式（不建 KV 账号）时，部署前设 `ADMIN_PASSWORD` 即可，两个 secret 都不是必填。
 
 推 `v*` tag 或手动运行 `.github/workflows/release.yml`，会构建 Windows / Linux × x64 / arm64
 的 GUI 与 CLI 共 8 个产物，并发布到 tag 为 `latest` 的 release；主页下载链接直接指向这些文件。
@@ -250,8 +255,8 @@ npm run deploy
 
 | 名称 | 类型 | 说明 |
 | --- | --- | --- |
-| `ADMIN_PASSWORD` | secret | `/admin` 登录密码（必填） |
-| `SESSION_SECRET` | secret | cookie 的 HMAC 密钥，不填则退回用 `ADMIN_PASSWORD` |
+| `ADMIN_PASSWORD` | secret | 可选，旧版 `/admin` 登录口令；有 KV 管理员账号时忽略 |
+| `SESSION_SECRET` | secret | 可选，cookie 的 HMAC 密钥；缺省用初始化时生成的 KV 密钥 |
 | `CERTUM_EMAIL` | var | 仅用于「从环境变量导入」凭据 |
 | `CERTUM_OTP_URI` | secret | 同上，`otpauth://` URI（优先） |
 | `CERTUM_OTP_SECRET` | secret | 同上，不给 URI 时直接给 Base32 种子 |
@@ -273,9 +278,11 @@ npm run deploy
 - **API Key 只存哈希**（SHA-256），明文只在创建后显示一次，5 分钟后自动删除；
   换发明文（`/reveal`）也是「删旧哈希、发新值」，旧值立刻失效。
   Key 绑定 `userId` + `credentialId`，停用用户或停用凭据都会立即让 Key 失效。
-- **用户口令**用 PBKDF2-SHA256（15 万次）加盐存储；用户会话 7 天，管理员会话 12 小时，
-  都记在 KV 里可吊销，写操作校验 CSRF，登录失败按 IP 限速（10 分钟 8 次，
-  客户端登录接口 8 次/10 分钟）。
+- **用户口令**用 PBKDF2-SHA256（15 万次）加盐存储；**管理员账号**同样只存 PBKDF2 哈希
+  （口令至少 10 位），会话 7 天 / 12 小时，都记在 KV 里可吊销，写操作校验 CSRF，
+  登录失败按 IP 限速（10 分钟 8 次，客户端登录接口 8 次/10 分钟）。
+  管理员账号建好后 `/admin/setup` 会自动关闭；**未初始化之前谁先打开 `/admin` 谁就能建账号**，
+  所以部署完请立刻完成初始化（或先设 `ADMIN_PASSWORD` secret 占住）。
 - 签名接口不放任任何字节：摘要长度必须精确匹配算法（40 / 64 / 96 / 128 位十六进制），
   单次最多 16 条，Key 级与用户级每日限额同时生效。
 - 云端返回的签名在客户端本地会用证书公钥验一遍再写文件，防止摘要错位。
@@ -294,8 +301,8 @@ npm run deploy
 
 ## 验证状态
 
-- Worker：`npx tsc --noEmit` 通过；`npm test` 21 项通过（TOTP 命中 RFC 6238 向量、
-  multipart 解析、编码/哈希、KV 存储与口令哈希）。
+- Worker：`npx tsc --noEmit` 通过；`npm test` 28 项通过（TOTP 命中 RFC 6238 向量、
+  multipart 解析、编码/哈希、KV 存储与口令哈希、管理员账号初始化/改口令）。
 - 新增功能实测（`wrangler dev`，2026-11）：主页下载区、双栏登录页与图形验证码
   （错误验证码 401 且换图、刷新按钮换 id、口令显示/隐藏）、系统设置开关持久化、
   注册在未配置 Resend 时给出明确错误、邮箱验证令牌（未验证登录 401 → 验证后登录 302）、
@@ -313,6 +320,13 @@ npm run deploy
   停用后 `/v1/whoami` 立即 401、删除后 401、用户日志只含自己的记录。
 - 客户端接口实测：登录（正确/错误口令/缺字段）、会话校验、新建 Key、`reveal` 换发明文、
   token 失效返回 401。
+- 管理员初始化流程（2026-11，`wrangler dev` 全新 KV）：未初始化时 `/admin` 与 `/admin/login`
+  都 302 到 `/admin/setup`；短口令 / 两次不一致 / 非法用户名分别回显提示；创建成功后 302 到
+  `/admin?ok=管理员账号已创建` 并直接登录；已初始化后 `/admin/setup` 302 回登录页；
+  用户名或口令错误 401，旧版 `ADMIN_PASSWORD` 在有 KV 账号时被忽略（401）；
+  设置页改口令（当前口令错 / 新口令过短 / 两次不一致 / 成功）逐项验证，改完旧口令 401、新口令 302，
+  其他浏览器上的旧会话被注销（302 回登录页），当前浏览器拿到新 cookie 继续可用；
+  旧版只有 `ADMIN_PASSWORD` 时登录页不显示用户名框、设置页显示「环境变量」并隐藏改口令表单。
 - 界面逐项实测：四套主题 × 明暗切换、`/prefs` 写 cookie 后 302 回原页、中英文切换
   （含登录失败、CSRF、表单校验等提示）、新建/编辑弹窗、记录详情弹窗、
   900px 与手机宽度下侧边栏不换行错位、页面无横向滚动。
