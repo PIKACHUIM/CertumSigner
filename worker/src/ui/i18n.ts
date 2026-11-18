@@ -11,6 +11,7 @@ const zh = {
   "nav.users": "签名用户",
   "nav.credentials": "证书凭据",
   "nav.keys": "认证密钥",
+  "nav.logs": "签名记录",
   "nav.myKeys": "我的密钥",
   "nav.myLogs": "调用记录",
 
@@ -265,6 +266,7 @@ const en: Record<keyof Dict, string> = {
   "nav.users": "Signing Users",
   "nav.credentials": "Certificates",
   "nav.keys": "API Keys",
+  "nav.logs": "Signing Logs",
   "nav.myKeys": "My Keys",
   "nav.myLogs": "Call Logs",
 

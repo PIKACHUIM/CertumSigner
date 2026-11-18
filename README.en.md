@@ -75,17 +75,19 @@ Then open `https://<your-domain>/admin`:
 
 ## Client
 
-On Windows it is a hand-drawn Win32 app with three screens:
+On Windows it is a hand-drawn Win32 app with four sidebar entries:
 
 ```
-Sign in ──► choose / create an API key ──► Sign
-                                            └─ Settings (always reachable)
+Sign in ──► Sign ⇄ Credentials ⇄ Settings
+        (after sign-in it lands on Sign; visit Credentials to switch keys)
 ```
 
 1. **Sign in**: server URL (your Worker domain), username, password. Enter in the password box submits.
-2. **Choose an API key**: lists the keys of your account (with daily quota). Picking an existing key
+2. **Credentials**: lists the keys of your account (with daily quota). Picking an existing key
    **issues a new secret** and invalidates the old one (you are asked first); or type a name, pick a
-   certificate and create a new key right there.
+   certificate and create a new key right there. Key selection is automatic after sign-in: a saved
+   key that still exists goes straight to Sign, a single key is re-issued silently and Sign opens,
+   no key at all but an assigned certificate creates one, and only multiple unknown keys need a manual pick.
 3. **Sign**: drop files into the window or click to upload, remove/clear rows, then sign the whole batch.
    Each row shows queued / signing / signed / failed; `Verify` runs `WinVerifyTrust` on the selected file.
 4. **Settings**:
@@ -94,6 +96,11 @@ Sign in ──► choose / create an API key ──► Sign
      Comodo / WoSign / GlobalSign / Entrust / GoDaddy / Certum, **DigiCert** by default), keep a backup.
    - Appearance: language (中文 / English / system) and theme (system / dark / light).
    - About: license (AGPL-3.0), project URL, sign in again.
+
+The bottom of the sidebar holds the account block — round avatar (first letter of the username), user
+name and current key name — above three icon buttons for language, light/dark and sign-out. They stay
+pinned to the real window bottom when the window grows, and the drop-downs are custom-drawn so no white
+native list box appears in dark mode.
 
 The API key and preferences are stored in `%APPDATA%\CertumSigner\config.json`; the next launch goes
 straight to the signing screen, and an invalid key falls back to the sign-in page. Dropping files onto

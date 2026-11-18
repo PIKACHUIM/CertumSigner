@@ -50,7 +50,7 @@ HttpResponse http_request(const std::string &method, const std::string &url,
     parts.dwExtraInfoLength = static_cast<DWORD>(-1);
 
     if (!WinHttpCrackUrl(wurl.c_str(), 0, 0, &parts)) {
-        out.error = "URL 解析失败：" + url;
+        out.error = "URL 解析失败（WinHTTP 错误 " + std::to_string(GetLastError()) + "）：" + url;
         return out;
     }
 

@@ -46,8 +46,10 @@ enum Page { PAGE_LOGIN = 0, PAGE_KEYS = 1, PAGE_SIGN = 2, PAGE_SETTINGS = 3 };
 
 constexpr int IDC_NAV_SIGN = 1001;
 constexpr int IDC_NAV_SETTINGS = 1002;
+constexpr int IDC_NAV_KEYS = 1005;
 constexpr int IDC_LANG = 1003;
 constexpr int IDC_THEME = 1004;
+constexpr int IDC_LOGOUT = 1006;
 
 constexpr int IDC_L_SERVER = 1101;
 constexpr int IDC_L_USER = 1102;
@@ -59,7 +61,6 @@ constexpr int IDC_K_USE = 1202;
 constexpr int IDC_K_NAME = 1203;
 constexpr int IDC_K_CRED = 1204;
 constexpr int IDC_K_CREATE = 1205;
-constexpr int IDC_K_BACK = 1206;
 
 constexpr int IDC_S_DROP = 1301;
 constexpr int IDC_S_LIST = 1302;
@@ -143,7 +144,11 @@ struct TextRow {
 const TextRow kTexts[] = {
     {"app.tag", L"云端代码签名", L"Cloud code signing"},
     {"nav.sign", L"签名", L"Sign"},
+    {"nav.keys", L"凭据", L"Credentials"},
     {"nav.settings", L"设置", L"Settings"},
+    {"tool.lang", L"切换语言", L"Language"},
+    {"tool.theme", L"切换明暗", L"Light / dark"},
+    {"tool.logout", L"退出登录", L"Sign out"},
     {"common.show", L"显示", L"Show"},
     {"common.hide", L"隐藏", L"Hide"},
 
@@ -167,7 +172,6 @@ const TextRow kTexts[] = {
     {"keys.namePlaceholder", L"例如 laptop", L"e.g. laptop"},
     {"keys.cred", L"证书凭据", L"Certificate"},
     {"keys.create", L"新建并使用", L"Create and use"},
-    {"keys.back", L"返回登录", L"Back to sign-in"},
     {"keys.confirm", L"会为此 Key 生成新的 Key 值，旧值立即失效。继续？",
      L"A new secret will be issued for this key; the old one stops working. Continue?"},
     {"keys.revealed", L"新的 API Key", L"Your new API key"},
@@ -175,6 +179,7 @@ const TextRow kTexts[] = {
     {"keys.busy", L"正在换取新 Key…", L"Issuing a new key…"},
     {"keys.defaultName", L"桌面端", L"desktop"},
     {"keys.noCred", L"管理员还没有给你分配证书", L"No certificate assigned yet"},
+    {"keys.current", L"当前使用", L"In use"},
 
     {"sign.title", L"签名", L"Sign"},
     {"sign.sub", L"拖入文件或点击上传，批量签名后写回 PE", L"Drop files or click to upload, then sign the whole batch"},
@@ -271,6 +276,7 @@ struct CredentialItem {
 struct LoginResult {
     bool ok = false;
     bool revealed = false;
+    bool silent = false;
     std::string error;
     std::string token;
     std::string username;
@@ -300,9 +306,12 @@ struct App {
     Page page = PAGE_SIGN;
 
     HWND navSign = nullptr;
+    HWND navKeys = nullptr;
     HWND navSettings = nullptr;
     HWND langBtn = nullptr;
     HWND themeBtn = nullptr;
+    HWND logoutBtn = nullptr;
+    HWND tooltip = nullptr;
 
     HWND lgServer = nullptr;
     HWND lgUser = nullptr;
@@ -314,7 +323,6 @@ struct App {
     HWND keyName = nullptr;
     HWND keyCred = nullptr;
     HWND keyCreate = nullptr;
-    HWND keyBack = nullptr;
 
     HWND drop = nullptr;
     HWND list = nullptr;
@@ -373,6 +381,7 @@ struct App {
     std::vector<FileItem> files;
     std::vector<KeyItem> keys;
     std::vector<CredentialItem> credentials;
+    int cred_index = 0;
     std::string token;
     std::string pending_name;
     std::string pending_plaintext;
@@ -427,6 +436,14 @@ std::string control_text(HWND control) {
     buffer.resize(static_cast<size_t>(length));
     return narrow(buffer);
 }
+
+/* 自绘下拉框（替代原生 ComboBox，跟随明暗主题） */
+std::vector<std::wstring> dropdown_items(int id);
+int dropdown_index(int id);
+std::wstring dropdown_label(int id);
+void dropdown_open(int id);
+void dropdown_apply(int id, int index);
+void close_dropdown();
 
 bool is_dark_system() {
     HKEY key = nullptr;
@@ -604,6 +621,103 @@ void draw_gear_icon(HDC dc, RECT box, COLORREF color) {
     DeleteObject(pen);
 }
 
+void draw_key_icon(HDC dc, RECT box, COLORREF color) {
+    HPEN pen = CreatePen(PS_SOLID, px(2), color);
+    HGDIOBJ oldPen = SelectObject(dc, pen);
+    HGDIOBJ oldBrush = SelectObject(dc, GetStockObject(HOLLOW_BRUSH));
+    const int size = box.right - box.left;
+    const int ring = size * 5 / 12;
+    const int cx = box.left + ring;
+    const int cy = box.top + size / 2;
+    Ellipse(dc, cx - ring, cy - ring, cx + ring, cy + ring);
+    MoveToEx(dc, cx + ring, cy, nullptr);
+    LineTo(dc, box.right, cy);
+    MoveToEx(dc, box.right - size / 5, cy, nullptr);
+    LineTo(dc, box.right - size / 5, cy + size / 4);
+    MoveToEx(dc, box.right - size / 2, cy, nullptr);
+    LineTo(dc, box.right - size / 2, cy + size / 5);
+    SelectObject(dc, oldBrush);
+    SelectObject(dc, oldPen);
+    DeleteObject(pen);
+}
+
+void draw_sun_icon(HDC dc, RECT box, COLORREF color) {
+    HPEN pen = CreatePen(PS_SOLID, px(2), color);
+    HGDIOBJ oldPen = SelectObject(dc, pen);
+    HGDIOBJ oldBrush = SelectObject(dc, GetStockObject(HOLLOW_BRUSH));
+    const int cx = (box.left + box.right) / 2;
+    const int cy = (box.top + box.bottom) / 2;
+    const int r = (box.right - box.left) / 5;
+    Ellipse(dc, cx - r, cy - r, cx + r, cy + r);
+    for (int i = 0; i < 8; ++i) {
+        const double angle = i * 3.14159265 / 4.0;
+        const int x1 = cx + static_cast<int>(r * 1.8 * std::cos(angle));
+        const int y1 = cy + static_cast<int>(r * 1.8 * std::sin(angle));
+        const int x2 = cx + static_cast<int>(r * 2.6 * std::cos(angle));
+        const int y2 = cy + static_cast<int>(r * 2.6 * std::sin(angle));
+        MoveToEx(dc, x1, y1, nullptr);
+        LineTo(dc, x2, y2);
+    }
+    SelectObject(dc, oldBrush);
+    SelectObject(dc, oldPen);
+    DeleteObject(pen);
+}
+
+void draw_moon_icon(HDC dc, RECT box, COLORREF color, COLORREF bg) {
+    const int cx = (box.left + box.right) / 2;
+    const int cy = (box.top + box.bottom) / 2;
+    const int r = (box.right - box.left) / 3;
+    HBRUSH brush = CreateSolidBrush(color);
+    HPEN pen = CreatePen(PS_SOLID, 1, color);
+    HGDIOBJ oldBrush = SelectObject(dc, brush);
+    HGDIOBJ oldPen = SelectObject(dc, pen);
+    Ellipse(dc, cx - r, cy - r, cx + r, cy + r);
+    // 用背景色再挖一个圆，形成月牙
+    HBRUSH cut = CreateSolidBrush(bg);
+    HPEN cut_pen = CreatePen(PS_SOLID, 1, bg);
+    SelectObject(dc, cut);
+    SelectObject(dc, cut_pen);
+    Ellipse(dc, cx - r + r / 2, cy - r - r / 3, cx + r + r / 2, cy + r - r / 3);
+    SelectObject(dc, oldPen);
+    SelectObject(dc, oldBrush);
+    DeleteObject(cut);
+    DeleteObject(cut_pen);
+    DeleteObject(brush);
+    DeleteObject(pen);
+}
+
+void draw_logout_icon(HDC dc, RECT box, COLORREF color) {
+    HPEN pen = CreatePen(PS_SOLID, px(2), color);
+    HGDIOBJ oldPen = SelectObject(dc, pen);
+    HGDIOBJ oldBrush = SelectObject(dc, GetStockObject(HOLLOW_BRUSH));
+    const int size = box.right - box.left;
+    const int left = box.left + size / 6;
+    const int right = box.left + size / 2;
+    RoundRect(dc, left, box.top + size / 5, right, box.bottom - size / 5, px(4), px(4));
+    const int cy = (box.top + box.bottom) / 2;
+    MoveToEx(dc, box.left + size / 2, cy, nullptr);
+    LineTo(dc, box.right, cy);
+    MoveToEx(dc, box.right - size / 5, cy - size / 5, nullptr);
+    LineTo(dc, box.right, cy);
+    LineTo(dc, box.right - size / 5, cy + size / 5);
+    SelectObject(dc, oldBrush);
+    SelectObject(dc, oldPen);
+    DeleteObject(pen);
+}
+
+void draw_chevron(HDC dc, RECT box, COLORREF color) {
+    HPEN pen = CreatePen(PS_SOLID, px(2), color);
+    HGDIOBJ oldPen = SelectObject(dc, pen);
+    const int cx = (box.left + box.right) / 2;
+    const int cy = (box.top + box.bottom) / 2;
+    const int half = (box.right - box.left) / 2;
+    MoveToEx(dc, cx - half, cy - half / 2, nullptr);
+    LineTo(dc, cx, cy + half / 2);
+    LineTo(dc, cx + half, cy - half / 2);
+    SelectObject(dc, oldPen);
+    DeleteObject(pen);
+}
+
 void draw_upload_icon(HDC dc, RECT box, COLORREF fg, COLORREF bg) {
     fill_round(dc, box, px(24), bg);
     HPEN pen = CreatePen(PS_SOLID, px(3), fg);
@@ -698,7 +812,7 @@ ControlSet login_controls() {
 
 ControlSet keys_controls() {
     App *a = g_app;
-    return {{a->keyList, a->keyUse, a->keyName, a->keyCred, a->keyCreate, a->keyBack}};
+    return {{a->keyList, a->keyUse, a->keyName, a->keyCred, a->keyCreate}};
 }
 
 ControlSet sign_controls() {
@@ -723,7 +837,7 @@ void set_page(Page page) {
     App *a = g_app;
     if (!a) return;
     a->page = page;
-    const bool logged_in = page != PAGE_LOGIN && page != PAGE_KEYS;
+    const bool logged_in = page != PAGE_LOGIN;
 
     show_controls(login_controls(), page == PAGE_LOGIN);
     show_controls(keys_controls(), page == PAGE_KEYS);
@@ -731,7 +845,11 @@ void set_page(Page page) {
     show_controls(settings_controls(), page == PAGE_SETTINGS);
 
     if (a->navSign) ShowWindow(a->navSign, logged_in ? SW_SHOW : SW_HIDE);
+    if (a->navKeys) ShowWindow(a->navKeys, logged_in ? SW_SHOW : SW_HIDE);
     if (a->navSettings) ShowWindow(a->navSettings, logged_in ? SW_SHOW : SW_HIDE);
+    if (a->logoutBtn) ShowWindow(a->logoutBtn, logged_in ? SW_SHOW : SW_HIDE);
+    if (a->langBtn) ShowWindow(a->langBtn, SW_SHOW);
+    if (a->themeBtn) ShowWindow(a->themeBtn, SW_SHOW);
 
     if (a->page == PAGE_SIGN) {
         EnableWindow(a->signBtn, a->busy ? FALSE : TRUE);
@@ -900,20 +1018,12 @@ void refresh_key_list() {
 void refresh_cred_combo() {
     App *a = g_app;
     if (!a || !a->keyCred) return;
-    SendMessageW(a->keyCred, CB_RESETCONTENT, 0, 0);
-    for (size_t i = 0; i < a->credentials.size(); ++i) {
-        const CredentialItem &credential = a->credentials[i];
-        std::string label = credential.label;
-        if (label.empty()) label = credential.id;
-        if (!credential.email.empty() && credential.email != credential.label) {
-            if (!label.empty()) label += " · ";
-            label += credential.email;
-        }
-        SendMessageW(a->keyCred, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(widen(label).c_str()));
-    }
-    if (!a->credentials.empty()) SendMessageW(a->keyCred, CB_SETCURSEL, 0, 0);
-    EnableWindow(a->keyCred, a->credentials.empty() ? FALSE : TRUE);
-    EnableWindow(a->keyCreate, a->credentials.empty() ? FALSE : TRUE);
+    if (a->cred_index >= static_cast<int>(a->credentials.size())) a->cred_index = 0;
+    if (a->cred_index < 0) a->cred_index = 0;
+    const bool has_credential = !a->credentials.empty();
+    EnableWindow(a->keyCred, has_credential ? TRUE : FALSE);
+    EnableWindow(a->keyCreate, has_credential ? TRUE : FALSE);
+    InvalidateRect(a->keyCred, nullptr, TRUE);
 }
 
 /* --------------------------------- 文件 ---------------------------------- */
@@ -1154,6 +1264,10 @@ void verify_selected() {
 
 /* -------------------------------- 登录流程 ------------------------------- */
 
+void reveal_key(const KeyItem &key, bool silent);
+void create_key(const std::wstring &name);
+void auto_pick_key();
+
 void apply_login_result(LoginResult *result) {
     App *a = g_app;
     if (!result) return;
@@ -1192,11 +1306,11 @@ void apply_login_result(LoginResult *result) {
         a->pending_plaintext.clear();
         set_page(PAGE_SIGN);
     } else {
-        // 先把平台地址和账号记下来，选完 Key 再补上 Key
+        // 先把平台地址和账号记下来，再按规则自动挑 Key
         std::string err;
         save_settings(a->settings, err);
         if (a->stServer) SetWindowTextW(a->stServer, widen(a->settings.server).c_str());
-        set_page(PAGE_KEYS);
+        auto_pick_key();
     }
     delete result;
 }
@@ -1295,13 +1409,19 @@ void use_selected_key() {
     const std::wstring question = tr("keys.confirm");
     if (MessageBoxW(a->window, question.c_str(), L"CertumSigner", MB_ICONQUESTION | MB_YESNO) != IDYES) return;
 
+    reveal_key(key, false);
+}
+
+void reveal_key(const KeyItem &key, bool silent) {
+    App *a = g_app;
+    if (!a || a->busy) return;
     set_busy(true);
     set_status(1, tr("keys.busy"));
     const std::string server = a->settings.server;
     const std::string token = a->token;
     HWND window = a->window;
 
-    std::thread([server, token, key, window]() {
+    std::thread([server, token, key, silent, window]() {
         auto *result = new LoginResult();
         HttpHeaders headers;
         headers.emplace_back("Authorization", "Bearer " + token);
@@ -1320,6 +1440,7 @@ void use_selected_key() {
         } else {
             result->ok = true;
             result->revealed = true;
+            result->silent = silent;
             result->plaintext = root.get_string("plaintext");
             result->key_name = key.name;
         }
@@ -1327,7 +1448,7 @@ void use_selected_key() {
     }).detach();
 }
 
-void create_key() {
+void create_key(const std::wstring &name) {
     App *a = g_app;
     if (!a || a->busy) return;
     if (a->credentials.empty()) {
@@ -1335,13 +1456,14 @@ void create_key() {
         InvalidateRect(a->window, nullptr, FALSE);
         return;
     }
-    int index = static_cast<int>(SendMessageW(a->keyCred, CB_GETCURSEL, 0, 0));
+    int index = a->cred_index;
     if (index < 0) index = 0;
     if (static_cast<size_t>(index) >= a->credentials.size()) return;
 
     const std::string credential_id = a->credentials[static_cast<size_t>(index)].id;
-    std::string name = control_text(a->keyName);
-    if (name.empty()) name = narrow(tr("keys.defaultName"));
+    std::string key_name = narrow(name);
+    if (key_name.empty()) key_name = control_text(a->keyName);
+    if (key_name.empty()) key_name = narrow(tr("keys.defaultName"));
 
     set_busy(true);
     set_status(1, tr("keys.busy"));
@@ -1349,10 +1471,10 @@ void create_key() {
     const std::string token = a->token;
     HWND window = a->window;
 
-    std::string body = "{\"name\":\"" + json_escape(name) + "\",\"credentialId\":\"" + json_escape(credential_id) +
+    std::string body = "{\"name\":\"" + json_escape(key_name) + "\",\"credentialId\":\"" + json_escape(credential_id) +
                        "\",\"dailyQuota\":0}";
 
-    std::thread([server, token, body, name, window]() {
+    std::thread([server, token, body, key_name, window]() {
         auto *result = new LoginResult();
         HttpHeaders headers;
         headers.emplace_back("Authorization", "Bearer " + token);
@@ -1372,7 +1494,7 @@ void create_key() {
         } else {
             result->ok = true;
             result->plaintext = root.get_string("plaintext");
-            result->key_name = name;
+            result->key_name = key_name;
         }
         PostMessageW(window, WM_APP_KEY_DONE, 0, reinterpret_cast<LPARAM>(result));
     }).detach();
@@ -1403,11 +1525,13 @@ void apply_key_result(LoginResult *result) {
 
     append_log("已保存 Key：" + result->key_name);
 
-    const std::wstring title = result->revealed ? tr("keys.revealed") : tr("keys.create");
-    std::wstring message = title;
-    if (result->revealed) message += L"\r\n" + tr("keys.revealedBody");
-    message += L"\r\n\r\n" + widen(result->plaintext);
-    MessageBoxW(a->window, message.c_str(), L"CertumSigner", MB_ICONINFORMATION | MB_OK);
+    if (!result->silent) {
+        const std::wstring title = result->revealed ? tr("keys.revealed") : tr("keys.create");
+        std::wstring message = title;
+        if (result->revealed) message += L"\r\n" + tr("keys.revealedBody");
+        message += L"\r\n\r\n" + widen(result->plaintext);
+        MessageBoxW(a->window, message.c_str(), L"CertumSigner", MB_ICONINFORMATION | MB_OK);
+    }
 
     delete result;
     set_status(0, tr("sign.ready"));
@@ -1450,52 +1574,119 @@ void refresh_whoami() {
     }).detach();
 }
 
+/* 登录后自动挑选 Key：沿用本机 Key → 唯一 Key → 自动新建 → 才让用户手选 */
+void auto_pick_key() {
+    App *a = g_app;
+    if (!a) return;
+    a->cred_index = 0;
+
+    for (const auto &key : a->keys) {
+        if (a->settings.api_key.empty() || key.prefix.empty()) continue;
+        if (!starts_with(a->settings.api_key, key.prefix)) continue;
+        append_log("已登录：" + a->settings.username + "，沿用本机保存的 Key " + key.name);
+        set_page(PAGE_SIGN);
+        refresh_whoami();
+        return;
+    }
+
+    if (a->keys.size() == 1) {
+        const KeyItem only = a->keys.front();
+        append_log("已自动选择登录账号下的唯一 Key：" + only.name);
+        reveal_key(only, true);
+        return;
+    }
+
+    if (a->keys.empty()) {
+        if (a->credentials.empty()) {
+            a->error = tr("keys.noCred");
+            set_page(PAGE_KEYS);
+            return;
+        }
+        append_log("账号下暂无 Key，正在使用第一套凭据自动创建 …");
+        create_key(tr("keys.defaultName"));
+        return;
+    }
+
+    set_page(PAGE_KEYS);
+}
+
 /* --------------------------------- 布局 ---------------------------------- */
+
+// 窗口比设计尺寸宽时，把内容区（侧边栏右侧）整体居中，避免右侧大片空白
+int content_offset() {
+    if (!g_app) return 0;
+    RECT client{};
+    GetClientRect(g_app->window, &client);
+    const int design = px(kBaseWidth - kSideWidth);
+    const int actual = client.right - px(kSideWidth);
+    if (actual <= design + px(8)) return 0;
+    return (actual - design) / 2;
+}
 
 void layout_controls() {
     App *a = g_app;
     if (!a) return;
 
-    if (a->navSign) MoveWindow(a->navSign, px(16), px(104), px(168), px(46), TRUE);
-    if (a->navSettings) MoveWindow(a->navSettings, px(16), px(156), px(168), px(46), TRUE);
-    if (a->langBtn) MoveWindow(a->langBtn, px(16), px(kBaseHeight - 92), px(80), px(34), TRUE);
-    if (a->themeBtn) MoveWindow(a->themeBtn, px(104), px(kBaseHeight - 92), px(80), px(34), TRUE);
+    RECT client{};
+    GetClientRect(a->window, &client);
+    const int height = client.bottom;
+    const int dx = content_offset();
 
-    if (a->lgServer) MoveWindow(a->lgServer, px(430), px(298), px(400), px(36), TRUE);
-    if (a->lgUser) MoveWindow(a->lgUser, px(430), px(366), px(190), px(36), TRUE);
-    if (a->lgPass) MoveWindow(a->lgPass, px(640), px(366), px(190), px(36), TRUE);
-    if (a->lgLogin) MoveWindow(a->lgLogin, px(430), px(440), px(400), px(44), TRUE);
+    if (a->navSign) MoveWindow(a->navSign, px(12), px(100), px(176), px(44), TRUE);
+    if (a->navKeys) MoveWindow(a->navKeys, px(12), px(146), px(176), px(44), TRUE);
+    if (a->navSettings) MoveWindow(a->navSettings, px(12), px(192), px(176), px(44), TRUE);
 
-    if (a->keyList) MoveWindow(a->keyList, px(248), px(170), px(764), px(196), TRUE);
-    if (a->keyUse) MoveWindow(a->keyUse, px(248), px(382), px(220), px(40), TRUE);
-    if (a->keyName) MoveWindow(a->keyName, px(248), px(490), px(240), px(36), TRUE);
-    if (a->keyCred) MoveWindow(a->keyCred, px(500), px(490), px(300), px(360), TRUE);
-    if (a->keyCreate) MoveWindow(a->keyCreate, px(812), px(490), px(200), px(36), TRUE);
-    if (a->keyBack) MoveWindow(a->keyBack, px(248), px(560), px(128), px(36), TRUE);
+    // 左下角：三个图标按钮贴底，账号信息画在它们上方
+    const int icon_w = px(52);
+    const int icon_h = px(32);
+    const int icon_gap = px(6);
+    const int icons_y = height - px(16) - icon_h;
+    if (a->langBtn) MoveWindow(a->langBtn, px(16), icons_y, icon_w, icon_h, TRUE);
+    if (a->themeBtn) MoveWindow(a->themeBtn, px(16) + icon_w + icon_gap, icons_y, icon_w, icon_h, TRUE);
+    if (a->logoutBtn) MoveWindow(a->logoutBtn, px(16) + (icon_w + icon_gap) * 2, icons_y, icon_w, icon_h, TRUE);
 
-    if (a->drop) MoveWindow(a->drop, px(224), px(78), px(812), px(132), TRUE);
-    if (a->list) MoveWindow(a->list, px(240), px(268), px(780), px(224), TRUE);
-    if (a->addBtn) MoveWindow(a->addBtn, px(858), px(232), px(54), px(26), TRUE);
-    if (a->removeBtn) MoveWindow(a->removeBtn, px(916), px(232), px(54), px(26), TRUE);
-    if (a->clearBtn) MoveWindow(a->clearBtn, px(974), px(232), px(54), px(26), TRUE);
-    if (a->signBtn) MoveWindow(a->signBtn, px(224), px(520), px(400), px(46), TRUE);
-    if (a->verifyBtn) MoveWindow(a->verifyBtn, px(636), px(520), px(200), px(46), TRUE);
-    if (a->logBox) MoveWindow(a->logBox, px(240), px(620), px(780), px(84), TRUE);
-    if (a->logClear) MoveWindow(a->logClear, px(948), px(586), px(72), px(26), TRUE);
+    // 输入框只占一行文字的高度，在绘制出来的圆角框里垂直居中
+    const int edit_h = px(26);
+    auto place_edit = [&](HWND control, int x, int y, int w, int box_h, int pad = 12) {
+        if (!control) return;
+        MoveWindow(control, px(x) + dx + px(pad), px(y) + (px(box_h) - edit_h) / 2, px(w) - px(pad * 2), edit_h,
+                   TRUE);
+    };
 
-    if (a->stServer) MoveWindow(a->stServer, px(244), px(112), px(560), px(36), TRUE);
-    if (a->stKey) MoveWindow(a->stKey, px(244), px(180), px(480), px(36), TRUE);
-    if (a->stShowKey) MoveWindow(a->stShowKey, px(736), px(180), px(72), px(36), TRUE);
-    if (a->stAlgo256) MoveWindow(a->stAlgo256, px(244), px(292), px(96), px(34), TRUE);
-    if (a->stAlgo1) MoveWindow(a->stAlgo1, px(348), px(292), px(84), px(34), TRUE);
-    if (a->stTsa) MoveWindow(a->stTsa, px(244), px(356), px(240), px(400), TRUE);
-    if (a->stTsOn) MoveWindow(a->stTsOn, px(500), px(352), px(130), px(32), TRUE);
-    if (a->stBackup) MoveWindow(a->stBackup, px(660), px(352), px(170), px(32), TRUE);
-    if (a->stLang) MoveWindow(a->stLang, px(244), px(466), px(200), px(200), TRUE);
-    if (a->stTheme) MoveWindow(a->stTheme, px(470), px(466), px(200), px(200), TRUE);
-    if (a->stRelogin) MoveWindow(a->stRelogin, px(620), px(606), px(160), px(36), TRUE);
-    if (a->stLicense) MoveWindow(a->stLicense, px(244), px(606), px(140), px(36), TRUE);
-    if (a->stProject) MoveWindow(a->stProject, px(396), px(606), px(200), px(36), TRUE);
+    place_edit(a->lgServer, 430, 298, 400, 36);
+    place_edit(a->lgUser, 430, 366, 190, 36);
+    place_edit(a->lgPass, 640, 366, 190, 36);
+    if (a->lgLogin) MoveWindow(a->lgLogin, px(430) + dx, px(440), px(400), px(44), TRUE);
+
+    if (a->keyList) MoveWindow(a->keyList, px(248) + dx, px(170), px(764), px(216), TRUE);
+    if (a->keyUse) MoveWindow(a->keyUse, px(248) + dx, px(398), px(220), px(40), TRUE);
+    place_edit(a->keyName, 248, 530, 240, 38);
+    if (a->keyCred) MoveWindow(a->keyCred, px(500) + dx, px(530), px(300), px(38), TRUE);
+    if (a->keyCreate) MoveWindow(a->keyCreate, px(812) + dx, px(530), px(200), px(38), TRUE);
+
+    if (a->drop) MoveWindow(a->drop, px(224) + dx, px(78), px(812), px(132), TRUE);
+    if (a->list) MoveWindow(a->list, px(240) + dx, px(268), px(780), px(224), TRUE);
+    if (a->addBtn) MoveWindow(a->addBtn, px(858) + dx, px(232), px(54), px(26), TRUE);
+    if (a->removeBtn) MoveWindow(a->removeBtn, px(916) + dx, px(232), px(54), px(26), TRUE);
+    if (a->clearBtn) MoveWindow(a->clearBtn, px(974) + dx, px(232), px(54), px(26), TRUE);
+    if (a->signBtn) MoveWindow(a->signBtn, px(224) + dx, px(520), px(400), px(46), TRUE);
+    if (a->verifyBtn) MoveWindow(a->verifyBtn, px(636) + dx, px(520), px(200), px(46), TRUE);
+    if (a->logBox) MoveWindow(a->logBox, px(240) + dx, px(620), px(780), px(84), TRUE);
+    if (a->logClear) MoveWindow(a->logClear, px(948) + dx, px(586), px(72), px(26), TRUE);
+
+    place_edit(a->stServer, 244, 144, 560, 38);
+    place_edit(a->stKey, 244, 212, 480, 38);
+    if (a->stShowKey) MoveWindow(a->stShowKey, px(736) + dx, px(212), px(72), px(38), TRUE);
+    if (a->stAlgo256) MoveWindow(a->stAlgo256, px(244) + dx, px(336), px(96), px(34), TRUE);
+    if (a->stAlgo1) MoveWindow(a->stAlgo1, px(348) + dx, px(336), px(84), px(34), TRUE);
+    if (a->stTsa) MoveWindow(a->stTsa, px(500) + dx, px(336), px(220), px(34), TRUE);
+    if (a->stTsOn) MoveWindow(a->stTsOn, px(244) + dx, px(380), px(130), px(32), TRUE);
+    if (a->stBackup) MoveWindow(a->stBackup, px(390) + dx, px(380), px(170), px(32), TRUE);
+    if (a->stLang) MoveWindow(a->stLang, px(244) + dx, px(498), px(200), px(34), TRUE);
+    if (a->stTheme) MoveWindow(a->stTheme, px(470) + dx, px(498), px(200), px(34), TRUE);
+    if (a->stLicense) MoveWindow(a->stLicense, px(244) + dx, px(626), px(140), px(36), TRUE);
+    if (a->stProject) MoveWindow(a->stProject, px(396) + dx, px(626), px(190), px(36), TRUE);
+    if (a->stRelogin) MoveWindow(a->stRelogin, px(600) + dx, px(626), px(160), px(36), TRUE);
 }
 
 /* ------------------------------- 页面绘制 -------------------------------- */
@@ -1512,16 +1703,33 @@ void paint_sidebar(HDC dc, RECT client) {
     SelectObject(dc, oldPen);
     DeleteObject(pen);
 
-    draw_logo(dc, 24, 22, 34, a->fontTitle);
-    draw_text(dc, L"CertumSigner", rect(70, 20, 140, 26), a->fontButton, p.text);
-    draw_text(dc, tr("app.tag"), rect(70, 44, 140, 18), a->fontTiny, p.muted2);
+    draw_logo(dc, 20, 20, 32, a->fontTitle);
+    draw_text(dc, L"CertumSigner", rect(62, 18, 126, 24), a->fontButton, p.text);
+    draw_text(dc, tr("app.tag"), rect(62, 40, 126, 18), a->fontTiny, p.muted2);
 
-    if (a->page != PAGE_LOGIN && a->page != PAGE_KEYS) {
-        draw_text(dc, a->account, rect(16, kBaseHeight - 132, 168, 20), a->fontTiny, p.muted,
-                  DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
-    } else {
-        draw_text(dc, tr("app.tag"), rect(16, kBaseHeight - 132, 168, 20), a->fontTiny, p.muted2);
+    if (a->page == PAGE_LOGIN) return;
+
+    // 账号信息 + 头像，紧贴在图标按钮上方
+    const int icons_y = client.bottom - px(16) - px(32);
+    const int avatar = px(34);
+    const int avatar_y = icons_y - px(16) - avatar;
+
+    RECT circle{px(16), avatar_y, px(16) + avatar, avatar_y + avatar};
+    fill_round(dc, circle, avatar, p.accent);
+    std::wstring initial = a->settings.username.empty() ? L"?" : widen(a->settings.username).substr(0, 1);
+    if (!initial.empty() && initial[0] >= L'a' && initial[0] <= L'z') {
+        initial[0] = static_cast<wchar_t>(initial[0] - L'a' + L'A');
     }
+    draw_text(dc, initial, circle, a->fontButton, RGB(255, 255, 255), DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+
+    const int text_left = px(16) + avatar + px(10);
+    const int text_right = px(kSideWidth) - px(12);
+    RECT name_rect{text_left, avatar_y, text_right, avatar_y + px(18)};
+    draw_text(dc, a->settings.username.empty() ? tr("app.user") : widen(a->settings.username), name_rect,
+              a->fontButton, p.text, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
+    RECT key_rect{text_left, avatar_y + px(18), text_right, avatar_y + px(34)};
+    draw_text(dc, a->settings.key_name.empty() ? L"—" : widen(a->settings.key_name), key_rect, a->fontTiny,
+              p.muted2, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
 }
 
 void paint_login(HDC dc) {
@@ -1560,7 +1768,7 @@ void paint_login(HDC dc) {
 void paint_keys(HDC dc) {
     App *a = g_app;
     const Palette &p = pal();
-    const RECT card = rect(224, 78, 812, 540);
+    const RECT card = rect(224, 78, 812, 522);
     fill_round(dc, card, px(16), p.card);
     stroke_round(dc, card, px(16), p.edge);
 
@@ -1568,24 +1776,29 @@ void paint_keys(HDC dc) {
     draw_text(dc, tr("keys.sub"), rect(248, 132, 740, 20), a->fontSmall, p.muted,
               DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
 
-    fill_round(dc, rect(248, 170, 764, 196), px(12), p.input);
-    stroke_round(dc, rect(248, 170, 764, 196), px(12), p.inputEdge);
+    fill_round(dc, rect(248, 170, 764, 216), px(12), p.input);
+    stroke_round(dc, rect(248, 170, 764, 216), px(12), p.inputEdge);
 
     if (!a->error.empty()) {
-        draw_text(dc, a->error, rect(248, 428, 760, 20), a->fontSmall, p.bad,
+        draw_text(dc, a->error, rect(248, 450, 764, 20), a->fontSmall, p.bad,
+                  DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
+    } else {
+        const std::wstring current =
+            tr("keys.current") + L"：" + (a->settings.key_name.empty() ? L"—" : widen(a->settings.key_name));
+        draw_text(dc, current, rect(248, 450, 764, 20), a->fontTiny, p.muted2,
                   DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
     }
 
-    hline(dc, 248, 1012, 442, p.edge);
-    draw_text(dc, tr("keys.newTitle"), rect(248, 452, 300, 24), a->fontButton, p.text);
-    draw_text(dc, tr("keys.name"), rect(248, 472, 120, 16), a->fontTiny, p.muted2);
-    draw_text(dc, tr("keys.cred"), rect(500, 472, 120, 16), a->fontTiny, p.muted2);
+    hline(dc, 248, 1012, 478, p.edge);
+    draw_text(dc, tr("keys.newTitle"), rect(248, 490, 300, 24), a->fontButton, p.text);
+    draw_text(dc, tr("keys.name"), rect(248, 512, 200, 16), a->fontTiny, p.muted2);
+    draw_text(dc, tr("keys.cred"), rect(500, 512, 280, 16), a->fontTiny, p.muted2);
 
-    fill_round(dc, rect(248, 490, 240, 36), px(9), p.input);
-    stroke_round(dc, rect(248, 490, 240, 36), px(9), GetFocus() == a->keyName ? p.accent : p.inputEdge);
+    fill_round(dc, rect(248, 530, 240, 38), px(9), p.input);
+    stroke_round(dc, rect(248, 530, 240, 38), px(9), GetFocus() == a->keyName ? p.accent : p.inputEdge);
 
     if (a->credentials.empty()) {
-        draw_text(dc, tr("keys.noCred"), rect(500, 490, 300, 36), a->fontSmall, p.muted2,
+        draw_text(dc, tr("keys.noCred"), rect(500, 530, 300, 38), a->fontSmall, p.muted2,
                   DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
     }
 }
@@ -1652,52 +1865,56 @@ void paint_settings(HDC dc) {
               DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
 
     // 连接
-    RECT c1 = rect(224, 78, 812, 168);
+    RECT c1 = rect(224, 78, 812, 188);
     fill_round(dc, c1, px(16), p.card);
     stroke_round(dc, c1, px(16), p.edge);
     draw_text(dc, tr("set.conn"), rect(244, 90, 200, 22), a->fontButton, p.text);
-    draw_text(dc, tr("set.server"), rect(244, 114, 300, 16), a->fontTiny, p.muted2);
-    fill_round(dc, rect(244, 112, 560, 36), px(9), p.input);
-    stroke_round(dc, rect(244, 112, 560, 36), px(9), GetFocus() == a->stServer ? p.accent : p.inputEdge);
-    draw_text(dc, tr("set.key"), rect(244, 158, 300, 16), a->fontTiny, p.muted2);
-    fill_round(dc, rect(244, 180, 480, 36), px(9), p.input);
-    stroke_round(dc, rect(244, 180, 480, 36), px(9), GetFocus() == a->stKey ? p.accent : p.inputEdge);
+    draw_text(dc, tr("set.server"), rect(244, 120, 300, 16), a->fontTiny, p.muted2);
+    fill_round(dc, rect(244, 144, 560, 38), px(9), p.input);
+    stroke_round(dc, rect(244, 144, 560, 38), px(9), GetFocus() == a->stServer ? p.accent : p.inputEdge);
+    draw_text(dc, tr("set.key"), rect(244, 188, 300, 16), a->fontTiny, p.muted2);
+    fill_round(dc, rect(244, 212, 480, 38), px(9), p.input);
+    stroke_round(dc, rect(244, 212, 480, 38), px(9), GetFocus() == a->stKey ? p.accent : p.inputEdge);
 
-    draw_text(dc, tr("set.account"), rect(820, 104, 200, 16), a->fontTiny, p.muted2);
-    draw_text(dc, a->settings.username.empty() ? L"—" : widen(a->settings.username), rect(820, 124, 200, 20),
+    draw_text(dc, tr("set.account"), rect(820, 120, 200, 16), a->fontTiny, p.muted2);
+    draw_text(dc, a->settings.username.empty() ? L"—" : widen(a->settings.username), rect(820, 140, 200, 20),
               a->fontSmall, p.text, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
-    draw_text(dc, tr("set.keyName"), rect(820, 150, 200, 16), a->fontTiny, p.muted2);
-    draw_text(dc, a->settings.key_name.empty() ? L"—" : widen(a->settings.key_name), rect(820, 168, 200, 20),
+    draw_text(dc, tr("set.keyName"), rect(820, 176, 200, 16), a->fontTiny, p.muted2);
+    draw_text(dc, a->settings.key_name.empty() ? L"—" : widen(a->settings.key_name), rect(820, 196, 200, 20),
               a->fontSmall, p.text, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
 
     // 签名选项
-    RECT c2 = rect(224, 258, 812, 160);
+    RECT c2 = rect(224, 278, 812, 152);
     fill_round(dc, c2, px(16), p.card);
     stroke_round(dc, c2, px(16), p.edge);
-    draw_text(dc, tr("set.signing"), rect(244, 270, 200, 22), a->fontButton, p.text);
-    draw_text(dc, tr("set.algo"), rect(244, 296, 200, 16), a->fontTiny, p.muted2);
-    draw_text(dc, tr("set.ts"), rect(244, 332, 200, 16), a->fontTiny, p.muted2);
-    draw_text(dc, tr("set.tsHint"), rect(500, 398, 520, 16), a->fontTiny, p.muted2,
-              DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
-
-    // 界面
-    RECT c3 = rect(224, 430, 812, 140);
-    fill_round(dc, c3, px(16), p.card);
-    stroke_round(dc, c3, px(16), p.edge);
-    draw_text(dc, tr("set.ui"), rect(244, 442, 200, 22), a->fontButton, p.text);
-    draw_text(dc, tr("set.lang"), rect(244, 468, 200, 16), a->fontTiny, p.muted2);
-    draw_text(dc, tr("set.theme"), rect(470, 468, 200, 16), a->fontTiny, p.muted2);
+    draw_text(dc, tr("set.signing"), rect(244, 290, 200, 22), a->fontButton, p.text);
+    draw_text(dc, tr("set.algo"), rect(244, 318, 200, 16), a->fontTiny, p.muted2);
+    draw_text(dc, tr("set.ts"), rect(500, 318, 200, 16), a->fontTiny, p.muted2);
+    draw_text(dc, tr("set.tsHint"), rect(570, 386, 440, 16), a->fontTiny, p.muted2,
+              DT_RIGHT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
     if (!a->note.empty()) {
-        draw_text(dc, a->note, rect(700, 474, 320, 20), a->fontSmall, p.ok,
+        draw_text(dc, a->note, rect(700, 504, 320, 20), a->fontSmall, p.ok,
                   DT_RIGHT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
     }
 
+    // 界面
+    RECT c3 = rect(224, 442, 812, 138);
+    fill_round(dc, c3, px(16), p.card);
+    stroke_round(dc, c3, px(16), p.edge);
+    draw_text(dc, tr("set.ui"), rect(244, 454, 200, 22), a->fontButton, p.text);
+    draw_text(dc, tr("set.lang"), rect(244, 482, 200, 16), a->fontTiny, p.muted2);
+    draw_text(dc, tr("set.theme"), rect(470, 482, 200, 16), a->fontTiny, p.muted2);
+    fill_round(dc, rect(244, 498, 200, 34), px(9), p.input);
+    stroke_round(dc, rect(244, 498, 200, 34), px(9), p.inputEdge);
+    fill_round(dc, rect(470, 498, 200, 34), px(9), p.input);
+    stroke_round(dc, rect(470, 498, 200, 34), px(9), p.inputEdge);
+
     // 关于
-    RECT c4 = rect(224, 582, 812, 134);
+    RECT c4 = rect(224, 592, 812, 118);
     fill_round(dc, c4, px(16), p.card);
     stroke_round(dc, c4, px(16), p.edge);
-    draw_text(dc, tr("set.about"), rect(244, 594, 200, 22), a->fontButton, p.text);
-    draw_text(dc, tr("set.version"), rect(244, 656, 760, 20), a->fontTiny, p.muted2,
+    draw_text(dc, tr("set.about"), rect(244, 604, 200, 22), a->fontButton, p.text);
+    draw_text(dc, tr("set.version"), rect(244, 680, 760, 20), a->fontTiny, p.muted2,
               DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
 }
 
@@ -1713,12 +1930,16 @@ void paint_window(HWND window, HDC target) {
     fill_rect(dc, client, pal().bg);
     paint_sidebar(dc, client);
 
+    // 内容区随窗口宽度居中（窗口刚好是设计尺寸时偏移为 0）
+    const int dx = content_offset();
+    if (dx > 0) SetViewportOrgEx(dc, dx, 0, nullptr);
     switch (a->page) {
     case PAGE_LOGIN: paint_login(dc); break;
     case PAGE_KEYS: paint_keys(dc); break;
     case PAGE_SIGN: paint_sign(dc); break;
     case PAGE_SETTINGS: paint_settings(dc); break;
     }
+    if (dx > 0) SetViewportOrgEx(dc, 0, 0, nullptr);
 
     BitBlt(target, 0, 0, client.right, client.bottom, dc, 0, 0, SRCCOPY);
     SelectObject(dc, oldBitmap);
@@ -1817,24 +2038,6 @@ void draw_key_item(const DRAWITEMSTRUCT *item) {
               p.muted, DT_RIGHT | DT_SINGLELINE | DT_VCENTER);
 }
 
-void draw_combo_item(const DRAWITEMSTRUCT *item) {
-    App *a = g_app;
-    if (!a || !item) return;
-    HDC dc = item->hDC;
-    const Palette &p = pal();
-    const RECT r = item->rcItem;
-    const bool selected = (item->itemState & ODS_SELECTED) != 0;
-    const bool editing = (item->itemState & ODS_COMBOBOXEDIT) != 0;
-
-    fill_rect(dc, r, selected && !editing ? p.accent : p.input);
-
-    wchar_t buffer[256] = {0};
-    SendMessageW(item->hwndItem, CB_GETLBTEXT, item->itemID, reinterpret_cast<LPARAM>(buffer));
-    draw_text(dc, buffer, RECT{r.left + px(8), r.top, r.right - px(8), r.bottom}, a->fontSmall,
-              selected && !editing ? RGB(255, 255, 255) : p.text,
-              DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
-}
-
 void draw_ownerdraw(const DRAWITEMSTRUCT *item) {
     App *a = g_app;
     if (!a || !item) return;
@@ -1865,26 +2068,54 @@ void draw_ownerdraw(const DRAWITEMSTRUCT *item) {
         return;
     }
 
-    if (id == IDC_NAV_SIGN || id == IDC_NAV_SETTINGS) {
-        const bool active = (id == IDC_NAV_SIGN) ? a->page == PAGE_SIGN : a->page == PAGE_SETTINGS;
+    if (id == IDC_NAV_SIGN || id == IDC_NAV_KEYS || id == IDC_NAV_SETTINGS) {
+        const bool active = (id == IDC_NAV_SIGN)   ? a->page == PAGE_SIGN
+                            : (id == IDC_NAV_KEYS) ? a->page == PAGE_KEYS
+                                                   : a->page == PAGE_SETTINGS;
         fill_rect(dc, r, p.side);
         fill_round(dc, r, px(10), active ? p.sideActive : (hot ? p.hover : p.side));
-        RECT icon{r.left + px(14), r.top + px(14), r.left + px(32), r.top + px(32)};
-        if (id == IDC_NAV_SIGN) draw_pen_icon(dc, icon, active ? p.text : p.muted);
-        else draw_gear_icon(dc, icon, active ? p.text : p.muted);
+        RECT icon{r.left + px(14), r.top + px(12), r.left + px(32), r.top + px(32)};
+        const COLORREF tone = active ? p.text : p.muted;
+        if (id == IDC_NAV_SIGN) draw_pen_icon(dc, icon, tone);
+        else if (id == IDC_NAV_KEYS) draw_key_icon(dc, icon, tone);
+        else draw_gear_icon(dc, icon, tone);
         RECT label{r.left + px(42), r.top, r.right - px(10), r.bottom};
-        draw_text(dc, id == IDC_NAV_SIGN ? tr("nav.sign") : tr("nav.settings"), label, a->fontButton,
-                  active ? p.text : p.muted, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
+        const std::wstring text = id == IDC_NAV_SIGN   ? tr("nav.sign")
+                                  : id == IDC_NAV_KEYS ? tr("nav.keys")
+                                                      : tr("nav.settings");
+        draw_text(dc, text, label, a->fontButton, active ? p.text : p.muted,
+                  DT_LEFT | DT_SINGLELINE | DT_VCENTER);
         return;
     }
 
-    if (id == IDC_LANG || id == IDC_THEME) {
+    if (id == IDC_LANG || id == IDC_THEME || id == IDC_LOGOUT) {
+        const COLORREF bg = hot ? p.hover : p.sideActive;
         fill_rect(dc, r, p.side);
-        fill_round(dc, r, px(9), hot ? p.hover : p.sideActive);
+        fill_round(dc, r, px(9), bg);
         stroke_round(dc, r, px(9), p.edge);
-        const std::wstring label = id == IDC_LANG ? (a->lang == "zh" ? L"中文" : L"EN")
-                                                  : (a->dark ? tr("set.dark") : tr("set.light"));
-        draw_text(dc, label, r, a->fontSmall, p.text, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+        RECT icon{r.left + px(14), r.top + px(7), r.right - px(14), r.bottom - px(7)};
+        if (id == IDC_LANG) {
+            draw_text(dc, a->lang == "zh" ? L"文" : L"A", r, a->fontButton, p.text,
+                      DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+        } else if (id == IDC_THEME) {
+            if (a->dark) draw_moon_icon(dc, icon, p.text, bg);
+            else draw_sun_icon(dc, icon, p.text);
+        } else {
+            draw_logout_icon(dc, icon, p.muted);
+        }
+        return;
+    }
+
+    if (id == IDC_T_TSA || id == IDC_T_LANG || id == IDC_T_THEME || id == IDC_K_CRED) {
+        const bool enabled = IsWindowEnabled(item->hwndItem) != FALSE;
+        fill_round(dc, r, px(9), p.input);
+        stroke_round(dc, r, px(9), hot ? p.accent : p.inputEdge);
+        RECT text_rect{r.left + px(12), r.top, r.right - px(30), r.bottom};
+        draw_text(dc, dropdown_label(id), text_rect, a->fontSmall, enabled ? p.text : p.muted2,
+                  DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
+        const int mid = (r.top + r.bottom) / 2;
+        RECT chevron{r.right - px(26), mid - px(4), r.right - px(14), mid + px(4)};
+        draw_chevron(dc, chevron, enabled ? p.muted : p.muted2);
         return;
     }
 
@@ -1897,14 +2128,13 @@ void draw_ownerdraw(const DRAWITEMSTRUCT *item) {
     }
 
     if (id == IDC_S_VERIFY || id == IDC_K_USE || id == IDC_K_CREATE || id == IDC_T_RELOGIN || id == IDC_T_LICENSE ||
-        id == IDC_T_PROJECT || id == IDC_L_LOGIN || id == IDC_K_BACK) {
+        id == IDC_T_PROJECT || id == IDC_L_LOGIN) {
         const bool primary = id == IDC_L_LOGIN || id == IDC_K_CREATE || id == IDC_K_USE;
         std::wstring label;
         switch (id) {
         case IDC_S_VERIFY: label = tr("sign.verify"); break;
         case IDC_K_USE: label = tr("keys.use"); break;
         case IDC_K_CREATE: label = tr("keys.create"); break;
-        case IDC_K_BACK: label = tr("keys.back"); break;
         case IDC_L_LOGIN: label = tr("login.submit"); break;
         case IDC_T_RELOGIN: label = tr("set.relogin"); break;
         case IDC_T_LICENSE: label = tr("set.license"); break;
@@ -1966,7 +2196,6 @@ void apply_language_to_controls() {
     if (a->lgLogin) SetWindowTextW(a->lgLogin, tr("login.submit").c_str());
     if (a->keyUse) SetWindowTextW(a->keyUse, tr("keys.use").c_str());
     if (a->keyCreate) SetWindowTextW(a->keyCreate, tr("keys.create").c_str());
-    if (a->keyBack) SetWindowTextW(a->keyBack, tr("keys.back").c_str());
     if (a->signBtn) SetWindowTextW(a->signBtn, tr("sign.start").c_str());
     if (a->verifyBtn) SetWindowTextW(a->verifyBtn, tr("sign.verify").c_str());
     if (a->addBtn) SetWindowTextW(a->addBtn, tr("sign.add").c_str());
@@ -1979,6 +2208,20 @@ void apply_language_to_controls() {
     if (a->stShowKey) {
         const std::wstring label = a->show_key ? tr("common.hide") : tr("common.show");
         SetWindowTextW(a->stShowKey, label.c_str());
+    }
+    if (a->tooltip) {
+        auto set_tip = [a](HWND control, const std::wstring &text) {
+            if (!control) return;
+            TOOLINFOW info{};
+            info.cbSize = sizeof(info);
+            info.hwnd = a->window;
+            info.uId = reinterpret_cast<UINT_PTR>(control);
+            info.lpszText = const_cast<LPWSTR>(text.c_str());
+            SendMessageW(a->tooltip, TTM_UPDATETIPTEXTW, 0, reinterpret_cast<LPARAM>(&info));
+        };
+        set_tip(a->langBtn, tr("tool.lang"));
+        set_tip(a->themeBtn, tr("tool.theme"));
+        set_tip(a->logoutBtn, tr("tool.logout"));
     }
     if (a->status.empty()) a->status = tr("sign.ready");
 }
@@ -2001,6 +2244,7 @@ void apply_theme_choice() {
     if (!a) return;
     const std::string &theme = a->settings.theme;
     a->dark = theme == "dark" ? true : theme == "light" ? false : is_dark_system();
+    close_dropdown();
     refresh_theme_selectors();
 }
 
@@ -2008,17 +2252,245 @@ void apply_lang_choice() {
     App *a = g_app;
     if (!a) return;
     a->lang = a->settings.lang.empty() ? system_lang() : a->settings.lang;
-    if (a->stTheme) {
-        const int index = static_cast<int>(SendMessageW(a->stTheme, CB_GETCURSEL, 0, 0));
-        SendMessageW(a->stTheme, CB_RESETCONTENT, 0, 0);
-        SendMessageW(a->stTheme, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(tr("set.auto").c_str()));
-        SendMessageW(a->stTheme, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(tr("set.dark").c_str()));
-        SendMessageW(a->stTheme, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(tr("set.light").c_str()));
-        SendMessageW(a->stTheme, CB_SETCURSEL, index < 0 ? 0 : index, 0);
-    }
     if (a->status.empty() || a->phase == 0) a->status = tr("sign.ready");
     apply_language_to_controls();
     InvalidateRect(a->window, nullptr, TRUE);
+}
+
+/* -------------------------------- 下拉框 --------------------------------- */
+
+struct DropMenu {
+    int source = 0;
+    std::vector<std::wstring> items;
+};
+
+DropMenu g_menu;
+HWND g_popup = nullptr;
+HWND g_popupList = nullptr;
+
+std::vector<std::wstring> dropdown_items(int id) {
+    std::vector<std::wstring> items;
+    App *a = g_app;
+    if (!a) return items;
+    if (id == IDC_T_TSA) {
+        for (const auto &tsa : builtin_tsa()) items.push_back(widen(tsa.name));
+    } else if (id == IDC_T_LANG) {
+        items.push_back(L"中文");
+        items.push_back(L"English");
+    } else if (id == IDC_T_THEME) {
+        items.push_back(tr("set.auto"));
+        items.push_back(tr("set.dark"));
+        items.push_back(tr("set.light"));
+    } else if (id == IDC_K_CRED) {
+        for (const auto &credential : a->credentials) {
+            std::wstring label = widen(credential.label);
+            if (label.empty()) label = widen(credential.id);
+            if (!credential.email.empty() && credential.email != credential.label) {
+                if (!label.empty()) label += L" · ";
+                label += widen(credential.email);
+            }
+            items.push_back(label);
+        }
+    }
+    return items;
+}
+
+int dropdown_index(int id) {
+    App *a = g_app;
+    if (!a) return 0;
+    if (id == IDC_T_TSA) {
+        const auto &list = builtin_tsa();
+        for (size_t i = 0; i < list.size(); ++i) {
+            if (list[i].name == a->settings.tsa_name) return static_cast<int>(i);
+        }
+        return 0;
+    }
+    if (id == IDC_T_LANG) return a->lang == "en" ? 1 : 0;
+    if (id == IDC_T_THEME) return a->settings.theme == "dark" ? 1 : a->settings.theme == "light" ? 2 : 0;
+    return a->cred_index;
+}
+
+std::wstring dropdown_label(int id) {
+    const std::vector<std::wstring> items = dropdown_items(id);
+    const int index = dropdown_index(id);
+    if (index >= 0 && static_cast<size_t>(index) < items.size()) return items[static_cast<size_t>(index)];
+    return L"—";
+}
+
+void close_dropdown() {
+    if (g_popup) ShowWindow(g_popup, SW_HIDE);
+    g_menu.source = 0;
+}
+
+void dropdown_apply(int id, int index) {
+    App *a = g_app;
+    if (!a) return;
+    if (id == IDC_K_CRED) {
+        a->cred_index = index < 0 ? 0 : index;
+        return;
+    }
+    if (id == IDC_T_TSA) {
+        const auto &list = builtin_tsa();
+        if (index >= 0 && static_cast<size_t>(index) < list.size()) {
+            a->settings.tsa_name = list[static_cast<size_t>(index)].name;
+            a->settings.tsa_url.clear();
+        }
+    } else if (id == IDC_T_LANG) {
+        a->settings.lang = index == 1 ? "en" : "zh";
+        apply_lang_choice();
+    } else if (id == IDC_T_THEME) {
+        a->settings.theme = index == 1 ? "dark" : index == 2 ? "light" : "auto";
+        apply_theme_choice();
+    }
+    save_settings_silent();
+    InvalidateRect(a->window, nullptr, FALSE);
+}
+
+void draw_dropdown_item(const DRAWITEMSTRUCT *item) {
+    if (!item || !g_app) return;
+    const Palette &p = pal();
+    RECT r = item->rcItem;
+    const bool selected = (item->itemState & ODS_SELECTED) != 0;
+    fill_rect(item->hDC, r, selected ? p.hover : p.card);
+    if (item->itemID == static_cast<UINT>(-1)) return;
+    wchar_t buffer[512] = {0};
+    SendMessageW(item->hwndItem, LB_GETTEXT, item->itemID, reinterpret_cast<LPARAM>(buffer));
+    draw_text(item->hDC, buffer, RECT{r.left + px(12), r.top, r.right - px(10), r.bottom}, g_app->fontSmall, p.text,
+              DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
+}
+
+LRESULT CALLBACK dropdown_list_proc(HWND control, UINT message, WPARAM wparam, LPARAM lparam, UINT_PTR, DWORD_PTR) {
+    if (message == WM_KILLFOCUS && g_popup) {
+        PostMessageW(g_popup, WM_CLOSE, 0, 0);
+    }
+    return DefSubclassProc(control, message, wparam, lparam);
+}
+
+LRESULT CALLBACK dropdown_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
+    switch (message) {
+    case WM_PAINT: {
+        PAINTSTRUCT ps{};
+        HDC dc = BeginPaint(window, &ps);
+        RECT client{};
+        GetClientRect(window, &client);
+        fill_rect(dc, client, pal().card);
+        HPEN pen = CreatePen(PS_SOLID, 1, pal().inputEdge);
+        HGDIOBJ oldPen = SelectObject(dc, pen);
+        HGDIOBJ oldBrush = SelectObject(dc, GetStockObject(NULL_BRUSH));
+        Rectangle(dc, client.left, client.top, client.right, client.bottom);
+        SelectObject(dc, oldBrush);
+        SelectObject(dc, oldPen);
+        DeleteObject(pen);
+        EndPaint(window, &ps);
+        return 0;
+    }
+    case WM_ERASEBKGND:
+        return 1;
+    case WM_MOUSEACTIVATE:
+        return MA_NOACTIVATE;
+    case WM_CTLCOLORLISTBOX:
+        SetTextColor(reinterpret_cast<HDC>(wparam), pal().text);
+        SetBkColor(reinterpret_cast<HDC>(wparam), pal().card);
+        return reinterpret_cast<LRESULT>(g_app ? g_app->brushCard : GetStockObject(WHITE_BRUSH));
+    case WM_DRAWITEM:
+        draw_dropdown_item(reinterpret_cast<const DRAWITEMSTRUCT *>(lparam));
+        return TRUE;
+    case WM_COMMAND: {
+        const int code = HIWORD(wparam);
+        if (code == LBN_SELCHANGE && g_popupList) {
+            const int index = static_cast<int>(SendMessageW(g_popupList, LB_GETCURSEL, 0, 0));
+            const int source = g_menu.source;
+            close_dropdown();
+            dropdown_apply(source, index);
+            if (g_app) SetFocus(g_app->window);
+            return 0;
+        }
+        break;
+    }
+    case WM_KEYDOWN:
+        if (wparam == VK_ESCAPE) {
+            close_dropdown();
+            if (g_app) SetFocus(g_app->window);
+            return 0;
+        }
+        break;
+    case WM_CLOSE:
+        close_dropdown();
+        return 0;
+    default:
+        break;
+    }
+    return DefWindowProcW(window, message, wparam, lparam);
+}
+
+void ensure_popup(HWND owner) {
+    if (g_popup) return;
+    HINSTANCE instance = GetModuleHandleW(nullptr);
+    WNDCLASSEXW klass{};
+    klass.cbSize = sizeof(klass);
+    klass.lpfnWndProc = dropdown_proc;
+    klass.hInstance = instance;
+    klass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    klass.lpszClassName = L"CertumSignerDropDown";
+    RegisterClassExW(&klass);
+    g_popup = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, L"CertumSignerDropDown", L"", WS_POPUP, 0, 0, 10, 10,
+                              owner, nullptr, instance, nullptr);
+    g_popupList = CreateWindowExW(0, L"LISTBOX", L"",
+                                  WS_CHILD | WS_VISIBLE | LBS_OWNERDRAWFIXED | LBS_NOTIFY | LBS_HASSTRINGS | WS_VSCROLL,
+                                  0, 0, 10, 10, g_popup, reinterpret_cast<HMENU>(1), instance, nullptr);
+    SendMessageW(g_popupList, WM_SETFONT, reinterpret_cast<WPARAM>(g_app->fontSmall), TRUE);
+    SendMessageW(g_popupList, LB_SETITEMHEIGHT, 0, px(30));
+    SetWindowSubclass(g_popupList, dropdown_list_proc, 3, 0);
+}
+
+void dropdown_open(int id) {
+    App *a = g_app;
+    if (!a) return;
+    HWND button = GetDlgItem(a->window, id);
+    if (!button || !IsWindowVisible(button)) return;
+
+    if (g_popup && IsWindowVisible(g_popup) && g_menu.source == id) {
+        close_dropdown();
+        return;
+    }
+    std::vector<std::wstring> items = dropdown_items(id);
+    if (items.empty()) return;
+
+    ensure_popup(a->window);
+    g_menu.source = id;
+    g_menu.items = items;
+
+    SendMessageW(g_popupList, LB_RESETCONTENT, 0, 0);
+    for (const auto &item : items) {
+        SendMessageW(g_popupList, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(item.c_str()));
+    }
+    const int index = dropdown_index(id);
+    SendMessageW(g_popupList, LB_SETCURSEL, index < 0 ? 0 : index, 0);
+
+    RECT anchor{};
+    GetWindowRect(button, &anchor);
+    const int width = anchor.right - anchor.left;
+    const int item_height = px(30);
+    int height = static_cast<int>(items.size()) * item_height + px(8);
+    const int max_height = px(324);
+    if (height > max_height) height = max_height;
+
+    int x = anchor.left;
+    int y = anchor.bottom + px(4);
+    MONITORINFO info{};
+    info.cbSize = sizeof(info);
+    if (GetMonitorInfoW(MonitorFromWindow(a->window, MONITOR_DEFAULTTONEAREST), &info)) {
+        if (y + height > info.rcWork.bottom) y = anchor.top - height - px(4);
+        if (x + width > info.rcWork.right) x = info.rcWork.right - width;
+        if (x < info.rcWork.left) x = info.rcWork.left;
+        if (y < info.rcWork.top) y = info.rcWork.top;
+    }
+
+    MoveWindow(g_popup, x, y, width, height, FALSE);
+    MoveWindow(g_popupList, px(1), px(4), width - px(2), height - px(8), TRUE);
+    ShowWindow(g_popup, SW_SHOWNA);
+    SetFocus(g_popupList);
+    InvalidateRect(g_popup, nullptr, TRUE);
 }
 
 void setup_controls(HWND window) {
@@ -2029,9 +2501,11 @@ void setup_controls(HWND window) {
                              LBS_HASSTRINGS;
 
     a->navSign = make_control(L"BUTTON", L"", button, 0, rect(0, 0, 10, 10), IDC_NAV_SIGN, window, a->fontButton);
+    a->navKeys = make_control(L"BUTTON", L"", button, 0, rect(0, 0, 10, 10), IDC_NAV_KEYS, window, a->fontButton);
     a->navSettings = make_control(L"BUTTON", L"", button, 0, rect(0, 0, 10, 10), IDC_NAV_SETTINGS, window, a->fontButton);
     a->langBtn = make_control(L"BUTTON", L"", button, 0, rect(0, 0, 10, 10), IDC_LANG, window, a->fontSmall);
     a->themeBtn = make_control(L"BUTTON", L"", button, 0, rect(0, 0, 10, 10), IDC_THEME, window, a->fontSmall);
+    a->logoutBtn = make_control(L"BUTTON", L"", button, 0, rect(0, 0, 10, 10), IDC_LOGOUT, window, a->fontSmall);
 
     a->lgServer = make_control(L"EDIT", L"", edit_style, 0, rect(0, 0, 10, 10), IDC_L_SERVER, window, a->fontBody);
     a->lgUser = make_control(L"EDIT", L"", edit_style, 0, rect(0, 0, 10, 10), IDC_L_USER, window, a->fontBody);
@@ -2042,11 +2516,8 @@ void setup_controls(HWND window) {
     a->keyList = make_control(L"LISTBOX", L"", list_style, 0, rect(0, 0, 10, 10), IDC_K_LIST, window, a->fontBody);
     a->keyUse = make_control(L"BUTTON", L"", button, 0, rect(0, 0, 10, 10), IDC_K_USE, window, a->fontButton);
     a->keyName = make_control(L"EDIT", L"", edit_style, 0, rect(0, 0, 10, 10), IDC_K_NAME, window, a->fontBody);
-    a->keyCred = make_control(L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL |
-                                                  WS_TABSTOP,
-                              0, rect(0, 0, 10, 10), IDC_K_CRED, window, a->fontSmall);
+    a->keyCred = make_control(L"BUTTON", L"", button, 0, rect(0, 0, 10, 10), IDC_K_CRED, window, a->fontSmall);
     a->keyCreate = make_control(L"BUTTON", L"", button, 0, rect(0, 0, 10, 10), IDC_K_CREATE, window, a->fontButton);
-    a->keyBack = make_control(L"BUTTON", L"", button, 0, rect(0, 0, 10, 10), IDC_K_BACK, window, a->fontSmall);
 
     a->drop = make_control(L"BUTTON", L"", button, 0, rect(0, 0, 10, 10), IDC_S_DROP, window, a->fontBody);
     a->list = make_control(L"LISTBOX", L"", list_style, 0, rect(0, 0, 10, 10), IDC_S_LIST, window, a->fontBody);
@@ -2066,16 +2537,10 @@ void setup_controls(HWND window) {
     a->stAlgo256 = make_control(L"BUTTON", L"", button, 0, rect(0, 0, 10, 10), IDC_T_ALGO256, window, a->fontSmall);
     a->stAlgo1 = make_control(L"BUTTON", L"", button, 0, rect(0, 0, 10, 10), IDC_T_ALGO1, window, a->fontSmall);
     a->stTsOn = make_control(L"BUTTON", L"", button, 0, rect(0, 0, 10, 10), IDC_T_TSON, window, a->fontSmall);
-    a->stTsa = make_control(L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL |
-                                                 WS_TABSTOP,
-                            0, rect(0, 0, 10, 10), IDC_T_TSA, window, a->fontSmall);
+    a->stTsa = make_control(L"BUTTON", L"", button, 0, rect(0, 0, 10, 10), IDC_T_TSA, window, a->fontSmall);
     a->stBackup = make_control(L"BUTTON", L"", button, 0, rect(0, 0, 10, 10), IDC_T_BACKUP, window, a->fontSmall);
-    a->stLang = make_control(L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL |
-                                                  WS_TABSTOP,
-                             0, rect(0, 0, 10, 10), IDC_T_LANG, window, a->fontSmall);
-    a->stTheme = make_control(L"COMBOBOX", L"", CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL |
-                                                   WS_TABSTOP,
-                              0, rect(0, 0, 10, 10), IDC_T_THEME, window, a->fontSmall);
+    a->stLang = make_control(L"BUTTON", L"", button, 0, rect(0, 0, 10, 10), IDC_T_LANG, window, a->fontSmall);
+    a->stTheme = make_control(L"BUTTON", L"", button, 0, rect(0, 0, 10, 10), IDC_T_THEME, window, a->fontSmall);
     a->stRelogin = make_control(L"BUTTON", L"", button, 0, rect(0, 0, 10, 10), IDC_T_RELOGIN, window, a->fontButton);
     a->stLicense = make_control(L"BUTTON", L"", button, 0, rect(0, 0, 10, 10), IDC_T_LICENSE, window, a->fontButton);
     a->stProject = make_control(L"BUTTON", L"", button, 0, rect(0, 0, 10, 10), IDC_T_PROJECT, window, a->fontButton);
@@ -2083,14 +2548,23 @@ void setup_controls(HWND window) {
     SendMessageW(a->keyList, LB_SETITEMHEIGHT, 0, px(56));
     SendMessageW(a->list, LB_SETITEMHEIGHT, 0, px(56));
 
-    for (const auto &tsa : builtin_tsa()) {
-        SendMessageW(a->stTsa, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(widen(tsa.name).c_str()));
+    a->tooltip = CreateWindowExW(WS_EX_TOPMOST, TOOLTIPS_CLASSW, nullptr, WS_POPUP | TTS_ALWAYSTIP | TTS_NOPREFIX,
+                                 CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, window, nullptr,
+                                 GetModuleHandleW(nullptr), nullptr);
+    if (a->tooltip) {
+        TOOLINFOW info{};
+        info.cbSize = sizeof(info);
+        info.uFlags = TTF_IDISHWND | TTF_SUBCLASS;
+        info.hwnd = window;
+        HWND buttons[] = {a->langBtn, a->themeBtn, a->logoutBtn};
+        for (HWND btn : buttons) {
+            if (!btn) continue;
+            info.uId = reinterpret_cast<UINT_PTR>(btn);
+            info.lpszText = const_cast<LPWSTR>(L"");
+            SendMessageW(a->tooltip, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&info));
+        }
+        SendMessageW(a->tooltip, TTM_SETMAXTIPWIDTH, 0, px(200));
     }
-    SendMessageW(a->stLang, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"中文"));
-    SendMessageW(a->stLang, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"English"));
-    SendMessageW(a->stTheme, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(tr("set.auto").c_str()));
-    SendMessageW(a->stTheme, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(tr("set.dark").c_str()));
-    SendMessageW(a->stTheme, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(tr("set.light").c_str()));
 }
 
 void load_state_into_controls() {
@@ -2102,31 +2576,10 @@ void load_state_into_controls() {
     if (a->lgUser) SetWindowTextW(a->lgUser, widen(a->settings.username).c_str());
     if (a->keyName) SetWindowTextW(a->keyName, tr("keys.defaultName").c_str());
 
-    int tsa_index = 0;
-    for (size_t i = 0; i < builtin_tsa().size(); ++i) {
-        if (a->settings.tsa_name == builtin_tsa()[i].name) tsa_index = static_cast<int>(i);
+    HWND buttons[] = {a->stTsa, a->stLang, a->stTheme, a->keyCred};
+    for (HWND control : buttons) {
+        if (control) InvalidateRect(control, nullptr, TRUE);
     }
-    if (a->stTsa) SendMessageW(a->stTsa, CB_SETCURSEL, tsa_index, 0);
-
-    const int lang_index = a->settings.lang == "en" ? 1 : a->settings.lang == "zh" ? 0 : (a->lang == "en" ? 1 : 0);
-    if (a->stLang) SendMessageW(a->stLang, CB_SETCURSEL, lang_index, 0);
-
-    const int theme_index = a->settings.theme == "dark" ? 1 : a->settings.theme == "light" ? 2 : 0;
-    if (a->stTheme) SendMessageW(a->stTheme, CB_SETCURSEL, theme_index, 0);
-}
-
-void update_setting_strings() {
-    App *a = g_app;
-    if (!a) return;
-    const int tsa_index = static_cast<int>(SendMessageW(a->stTsa, CB_GETCURSEL, 0, 0));
-    if (tsa_index >= 0 && static_cast<size_t>(tsa_index) < builtin_tsa().size()) {
-        a->settings.tsa_name = builtin_tsa()[static_cast<size_t>(tsa_index)].name;
-        a->settings.tsa_url.clear();
-    }
-    const int lang_index = static_cast<int>(SendMessageW(a->stLang, CB_GETCURSEL, 0, 0));
-    a->settings.lang = lang_index == 1 ? "en" : "zh";
-    const int theme_index = static_cast<int>(SendMessageW(a->stTheme, CB_GETCURSEL, 0, 0));
-    a->settings.theme = theme_index == 1 ? "dark" : theme_index == 2 ? "light" : "auto";
 }
 
 /* --------------------------------- 交互 ---------------------------------- */
@@ -2136,11 +2589,7 @@ void toggle_language() {
     if (!a) return;
     a->settings.lang = a->lang == "zh" ? "en" : "zh";
     apply_lang_choice();
-    if (a->stLang) {
-        const int index = a->settings.lang == "en" ? 1 : 0;
-        SendMessageW(a->stLang, CB_SETCURSEL, index, 0);
-        InvalidateRect(a->stLang, nullptr, TRUE);
-    }
+    if (a->stLang) InvalidateRect(a->stLang, nullptr, TRUE);
     save_settings_silent();
 }
 
@@ -2149,7 +2598,6 @@ void toggle_theme() {
     if (!a) return;
     a->settings.theme = a->dark ? "light" : "dark";
     apply_theme_choice();
-    if (a->stTheme) SendMessageW(a->stTheme, CB_SETCURSEL, a->dark ? 1 : 2, 0);
     save_settings_silent();
 }
 
@@ -2193,13 +2641,18 @@ void handle_command(int id, int code) {
     if (code == BN_CLICKED) {
         switch (id) {
         case IDC_NAV_SIGN: set_page(PAGE_SIGN); return;
+        case IDC_NAV_KEYS: set_page(PAGE_KEYS); return;
         case IDC_NAV_SETTINGS: set_page(PAGE_SETTINGS); return;
         case IDC_LANG: toggle_language(); return;
         case IDC_THEME: toggle_theme(); return;
+        case IDC_LOGOUT: relogin(); return;
         case IDC_L_LOGIN: do_login(); return;
         case IDC_K_USE: use_selected_key(); return;
-        case IDC_K_CREATE: create_key(); return;
-        case IDC_K_BACK: set_page(PAGE_LOGIN); return;
+        case IDC_K_CREATE: create_key(L""); return;
+        case IDC_T_TSA:
+        case IDC_T_LANG:
+        case IDC_T_THEME:
+        case IDC_K_CRED: dropdown_open(id); return;
         case IDC_S_DROP:
         case IDC_S_ADD: pick_files(); return;
         case IDC_S_REMOVE: remove_selected_files(); return;
@@ -2258,25 +2711,6 @@ void handle_command(int id, int code) {
 
     if (id == IDC_L_SERVER || id == IDC_L_USER || id == IDC_L_PASS) {
         if (code == EN_SETFOCUS || code == EN_KILLFOCUS) InvalidateRect(a->window, nullptr, FALSE);
-        return;
-    }
-
-    if (id == IDC_T_TSA || id == IDC_T_LANG || id == IDC_T_THEME) {
-        if (code == CBN_SELCHANGE) {
-            update_setting_strings();
-            if (id == IDC_T_LANG) {
-                // 下拉里提前写好了 settings.lang，这里直接套用
-                apply_lang_choice();
-                if (a->stTheme) {
-                    const int theme_index = a->settings.theme == "dark" ? 1 : a->settings.theme == "light" ? 2 : 0;
-                    SendMessageW(a->stTheme, CB_SETCURSEL, theme_index, 0);
-                }
-            } else if (id == IDC_T_THEME) {
-                apply_theme_choice();
-            }
-            save_settings_silent();
-            InvalidateRect(a->window, nullptr, FALSE);
-        }
         return;
     }
 
@@ -2370,7 +2804,17 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
         }
         return 0;
     }
+    case WM_GETMINMAXINFO: {
+        auto *info = reinterpret_cast<MINMAXINFO *>(lparam);
+        if (info) {
+            // 低于设计尺寸会挤坏布局，这里兜个底
+            info->ptMinTrackSize.x = px(kBaseWidth);
+            info->ptMinTrackSize.y = px(kBaseHeight);
+        }
+        return 0;
+    }
     case WM_SIZE:
+        layout_controls();
         InvalidateRect(window, nullptr, TRUE);
         return 0;
     case WM_ERASEBKGND:
@@ -2387,9 +2831,6 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
         if (!item) return TRUE;
         if (item->CtlID == IDC_S_LIST) draw_list_item(item);
         else if (item->CtlID == IDC_K_LIST) draw_key_item(item);
-        else if (item->CtlID == IDC_T_TSA || item->CtlID == IDC_T_LANG || item->CtlID == IDC_T_THEME ||
-                 item->CtlID == IDC_K_CRED)
-            draw_combo_item(item);
         else draw_ownerdraw(item);
         return TRUE;
     }

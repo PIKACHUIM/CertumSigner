@@ -39,6 +39,7 @@ function nav(t: Translate): NavItem[] {
     { href: "/admin/users", label: t("nav.users"), icon: navIcon("users") },
     { href: "/admin/credentials", label: t("nav.credentials"), icon: navIcon("credentials") },
     { href: "/admin/keys", label: t("nav.keys"), icon: navIcon("keys") },
+    { href: "/admin/logs", label: t("nav.logs"), icon: navIcon("logs") },
   ];
 }
 
