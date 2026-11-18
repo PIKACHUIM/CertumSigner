@@ -11,7 +11,7 @@
     {
       // wrangler kv namespace create CERTUM_KV
       "binding": "CERTUM_KV",
-      "id": "0000000000000000000000000000000000"
+      "id": "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
     }
   ],
   "vars": {
