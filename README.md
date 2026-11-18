@@ -302,7 +302,7 @@ npx wrangler secret put RESEND_API_KEY   # 可选，开启注册/找回密码时
 
 ## 验证状态
 
-- Worker：`npx tsc --noEmit` 通过；`npm test` 33 项通过（TOTP 命中 RFC 6238 向量、
+- Worker：`npx tsc --noEmit` 通过；`npm test` 34 项通过（TOTP 命中 RFC 6238 向量、
   multipart 解析、编码/哈希、KV 存储与口令哈希、管理员账号初始化/改口令、运行时配置的默认值/
   环境变量回退/KV 覆盖）。
 - 新增功能实测（`wrangler dev`，2026-11）：主页下载区、双栏登录页与图形验证码

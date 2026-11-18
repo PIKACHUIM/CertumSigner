@@ -306,7 +306,7 @@ At runtime the email and seed come from the KV credential, so `CERTUM_*` is no l
 
 ## Verification
 
-- Worker: `npx tsc --noEmit` clean; `npm test` 33 passing (TOTP against RFC 6238 vectors, multipart,
+- Worker: `npx tsc --noEmit` clean; `npm test` 34 passing (TOTP against RFC 6238 vectors, multipart,
   encoding/hashing, KV storage, password hashing, admin account setup/password change, runtime config
   defaults / env fallback / KV override).
 - New features exercised under `wrangler dev` (Nov 2026): home page downloads, two-column sign-in with

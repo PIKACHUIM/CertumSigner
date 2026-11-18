@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import type { Env } from "../src/types.ts";
 import { DEFAULT_TSA_UPSTREAM, readConfig, writeConfig } from "../src/store/config.ts";
-import { DEFAULT_API_BASE } from "../src/certum/config.ts";
+import { DEFAULT_API_BASE, resolveEndpoints } from "../src/certum/config.ts";
 
 function memoryKV() {
   const store = new Map<string, string>();
@@ -82,4 +82,15 @@ test("证书链 PEM 的换行原样保存", async () => {
   const pem = "-----BEGIN CERTIFICATE-----\nAAA\n-----END CERTIFICATE-----";
   await writeConfig(env, { certumChainPem: pem });
   assert.equal((await readConfig(env)).certumChainPem, pem);
+});
+
+test("resolveEndpoints 用默认值或自定义 apiBase 拼出同样的路径", () => {
+  const base = resolveEndpoints({});
+  assert.equal(base.apiBase, DEFAULT_API_BASE);
+  assert.equal(base.tokenUrl, `${DEFAULT_API_BASE}/idp/oauth2.0/accessToken`);
+  assert.equal(base.loginUrl, `${DEFAULT_API_BASE}/idp/login`);
+
+  const custom = resolveEndpoints({ apiBase: "https://api.example.com/" });
+  assert.equal(custom.apiBase, "https://api.example.com");
+  assert.equal(custom.authorizeUrl, "https://api.example.com/idp/oauth2.0/authorize");
 });
