@@ -1,13 +1,23 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { hashPassword, verifyPassword } from "../src/lib/passwords.ts";
+import { PASSWORD_HASH_ITERATIONS, hashPassword, verifyPassword } from "../src/lib/passwords.ts";
 import { maskOtpUri, normalizeOtpInput } from "../src/store/credentials.ts";
+
+test("Workers 运行时对 PBKDF2 迭代次数有 10 万硬上限", () => {
+  assert.ok(PASSWORD_HASH_ITERATIONS <= 100_000, "超过 100,000 会直接抛 NotSupportedError");
+});
 
 test("PBKDF2 口令哈希可验证，错误口令被拒绝", async () => {
   const stored = await hashPassword("correct horse battery staple");
-  assert.match(stored, /^pbkdf2\$150000\$[A-Za-z0-9+/=]+\$[A-Za-z0-9+/=]+$/);
+  assert.match(stored, new RegExp(`^pbkdf2\\$${PASSWORD_HASH_ITERATIONS}\\$[A-Za-z0-9+/=]+\\$[A-Za-z0-9+/=]+$`));
   assert.equal(await verifyPassword("correct horse battery staple", stored), true);
   assert.equal(await verifyPassword("wrong password", stored), false);
+});
+
+test("迭代次数不同的哈希一律校验失败（不做旧格式兼容）", async () => {
+  const stored = await hashPassword("legacy-password-123");
+  const upgraded = stored.replace(`$${PASSWORD_HASH_ITERATIONS}$`, "$150000$");
+  assert.equal(await verifyPassword("legacy-password-123", upgraded), false);
 });
 
 test("同一口令每次哈希都不同（随机盐）", async () => {

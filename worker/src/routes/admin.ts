@@ -770,7 +770,7 @@ secure.get("/api/stats", async (c) => {
       totalSigns: key.totalSigns,
       lastUsedAt: key.lastUsedAt ?? null,
       userId: key.userId ?? null,
-      credentialId: key.credentialId ?? null,
+      credentialId: key.credentialId,
     })),
   });
 });

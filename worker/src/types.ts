@@ -67,7 +67,7 @@ export interface UserRecord {
   passwordHash: string;
   /** 注册/找回密码用的邮箱；管理员创建的用户可以没有 */
   email?: string;
-  /** 通过邮件验证过邮箱；老用户没有该字段按已验证处理 */
+  /** 通过邮件验证过邮箱；未设置时按已验证处理（管理员直接建的账号） */
   emailVerified?: boolean;
   enabled: boolean;
   expiresAt?: number;
@@ -106,7 +106,7 @@ export interface ApiKeyRecord {
   /** 归属用户；管理员建的空表示“平台 Key” */
   userId?: string;
   /** 绑定到哪套 Certum 凭据 */
-  credentialId?: string;
+  credentialId: string;
 }
 
 export interface SignLogRecord {

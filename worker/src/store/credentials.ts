@@ -141,9 +141,3 @@ export async function deleteCredential(env: Env, id: string): Promise<boolean> {
   return true;
 }
 
-/** 第一条启用中的凭据，用于旧 Key（没有绑定 credentialId）的兼容路径 */
-export async function pickDefaultCredential(env: Env): Promise<CredentialRecord | null> {
-  const all = await listCredentials(env);
-  return all.find((item) => item.enabled) ?? null;
-}
-

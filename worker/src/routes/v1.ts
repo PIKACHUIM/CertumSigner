@@ -17,7 +17,7 @@ import { chainPem, getCardFor, signDigestsFor } from "../certum/session";
 import { base64Decode } from "../lib/pem";
 import { normalizeHex, randomId, toHex } from "../lib/encoding";
 import { bumpDailyUsage, bumpUserDailyUsage, getDailyUsage, getUserDailyUsage, touchApiKey, verifyApiKey } from "../store/keys";
-import { getCredential, pickDefaultCredential } from "../store/credentials";
+import { getCredential } from "../store/credentials";
 import { getUser } from "../store/users";
 import { readStats, recordSign } from "../store/stats";
 import { readConfig } from "../store/config.ts";
@@ -51,10 +51,8 @@ v1.use("*", async (c, next) => {
     return c.json({ ok: false, error: { code: "unauthorized", message: "API Key 无效、已停用或已过期" } }, 401);
   }
 
-  // 每把 Key 绑定一套 Certum 凭据；老 Key 没有绑定就退回第一条启用中的凭据
-  const credential = record.credentialId
-    ? await getCredential(c.env, record.credentialId)
-    : await pickDefaultCredential(c.env);
+  // 每把 Key 绑定一套 Certum 凭据，没有兜底
+  const credential = await getCredential(c.env, record.credentialId);
   if (!credential) {
     return c.json(
       { ok: false, error: { code: "credential_missing", message: "该 Key 没有绑定可用的 Certum 凭据，请联系管理员" } },

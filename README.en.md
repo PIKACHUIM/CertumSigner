@@ -275,11 +275,16 @@ At runtime the Certum email and TOTP seed come from the KV credential; no `CERTU
 - **API keys are stored as SHA-256 hashes only**; the secret is shown once and deleted after 5 minutes.
   Re-issuing (`/reveal`) deletes the old hash and returns a new secret. Keys are bound to `userId` +
   `credentialId`; disabling a user or credential invalidates them immediately.
-- **Passwords** use salted PBKDF2-SHA256 (150k iterations); the administrator account stores only a
+- **Passwords** use salted PBKDF2-HMAC-SHA256 (10k iterations); the administrator account stores only a
   PBKDF2 hash too (10+ characters). User sessions last 7 days, admin sessions 12 hours, both revocable in
   KV. Writes check CSRF, logins are rate limited per IP (8 failures per 10 minutes; 8 per 10 minutes for
   the client API). `/admin/setup` closes itself once the account exists — **before that, whoever opens
   `/admin` first can create the account**, so finish setup right after deploying.
+  The iteration count is fixed at 10k: Workers caps PBKDF2 at 100,000 iterations (above that it throws
+  `iteration counts above 100000 are not supported`), and the Free plan only allows 10 ms of CPU —
+  10k iterations cost roughly 2–3 ms while 100k is closer to 23 ms. Hashes record the count but
+  verification accepts 10k only; anything else is treated as a wrong password (no legacy-format
+  fallback). Changing the constant invalidates every stored hash.
 - The signing API is strict: digest length must match the algorithm (40 / 64 / 96 / 128 hex chars), at
   most 16 digests per call, with per-key and per-user daily quotas.
 - The client verifies the returned signature with the certificate's public key before writing the file.
@@ -300,9 +305,10 @@ At runtime the Certum email and TOTP seed come from the KV credential; no `CERTU
 
 ## Verification
 
-- Worker: `npx tsc --noEmit` clean; `npm test` 33 passing (TOTP against RFC 6238 vectors, multipart,
-  encoding/hashing, KV storage, password hashing, admin account setup/password change, runtime config
-  defaults / save and read back).
+- Worker: `npx tsc --noEmit` clean; `npm test` 35 passing (TOTP against RFC 6238 vectors, multipart,
+  encoding/hashing, KV storage, password hashing including the 100k iteration cap guard and rejection of
+  other iteration counts, admin account setup/password change, runtime config defaults / save and read
+  back).
 - New features exercised under `wrangler dev` (Nov 2026): home page downloads, two-column sign-in with
   captcha (wrong code → 401 and a new image, refresh button issues a new id, password show/hide),
   persisted settings toggles, registration reporting a clear error without Resend, email verification

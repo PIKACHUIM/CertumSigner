@@ -15,7 +15,7 @@ export interface CreateKeyInput {
   /** 归属用户；管理员建的“平台 Key”留空 */
   userId?: string;
   /** 绑定哪套 Certum 凭据 */
-  credentialId?: string;
+  credentialId: string;
 }
 
 export interface CreatedKey {

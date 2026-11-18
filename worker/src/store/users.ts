@@ -3,7 +3,7 @@
  */
 import type { Env, UserRecord } from "../types";
 import { randomId } from "../lib/encoding.ts";
-import { hashPassword, verifyPassword } from "../lib/passwords.ts";
+import { DUMMY_PASSWORD_HASH, hashPassword, verifyPassword } from "../lib/passwords.ts";
 
 const PREFIX = "user:";
 const NAME_PREFIX = "uname:";
@@ -75,18 +75,12 @@ export async function createUser(env: Env, input: CreateUserInput): Promise<User
   return record;
 }
 
-function normalize(record: UserRecord): UserRecord {
-  if (typeof record.dailyQuota !== "number" || !Number.isFinite(record.dailyQuota)) record.dailyQuota = 0;
-  if (!Array.isArray(record.credentialIds)) record.credentialIds = [];
-  return record;
-}
-
 export async function listUsers(env: Env): Promise<UserRecord[]> {
   const list = await env.CERTUM_KV.list({ prefix: PREFIX, limit: 1000 });
   const records: UserRecord[] = [];
   for (const item of list.keys) {
     const record = await env.CERTUM_KV.get<UserRecord>(item.name, "json");
-    if (record) records.push(normalize(record));
+    if (record) records.push(record);
   }
   return records.sort((a, b) => a.createdAt - b.createdAt);
 }
@@ -94,7 +88,7 @@ export async function listUsers(env: Env): Promise<UserRecord[]> {
 export async function getUser(env: Env, id: string): Promise<UserRecord | null> {
   if (!id) return null;
   const record = await env.CERTUM_KV.get<UserRecord>(`${PREFIX}${id}`, "json");
-  return record ? normalize(record) : null;
+  return record ?? null;
 }
 
 export async function findUserByUsername(env: Env, username: string): Promise<UserRecord | null> {
@@ -124,8 +118,6 @@ export function userExpired(user: UserRecord, now = Date.now()): boolean {
   return !!user.expiresAt && user.expiresAt <= now;
 }
 
-const DUMMY_HASH = "pbkdf2$150000$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
-
 export type UserAuthResult =
   | { status: "ok"; user: UserRecord }
   | { status: "unverified" }
@@ -142,7 +134,7 @@ export async function authenticateUserDetailed(
 ): Promise<UserAuthResult> {
   const user = await findUserByUsername(env, username);
   if (!user) {
-    await verifyPassword(password, DUMMY_HASH);
+    await verifyPassword(password, DUMMY_PASSWORD_HASH);
     return { status: "bad" };
   }
   if (!(await verifyPassword(password, user.passwordHash))) return { status: "bad" };

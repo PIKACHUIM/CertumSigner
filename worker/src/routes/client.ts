@@ -25,7 +25,7 @@ interface KeyView {
   id: string;
   name: string;
   prefix: string;
-  credentialId?: string;
+  credentialId: string;
   enabled: boolean;
   dailyQuota: number;
   createdAt: number;
@@ -42,9 +42,9 @@ function keyView(record: ApiKeyRecord): KeyView {
     id: record.id,
     name: record.name,
     prefix: record.prefix,
-    ...(record.credentialId ? { credentialId: record.credentialId } : {}),
+    credentialId: record.credentialId,
     enabled: record.enabled,
-    dailyQuota: record.dailyQuota ?? 0,
+    dailyQuota: record.dailyQuota,
     createdAt: record.createdAt,
   };
 }
