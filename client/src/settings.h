@@ -27,6 +27,8 @@ struct Settings {
     std::vector<std::string> algorithms{"sha256"};
     bool timestamp = true;
     bool backup = false;
+    /** 签名页的「跳过已有签名」，默认勾选 */
+    bool skip_signed = true;
     /** zh | en；空 = 跟随系统语言 */
     std::string lang;
     /** auto | dark | light */

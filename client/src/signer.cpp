@@ -95,8 +95,9 @@ bool Signer::prepare(std::string &err) {
     return adopt_certificate(remote.pem, remote.chain, remote.serial, err);
 }
 
-bool Signer::sign_file(const std::string &path, std::string &err) {
+bool Signer::sign_file(const std::string &path, std::string &err, bool *skipped) {
     err.clear();
+    if (skipped) *skipped = false;
     if (certificate_pem_.empty()) {
         err = "内部错误：签名前没有调用 prepare()";
         return false;
@@ -111,6 +112,13 @@ bool Signer::sign_file(const std::string &path, std::string &err) {
     }
 
     const std::string name = file_name(path);
+
+    if (options.skip_signed && pe::has_signature(path)) {
+        if (skipped) *skipped = true;
+        write("跳过（文件已有签名）：" + name);
+        return true;
+    }
+
     const std::vector<std::string> algorithms = effective_algorithms(options.algorithms);
 
     // 时间戳代理与鉴权头：每种算法各要一次时间戳，提前算好
@@ -118,8 +126,8 @@ bool Signer::sign_file(const std::string &path, std::string &err) {
     HttpHeaders auth;
     if (!options.api_key.empty()) auth.emplace_back("Authorization", "Bearer " + options.api_key);
 
-    std::vector<std::string> blobs;
-    blobs.reserve(algorithms.size());
+    std::vector<Pkcs7Request> requests;
+    requests.reserve(algorithms.size());
 
     for (const std::string &algorithm : algorithms) {
         const std::string label = digest::display_name(algorithm);
@@ -222,11 +230,20 @@ bool Signer::sign_file(const std::string &path, std::string &err) {
         request.algorithm = algorithm;
         request.signature = signature;
         request.timestamp_token = timestamp_token;
-
-        std::string pkcs7 = build_pkcs7(request, err);
-        if (pkcs7.empty()) return false;
-        blobs.push_back(std::move(pkcs7));
+        requests.push_back(std::move(request));
     }
+
+    // Authenticode 只看证书表里的第一条记录，多个摘要算法不能各写一条：
+    // 第一个算法做外层签名，其余算法作为嵌套签名（SPC_NESTED_SIGNATURE）放进它的未认证属性。
+    Pkcs7Request outer = requests.front();
+    for (size_t i = 1; i < requests.size(); i++) {
+        std::string nested = build_pkcs7(requests[i], err);
+        if (nested.empty()) return false;
+        outer.nested.push_back(std::move(nested));
+    }
+
+    std::string pkcs7 = build_pkcs7(outer, err);
+    if (pkcs7.empty()) return false;
 
     if (options.backup) {
         const std::string backup = path + ".orig";
@@ -244,7 +261,7 @@ bool Signer::sign_file(const std::string &path, std::string &err) {
         }
     }
 
-    if (!pe::embed(path, blobs, err)) return false;
+    if (!pe::embed(path, pkcs7, err)) return false;
 
     std::string joined;
     for (const std::string &algorithm : algorithms) {

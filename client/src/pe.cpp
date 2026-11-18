@@ -192,17 +192,17 @@ bool authentihash(const std::string &path, const std::string &algorithm, std::st
 
 namespace {
 
-/** 追加一个 WIN_CERTIFICATE（8 字节头 + PKCS#7，补齐到 8 字节对齐） */
-void append_certificate(std::string &data, const std::string &pkcs7, size_t &total) {
+/** 追加一个 WIN_CERTIFICATE（8 字节头 + PKCS#7，补齐到 8 字节对齐），返回写入的字节数 */
+size_t append_certificate(std::string &data, const std::string &pkcs7) {
     const size_t entry_total = 8 + pkcs7.size();
     const size_t padded = (entry_total + 7) & ~static_cast<size_t>(7);
+    // dwLength 是整条记录（含补齐字节）的长度，必须写满 4 个字节 —— 只写低字节会让
+    // 任何超过 255 字节的 PKCS#7 被 WinVerifyTrust 当成截断数据
+    const uint32_t length = static_cast<uint32_t>(padded);
 
     std::string entry;
     entry.reserve(padded);
-    entry.push_back(static_cast<char>(padded & 0xFF));
-    entry.push_back(static_cast<char>((padded >> 8) & 0xFF));
-    entry.push_back(static_cast<char>((padded >> 16) & 0xFF));
-    entry.push_back(static_cast<char>((padded >> 24) & 0xFF));
+    for (int i = 0; i < 4; i++) entry.push_back(static_cast<char>((length >> (8 * i)) & 0xFF));
     entry.push_back(static_cast<char>(0x00)); // wRevision = 0x0200
     entry.push_back(static_cast<char>(0x02));
     entry.push_back(static_cast<char>(0x02)); // wCertificateType = 0x0002 (PKCS_SIGNED_DATA)
@@ -210,21 +210,15 @@ void append_certificate(std::string &data, const std::string &pkcs7, size_t &tot
     entry += pkcs7;
     entry.resize(padded, '\0');
     data += entry;
-    total += padded;
+    return padded;
 }
 
 } // namespace
 
-bool embed(const std::string &path, const std::vector<std::string> &signatures, std::string &err) {
-    if (signatures.empty()) {
+bool embed(const std::string &path, const std::string &pkcs7, std::string &err) {
+    if (pkcs7.empty()) {
         err = "PKCS#7 内容为空";
         return false;
-    }
-    for (const auto &pkcs7 : signatures) {
-        if (pkcs7.empty()) {
-            err = "PKCS#7 内容为空";
-            return false;
-        }
     }
 
     std::string data;
@@ -241,8 +235,7 @@ bool embed(const std::string &path, const std::vector<std::string> &signatures, 
     while (data.size() % 8 != 0) data.push_back('\0');
 
     const size_t entry_offset = data.size();
-    size_t total = 0;
-    for (const auto &pkcs7 : signatures) append_certificate(data, pkcs7, total);
+    const size_t total = append_certificate(data, pkcs7);
 
     wr32(data, layout.security_dir_offset, static_cast<uint32_t>(entry_offset));
     wr32(data, layout.security_dir_offset + 4, static_cast<uint32_t>(total));
@@ -251,10 +244,6 @@ bool embed(const std::string &path, const std::vector<std::string> &signatures, 
     wr32(data, layout.checksum_offset, checksum);
 
     return write_file(path, data, err);
-}
-
-bool embed(const std::string &path, const std::string &pkcs7, std::string &err) {
-    return embed(path, std::vector<std::string>{pkcs7}, err);
 }
 
 bool has_signature(const std::string &path) {

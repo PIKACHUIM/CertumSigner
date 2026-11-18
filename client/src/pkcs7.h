@@ -31,6 +31,12 @@ struct Pkcs7Request {
     std::string algorithm = "sha256"; // sha1 | sha256 | sha384 | sha512
     std::string signature;        // RSA PKCS#1 v1.5 原始签名
     std::string timestamp_token;  // 可选的 RFC3161 TimeStampToken（DER）
+    /**
+     * 嵌套签名（SPC_NESTED_SIGNATURE）：每种额外摘要算法各是一整个 ContentInfo，
+     * 放进本签名 SignerInfo 的未认证属性里。Windows 只认证书表里的第一条记录，
+     * 多算法必须这么放，不能在同一张证书表里并排写多条 WIN_CERTIFICATE。
+     */
+    std::vector<std::string> nested;
 };
 
 std::string build_pkcs7(const Pkcs7Request &request, std::string &err);

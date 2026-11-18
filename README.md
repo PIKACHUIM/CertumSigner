@@ -3,7 +3,7 @@
 **中文** · [English](README.en.md)
 
 [![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/PIKACHUIM/CertumSigner/tree/main/worker)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-orange.svg)](https://workers.cloudflare.com/)
 
 用 Cloudflare Workers 把 Certum SimplySign 云签名变成 HTTP 接口，再配一个 C++ 桌面客户端，
@@ -124,11 +124,12 @@ Windows 是一个自绘 Win32 程序，侧边栏四个入口走完整个流程�
 4. **设置**：
    - 连接：平台地址、API Key（可显示/隐藏）、当前账号与 Key 名。
    - 签名选项：摘要算法 **可多选**（SHA-1 / SHA-256 / SHA-384 / SHA-512，默认只勾 SHA-256，
-     每种算法各生成一份签名写进同一张证书表）、是否加时间戳、内置 TSA（DigiCert / Symantec /
+     第一个算法写进证书表，其余算法以嵌套签名（`SPC_NESTED_SIGNATURE`）挂在同一条记录里）、
+     是否加时间戳、内置 TSA（DigiCert / Symantec /
      GeoTrust / Comodo / WoSign / GlobalSign / Entrust / GoDaddy / Certum，默认 **DigiCert**）、
      是否备份原文件。
    - 界面：语言（中文 / English / 跟随系统）、主题（跟随系统 / 暗色 / 亮色）。
-   - 关于：软件许可（MIT，点开是应用内的许可页，不是弹窗）、项目地址、重新登录。
+   - 关于：软件许可（AGPL-3.0，点开是应用内的许可页，不是弹窗）、项目地址、重新登录。
 
 侧边栏底部是账号区：圆形头像（邮箱首字母）+ 邮箱 + 当前 Key 名，下面是语言、明暗、退出登录
 三个图标按钮，位置跟着窗口实际高度贴底（下拉框同样是自绘的，暗色下不会出现白色原生列表）。
@@ -344,7 +345,7 @@ npm run deploy
 - Win32 GUI 实测：登录 → 选 Key（换发明文弹窗）→ 拖拽批量签名 3 个文件全部成功 →
   `WinVerifyTrust` 校验通过 → 设置页 TSA / 算法 / 备份 / 语言（中英）/ 主题（明暗）切换 →
   重新登录、设置页的软件许可入口；125% 缩放下布局无裁切；暗色与英文界面逐屏截图核对。
-- 本轮改动（手机端适配、MIT 应用内许可页、摘要算法多选）的验证进度：Worker 侧 `npx tsc --noEmit`、
+- 本轮改动（手机端适配、AGPL 应用内许可页、摘要算法多选、无控制台窗口、多算法嵌套签名）的验证进度：Worker 侧 `npx tsc --noEmit`、
   `npm test` 与 `wrangler dev` 实测已通过（见下）；C++ 侧 `digest` / `settings` / `spc` / `signer` /
   `cli` / `api` / `gui_win` 用 MSVC `/W4 /permissive-` 单文件编译零告警；
   `pe.cpp` / `pkcs7.cpp`（本机缺 OpenSSL 开发包）与 `gui_gtk.cpp`（本机无 GTK3）交给 CI，
@@ -362,7 +363,8 @@ npm run deploy
 
 ## 许可
 
-[MIT](LICENSE)（© 2026 pikachuren）。
+[AGPL-3.0-or-later](LICENSE)（© 2026 pikachuren）。
 
-客户端「设置 → 软件许可」打开的是应用内页面，正文就是 `LICENSE` 的 MIT 原文，和 APP 其它页面同一套
-卡片样式，不再是系统模态弹窗。
+客户端「设置 → 软件许可」打开的是应用内页面，正文是 AGPL-3.0 许可声明，并给出官方全文
+（<https://www.gnu.org/licenses/agpl-3.0.txt>）与仓库源码地址，和 APP 其它页面同一套卡片样式，
+不再是系统模态弹窗。`LICENSE` 文件同样只放许可声明与这两处地址，不带 MIT 文本。

@@ -5,7 +5,7 @@ project(CertumSigner
     HOMEPAGE_URL "https://github.com/PIKACHUIM/CertumSigner"
     LANGUAGES CXX
 )
-# License: MIT — see ../LICENSE
+# License: AGPL-3.0-or-later — see ../LICENSE
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -42,6 +42,9 @@ if(WIN32)
     if(CS_BUILD_GUI)
         target_sources(certumsigner PRIVATE src/gui_win.cpp)
         target_link_libraries(certumsigner PRIVATE comctl32 comdlg32)
+        # GUI 子系统：双击不弹控制台窗口。命令行调用时程序自己 AttachConsole 到父控制台
+        target_compile_definitions(certumsigner PRIVATE CS_GUI_SUBSYSTEM)
+        set_target_properties(certumsigner PROPERTIES WIN32_EXECUTABLE TRUE)
     else()
         target_sources(certumsigner PRIVATE src/gui_none.cpp)
     endif()

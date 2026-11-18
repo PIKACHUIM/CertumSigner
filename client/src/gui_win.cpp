@@ -76,6 +76,7 @@ constexpr int IDC_S_SIGN = 1306;
 constexpr int IDC_S_VERIFY = 1307;
 constexpr int IDC_S_LOG = 1308;
 constexpr int IDC_S_LOGCLEAR = 1309;
+constexpr int IDC_S_SKIP = 1310;
 
 constexpr int IDC_T_SERVER = 1401;
 constexpr int IDC_T_KEY = 1402;
@@ -207,11 +208,13 @@ const TextRow kTexts[] = {
     {"st.work", L"签名中", L"Signing"},
     {"st.ok", L"成功", L"Signed"},
     {"st.fail", L"失败", L"Failed"},
+    {"st.skip", L"已跳过", L"Skipped"},
     {"sign.done", L"完成：%d 成功，%d 失败", L"Done: %d signed, %d failed"},
     {"sign.busy", L"签名中…", L"Signing…"},
     {"sign.pickFirst", L"请先添加文件", L"Add a file first"},
     {"sign.log", L"日志", L"Log"},
     {"sign.logClear", L"清空", L"Clear"},
+    {"sign.skipSigned", L"跳过已有签名", L"Skip signed files"},
     {"sign.ready", L"就绪", L"Ready"},
     {"sign.valid", L"签名有效", L"Signature valid"},
     {"sign.invalid", L"签名无效", L"Signature invalid"},
@@ -248,8 +251,9 @@ const TextRow kTexts[] = {
      L"v1.0.0 · the private key stays in Certum's cloud; only digests leave this machine"},
 
     {"lic.title", L"软件许可", L"License"},
-    {"lic.sub", L"本程序以 MIT 许可发布，以下为完整许可文本", L"Released under the MIT license — full text below"},
-    {"lic.docTitle", L"MIT 许可证", L"MIT License"},
+    {"lic.sub", L"本程序以 AGPL-3.0 许可发布，许可全文与源码地址见下方",
+     L"Released under AGPL-3.0 — full text and source links below"},
+    {"lic.docTitle", L"AGPL-3.0 许可证", L"AGPL-3.0 License"},
     {"lic.back", L"返回设置", L"Back to settings"},
     {"lic.readonly", L"只读", L"Read only"},
 
@@ -267,29 +271,30 @@ const TextRow kTexts[] = {
     {"err.server", L"服务端错误：", L"Server error: "},
 };
 
-/** MIT 许可正文（与仓库根目录 LICENSE 一致，许可文本保持英文原文） */
-const wchar_t *kMitLicenseText =
-    L"MIT License\r\n"
+/** AGPL-3.0 许可声明（与仓库根目录 LICENSE 一致；许可全文按官方地址给出） */
+const wchar_t *kLicenseNoticeText =
+    L"GNU Affero General Public License v3.0 or later (AGPL-3.0-or-later)\r\n"
     L"\r\n"
-    L"Copyright (c) 2026 pikachuren\r\n"
+    L"Copyright (C) 2026 pikachuren\r\n"
     L"\r\n"
-    L"Permission is hereby granted, free of charge, to any person obtaining a copy\r\n"
-    L"of this software and associated documentation files (the \"Software\"), to deal\r\n"
-    L"in the Software without restriction, including without limitation the rights\r\n"
-    L"to use, copy, modify, merge, publish, distribute, sublicense, and/or sell\r\n"
-    L"copies of the Software, and to permit persons to whom the Software is\r\n"
-    L"furnished to do so, subject to the following conditions:\r\n"
+    L"This program is free software: you can redistribute it and/or modify it\r\n"
+    L"under the terms of the GNU Affero General Public License as published by\r\n"
+    L"the Free Software Foundation, either version 3 of the License, or (at your\r\n"
+    L"option) any later version.\r\n"
     L"\r\n"
-    L"The above copyright notice and this permission notice shall be included in all\r\n"
-    L"copies or substantial portions of the Software.\r\n"
+    L"This program is distributed in the hope that it will be useful, but WITHOUT\r\n"
+    L"ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or\r\n"
+    L"FITNESS FOR A PARTICULAR PURPOSE.  See the GNU Affero General Public\r\n"
+    L"License for more details.\r\n"
     L"\r\n"
-    L"THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\r\n"
-    L"IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\r\n"
-    L"FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\r\n"
-    L"AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\r\n"
-    L"LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\r\n"
-    L"OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\r\n"
-    L"SOFTWARE.\r\n";
+    L"You should have received a copy of the GNU Affero General Public License\r\n"
+    L"along with this program.  If not, see <https://www.gnu.org/licenses/>.\r\n"
+    L"\r\n"
+    L"许可证全文（official license text）\r\n"
+    L"https://www.gnu.org/licenses/agpl-3.0.txt\r\n"
+    L"\r\n"
+    L"源代码（AGPL 第 13 条要求的 Corresponding Source）\r\n"
+    L"https://github.com/PIKACHUIM/CertumSigner\r\n";
 
 /* --------------------------------- 状态 ---------------------------------- */
 
@@ -373,6 +378,7 @@ struct App {
     HWND verifyBtn = nullptr;
     HWND logBox = nullptr;
     HWND logClear = nullptr;
+    HWND skipBtn = nullptr;
 
     HWND stServer = nullptr;
     HWND stKey = nullptr;
@@ -796,7 +802,7 @@ void draw_file_icon(HDC dc, RECT box, COLORREF fg) {
 
 HWND make_control(const wchar_t *klass, const wchar_t *text, DWORD style, DWORD ex_style, RECT bounds, int id,
                   HWND parent, HFONT font) {
-    HWND control = CreateWindowExW(ex_style, klass, text, WS_CHILD | style, bounds.left, bounds.top,
+    HWND control = CreateWindowExW(ex_style, klass, text, WS_CHILD | WS_CLIPSIBLINGS | style, bounds.left, bounds.top,
                                    bounds.right - bounds.left, bounds.bottom - bounds.top, parent,
                                    reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), GetModuleHandleW(nullptr),
                                    nullptr);
@@ -863,7 +869,7 @@ ControlSet keys_controls() {
 ControlSet sign_controls() {
     App *a = g_app;
     return {{a->drop, a->list, a->addBtn, a->removeBtn, a->clearBtn, a->signBtn, a->verifyBtn, a->logBox,
-             a->logClear}};
+             a->logClear, a->skipBtn}};
 }
 
 ControlSet settings_controls() {
@@ -1074,7 +1080,7 @@ void refresh_cred_combo() {
     const bool has_credential = !a->credentials.empty();
     EnableWindow(a->keyCred, has_credential ? TRUE : FALSE);
     EnableWindow(a->keyCreate, has_credential ? TRUE : FALSE);
-    InvalidateRect(a->keyCred, nullptr, TRUE);
+    InvalidateRect(a->keyCred, nullptr, FALSE);
 }
 
 /* --------------------------------- 文件 ---------------------------------- */
@@ -1193,6 +1199,7 @@ void start_batch_sign() {
         std::string tsa;
         bool timestamp = true;
         bool backup = false;
+        bool skip_signed = true;
         std::vector<std::string> paths;
         std::vector<size_t> indices;
     };
@@ -1204,6 +1211,7 @@ void start_batch_sign() {
     job->tsa = effective_tsa(a->settings);
     job->timestamp = a->settings.timestamp;
     job->backup = a->settings.backup;
+    job->skip_signed = a->settings.skip_signed;
     for (size_t index : pending) {
         job->paths.push_back(a->files[index].path);
         job->indices.push_back(index);
@@ -1221,6 +1229,7 @@ void start_batch_sign() {
         signer.options.algorithms = job->algorithms;
         signer.options.timestamp = job->timestamp;
         signer.options.backup = job->backup;
+        signer.options.skip_signed = job->skip_signed;
         if (!job->tsa.empty()) signer.options.tsa_url = job->tsa;
         signer.log = [window](const std::string &message) { post_log(window, message); };
 
@@ -1230,21 +1239,33 @@ void start_batch_sign() {
 
         int ok_count = 0;
         int fail_count = 0;
+        int skip_count = 0;
         for (size_t i = 0; i < job->paths.size(); ++i) {
             const size_t index = job->indices[i];
             if (!IsWindow(window)) break;
             PostMessageW(window, WM_APP_FILE_STATE, static_cast<WPARAM>(index), 1);
 
             bool ok = ready;
+            bool skipped = false;
             if (ok) {
                 std::string file_error;
-                ok = signer.sign_file(job->paths[i], file_error);
+                ok = signer.sign_file(job->paths[i], file_error, &skipped);
                 if (!ok) post_log(window, "错误：" + file_error);
             }
-            if (ok) ++ok_count; else ++fail_count;
-            if (IsWindow(window)) {
-                PostMessageW(window, WM_APP_FILE_STATE, static_cast<WPARAM>(index), ok ? 2 : 3);
+            if (ok) {
+                ++ok_count;
+                if (skipped) ++skip_count;
+            } else {
+                ++fail_count;
             }
+            if (IsWindow(window)) {
+                PostMessageW(window, WM_APP_FILE_STATE, static_cast<WPARAM>(index),
+                             ok ? (skipped ? 4 : 2) : 3);
+            }
+        }
+
+        if (skip_count > 0) {
+            post_log(window, "已跳过 " + std::to_string(skip_count) + " 个已有签名的文件");
         }
 
         if (IsWindow(window)) {
@@ -1722,6 +1743,7 @@ void layout_controls() {
     if (a->clearBtn) MoveWindow(a->clearBtn, px(974) + dx, px(232), px(54), px(26), TRUE);
     if (a->signBtn) MoveWindow(a->signBtn, px(224) + dx, px(520), px(400), px(46), TRUE);
     if (a->verifyBtn) MoveWindow(a->verifyBtn, px(636) + dx, px(520), px(200), px(46), TRUE);
+    if (a->skipBtn) MoveWindow(a->skipBtn, px(656) + dx, px(228), px(184), px(28), TRUE);
     if (a->logBox) MoveWindow(a->logBox, px(240) + dx, px(620), px(780), px(84), TRUE);
     if (a->logClear) MoveWindow(a->logClear, px(948) + dx, px(586), px(72), px(26), TRUE);
 
@@ -2053,6 +2075,10 @@ void draw_pill_state(HDC dc, RECT r, int state, HFONT font) {
         label = tr("st.fail");
         fg = p.bad;
         bg = color_mix(p.bad, p.card);
+    } else if (state == 4) {
+        label = tr("st.skip");
+        fg = p.muted2;
+        bg = p.hover;
     }
     draw_pill(dc, r, label, fg, bg, font);
 }
@@ -2290,6 +2316,12 @@ void draw_ownerdraw(const DRAWITEMSTRUCT *item) {
         draw_checkbox(dc, r, checked, id == IDC_T_TSON ? tr("set.tsOn") : tr("set.backup"), a->fontSmall);
         return;
     }
+
+    if (id == IDC_S_SKIP) {
+        fill_rect(dc, r, p.card);
+        draw_checkbox(dc, r, a->settings.skip_signed, tr("sign.skipSigned"), a->fontSmall);
+        return;
+    }
 }
 
 /* --------------------------------- 窗口 ---------------------------------- */
@@ -2341,7 +2373,7 @@ void refresh_theme_selectors() {
     for (HWND control : edits) apply_control_theme(control);
     HWND combos[] = {a->keyCred, a->stTsa, a->stLang, a->stTheme};
     for (HWND control : combos) apply_control_theme(control);
-    InvalidateRect(a->window, nullptr, TRUE);
+    InvalidateRect(a->window, nullptr, FALSE);
 }
 
 void apply_theme_choice() {
@@ -2359,7 +2391,7 @@ void apply_lang_choice() {
     a->lang = a->settings.lang.empty() ? system_lang() : a->settings.lang;
     if (a->status.empty() || a->phase == 0) a->status = tr("sign.ready");
     apply_language_to_controls();
-    InvalidateRect(a->window, nullptr, TRUE);
+    InvalidateRect(a->window, nullptr, FALSE);
 }
 
 /* -------------------------------- 下拉框 --------------------------------- */
@@ -2538,8 +2570,8 @@ void ensure_popup(HWND owner) {
     klass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
     klass.lpszClassName = L"CertumSignerDropDown";
     RegisterClassExW(&klass);
-    g_popup = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, L"CertumSignerDropDown", L"", WS_POPUP, 0, 0, 10, 10,
-                              owner, nullptr, instance, nullptr);
+    g_popup = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, L"CertumSignerDropDown", L"",
+                              WS_POPUP | WS_CLIPCHILDREN, 0, 0, 10, 10, owner, nullptr, instance, nullptr);
     g_popupList = CreateWindowExW(0, L"LISTBOX", L"",
                                   WS_CHILD | WS_VISIBLE | LBS_OWNERDRAWFIXED | LBS_NOTIFY | LBS_HASSTRINGS | WS_VSCROLL,
                                   0, 0, 10, 10, g_popup, reinterpret_cast<HMENU>(1), instance, nullptr);
@@ -2595,7 +2627,7 @@ void dropdown_open(int id) {
     MoveWindow(g_popupList, px(1), px(4), width - px(2), height - px(8), TRUE);
     ShowWindow(g_popup, SW_SHOWNA);
     SetFocus(g_popupList);
-    InvalidateRect(g_popup, nullptr, TRUE);
+    InvalidateRect(g_popup, nullptr, FALSE);
 }
 
 void setup_controls(HWND window) {
@@ -2634,6 +2666,7 @@ void setup_controls(HWND window) {
     a->logBox = make_control(L"EDIT", L"", ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | WS_VSCROLL, 0,
                              rect(0, 0, 10, 10), IDC_S_LOG, window, a->fontMono);
     a->logClear = make_control(L"BUTTON", L"", button, 0, rect(0, 0, 10, 10), IDC_S_LOGCLEAR, window, a->fontTiny);
+    a->skipBtn = make_control(L"BUTTON", L"", button, 0, rect(0, 0, 10, 10), IDC_S_SKIP, window, a->fontSmall);
 
     a->stServer = make_control(L"EDIT", L"", edit_style, 0, rect(0, 0, 10, 10), IDC_T_SERVER, window, a->fontBody);
     a->stKey = make_control(L"EDIT", L"", edit_style | ES_PASSWORD, 0, rect(0, 0, 10, 10), IDC_T_KEY, window,
@@ -2656,7 +2689,7 @@ void setup_controls(HWND window) {
                               rect(0, 0, 10, 10), IDC_LIC_TEXT, window, a->fontSmall);
     a->licBack = make_control(L"BUTTON", L"", button, 0, rect(0, 0, 10, 10), IDC_LIC_BACK, window, a->fontButton);
     if (a->licText) {
-        SetWindowTextW(a->licText, kMitLicenseText);
+        SetWindowTextW(a->licText, kLicenseNoticeText);
         SendMessageW(a->licText, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(px(10), px(10)));
     }
 
@@ -2693,7 +2726,7 @@ void load_state_into_controls() {
 
     HWND buttons[] = {a->stTsa, a->stLang, a->stTheme, a->keyCred};
     for (HWND control : buttons) {
-        if (control) InvalidateRect(control, nullptr, TRUE);
+        if (control) InvalidateRect(control, nullptr, FALSE);
     }
 }
 
@@ -2704,7 +2737,7 @@ void toggle_language() {
     if (!a) return;
     a->settings.lang = a->lang == "zh" ? "en" : "zh";
     apply_lang_choice();
-    if (a->stLang) InvalidateRect(a->stLang, nullptr, TRUE);
+    if (a->stLang) InvalidateRect(a->stLang, nullptr, FALSE);
     save_settings_silent();
 }
 
@@ -2772,6 +2805,11 @@ void handle_command(int id, int code) {
             refresh_file_list();
             return;
         case IDC_S_SIGN: start_batch_sign(); return;
+        case IDC_S_SKIP:
+            a->settings.skip_signed = !a->settings.skip_signed;
+            InvalidateRect(a->skipBtn, nullptr, FALSE);
+            save_settings_silent();
+            return;
         case IDC_S_VERIFY: verify_selected(); return;
         case IDC_S_LOGCLEAR: SetWindowTextW(a->logBox, L""); return;
         case IDC_T_ALGO256:
@@ -2799,26 +2837,26 @@ void handle_command(int id, int code) {
             a->settings.algorithms = sorted;
             HWND chips[] = {a->stAlgo1, a->stAlgo256, a->stAlgo384, a->stAlgo512};
             for (HWND chip : chips) {
-                if (chip) InvalidateRect(chip, nullptr, TRUE);
+                if (chip) InvalidateRect(chip, nullptr, FALSE);
             }
             save_settings_silent();
             return;
         }
         case IDC_T_TSON:
             a->settings.timestamp = !a->settings.timestamp;
-            InvalidateRect(a->stTsOn, nullptr, TRUE);
+            InvalidateRect(a->stTsOn, nullptr, FALSE);
             save_settings_silent();
             return;
         case IDC_T_BACKUP:
             a->settings.backup = !a->settings.backup;
-            InvalidateRect(a->stBackup, nullptr, TRUE);
+            InvalidateRect(a->stBackup, nullptr, FALSE);
             save_settings_silent();
             return;
         case IDC_T_SHOWKEY:
             a->show_key = !a->show_key;
             SendMessageW(a->stKey, EM_SETPASSWORDCHAR, a->show_key ? 0 : static_cast<WPARAM>(0x25CF), 0);
-            InvalidateRect(a->stKey, nullptr, TRUE);
-            InvalidateRect(a->stShowKey, nullptr, TRUE);
+            InvalidateRect(a->stKey, nullptr, FALSE);
+            InvalidateRect(a->stShowKey, nullptr, FALSE);
             return;
         case IDC_T_RELOGIN: relogin(); return;
         case IDC_T_LICENSE: open_license(); return;
@@ -2945,7 +2983,7 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
     }
     case WM_SIZE:
         layout_controls();
-        InvalidateRect(window, nullptr, TRUE);
+        InvalidateRect(window, nullptr, FALSE);
         return 0;
     case WM_ERASEBKGND:
         return 1;
@@ -3003,10 +3041,10 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
         if (id != a->hot) {
             if (a->hot) {
                 HWND old = GetDlgItem(window, a->hot);
-                if (old) InvalidateRect(old, nullptr, TRUE);
+                if (old) InvalidateRect(old, nullptr, FALSE);
             }
             a->hot = id;
-            if (child) InvalidateRect(child, nullptr, TRUE);
+            if (child) InvalidateRect(child, nullptr, FALSE);
         }
         TRACKMOUSEEVENT track{sizeof(track), TME_LEAVE, window, 0};
         TrackMouseEvent(&track);
@@ -3015,7 +3053,7 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
     case WM_MOUSELEAVE:
         if (a->hot) {
             HWND old = GetDlgItem(window, a->hot);
-            if (old) InvalidateRect(old, nullptr, TRUE);
+            if (old) InvalidateRect(old, nullptr, FALSE);
             a->hot = 0;
         }
         return 0;
@@ -3188,7 +3226,8 @@ int gui_main(int argc, char **argv) {
     const int screen_width = GetSystemMetrics(SM_CXSCREEN);
     const int screen_height = GetSystemMetrics(SM_CYSCREEN);
     HWND window = CreateWindowExW(
-        0, klass.lpszClassName, L"CertumSigner", WS_OVERLAPPEDWINDOW & ~WS_THICKFRAME & ~WS_MAXIMIZEBOX,
+        0, klass.lpszClassName, L"CertumSigner",
+        (WS_OVERLAPPEDWINDOW & ~WS_THICKFRAME & ~WS_MAXIMIZEBOX) | WS_CLIPCHILDREN,
         (screen_width - window_width) / 2, (screen_height - window_height) / 2, window_width, window_height, nullptr,
         nullptr, instance, nullptr);
     if (!window) return 1;

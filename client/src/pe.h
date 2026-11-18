@@ -26,14 +26,12 @@ bool analyze_file(const std::string &path, Layout &out, std::string &err);
  */
 bool authentihash(const std::string &path, const std::string &algorithm, std::string &digest, std::string &err);
 
-/** 把 PKCS#7 写入 PE 的证书表（会先移除旧签名），并重算校验和 */
-bool embed(const std::string &path, const std::string &pkcs7, std::string &err);
-
 /**
- * 写入多个 PKCS#7：每种摘要算法对应一个 WIN_CERTIFICATE，
- * 依次追加在证书表里（Windows 会对每个签名分别校验）。
+ * 把 PKCS#7 写入 PE 的证书表（会先移除旧签名），并重算校验和。
+ * 多摘要算法不要写成多条 WIN_CERTIFICATE —— Windows 只校验第一条，
+ * 额外算法要通过 PKCS#7 里的嵌套签名（SPC_NESTED_SIGNATURE）带进去。
  */
-bool embed(const std::string &path, const std::vector<std::string> &signatures, std::string &err);
+bool embed(const std::string &path, const std::string &pkcs7, std::string &err);
 
 /** 文件是否已经带证书表 */
 bool has_signature(const std::string &path);

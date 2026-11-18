@@ -3,7 +3,7 @@
 [中文](README.md) · **English**
 
 [![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/PIKACHUIM/CertumSigner/tree/main/worker)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-orange.svg)](https://workers.cloudflare.com/)
 
 Turn Certum SimplySign cloud signing into an HTTP API on Cloudflare Workers, and pair it with a C++
@@ -125,11 +125,12 @@ Sign in ──► Sign ⇄ Credentials ⇄ Settings
 4. **Settings**:
    - Connection: server URL, API key (show/hide), current account and key name.
    - Signing: digest algorithms are a **multi-select** (SHA-1 / SHA-256 / SHA-384 / SHA-512, only
-     SHA-256 ticked by default; each ticked algorithm produces its own signature in the same certificate
-     table), timestamp on/off, built-in TSA list (DigiCert / Symantec / GeoTrust / Comodo / WoSign /
+     SHA-256 ticked by default; the first algorithm goes into the certificate table and the rest are
+     carried as nested signatures (`SPC_NESTED_SIGNATURE`) inside that single record), timestamp
+     on/off, built-in TSA list (DigiCert / Symantec / GeoTrust / Comodo / WoSign /
      GlobalSign / Entrust / GoDaddy / Certum, **DigiCert** by default), keep a backup.
    - Appearance: language (中文 / English / system) and theme (system / dark / light).
-   - About: license (MIT — opens an in-app license page, not a modal dialog), project URL, sign in again.
+   - About: license (AGPL-3.0 — opens an in-app license page, not a modal dialog), project URL, sign in again.
 
 The bottom of the sidebar holds the account block — round avatar (first letter of the email), email
 address and current key name — above three icon buttons for language, light/dark and sign-out. They stay
@@ -364,7 +365,8 @@ At runtime the Certum email and TOTP seed come from the KV credential; no `CERTU
   `WinVerifyTrust` reports a valid signature → settings (TSA / digest / backup / language / theme) →
   sign in again and the software-license entry in Settings; layout checked at 125% scaling, dark and
   English screens captured screen by screen.
-- Status of the current round (mobile layout, MIT in-app license page, multi-select digests): Worker side
+- Status of the current round (mobile layout, AGPL in-app license page, multi-select digests, no console
+  window, nested signatures for multi-algorithm signing): Worker side
   `npx tsc --noEmit`, `npm test` and the `wrangler dev` checks below are green; on the C++ side
   `digest` / `settings` / `spc` / `signer` / `cli` / `api` / `gui_win` compile warning-free per file with
   MSVC `/W4 /permissive-`; `pe.cpp` / `pkcs7.cpp` (no OpenSSL dev package on this machine) and
@@ -383,7 +385,9 @@ At runtime the Certum email and TOTP seed come from the KV credential; no `CERTU
 
 ## License
 
-[MIT](LICENSE) (© 2026 pikachuren).
+[AGPL-3.0-or-later](LICENSE) (© 2026 pikachuren).
 
-"Settings → License" in the client opens an in-app page holding the MIT text from `LICENSE`, using the
-same card style as the rest of the app instead of a system modal dialog.
+"Settings → License" in the client opens an in-app page holding the AGPL-3.0 notice together with the
+canonical full text (<https://www.gnu.org/licenses/agpl-3.0.txt>) and the repository URL, using the same
+card style as the rest of the app instead of a system modal dialog. The `LICENSE` file carries the same
+notice and links; no MIT text is left in the tree.

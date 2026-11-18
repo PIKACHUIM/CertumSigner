@@ -72,6 +72,7 @@ void print_usage() {
         << "  --no-timestamp       不请求 RFC3161 时间戳\n"
         << "  --tsa <URL>          时间戳服务（默认取配置，未配置时用 http://time.certum.pl/）\n"
         << "  --backup             修改前保留 <文件>.orig\n"
+        << "  --skip-signed        已经有签名的文件直接跳过\n"
         << "  --recursive          目录递归处理\n"
         << "  --yes                目录批量签名时跳过确认\n"
         << "  --quiet              只输出错误\n"
@@ -90,6 +91,7 @@ struct ParsedArgs {
     std::vector<std::string> algorithms;
     bool no_timestamp = false;
     bool backup = false;
+    bool skip_signed = false;
     bool recursive = false;
     bool assume_yes = false;
     bool quiet = false;
@@ -173,6 +175,8 @@ bool parse_args(int argc, char **argv, ParsedArgs &out, std::string &err) {
             out.no_timestamp = true;
         } else if (arg == "--backup") {
             out.backup = true;
+        } else if (arg == "--skip-signed") {
+            out.skip_signed = true;
         } else if (arg == "--recursive" || arg == "-r") {
             out.recursive = true;
         } else if (arg == "--yes" || arg == "-y") {
@@ -406,6 +410,7 @@ int run_sign(const ParsedArgs &args) {
     signer.options.algorithms = effective_algorithms(signer.options.algorithms);
     signer.options.timestamp = !args.no_timestamp;
     signer.options.backup = args.backup;
+    signer.options.skip_signed = args.skip_signed;
     // 优先级：命令行 --tsa > 配置文件 tsa_url > 内置时间戳服务（默认 DigiCert）
     signer.options.tsa_url = args.tsa_url.empty() ? effective_tsa(settings) : args.tsa_url;
     signer.log = [&args](const std::string &message) {
@@ -443,16 +448,20 @@ int run_sign(const ParsedArgs &args) {
 
 } // namespace
 
-int cli_main(int argc, char **argv) {
-    if (argc <= 1 && gui_available()) return gui_main(argc, argv);
-
-    // 桌面场景：把文件拖到 exe 上或“打开方式”时，第一个参数就是路径，直接进 GUI 排队
-    if (gui_available() && argc > 1) {
-        const std::string first = argv[1] ? argv[1] : "";
-        if (!first.empty() && first[0] != '-' && (file_exists(first) || is_directory(first))) {
-            return gui_main(argc, argv);
-        }
+bool gui_invocation(int argc, char **argv) {
+    if (!gui_available()) return false;
+    if (argc <= 1) return true;
+    for (int i = 1; i < argc; i++) {
+        const std::string arg = argv[i] ? argv[i] : "";
+        if (arg == "--gui") return true;
     }
+    // 桌面场景：把文件拖到 exe 上或“打开方式”时，第一个参数就是路径，直接进 GUI 排队
+    const std::string first = argv[1] ? argv[1] : "";
+    return !first.empty() && first[0] != '-' && (file_exists(first) || is_directory(first));
+}
+
+int cli_main(int argc, char **argv) {
+    if (gui_invocation(argc, argv)) return gui_main(argc, argv);
 
     ParsedArgs args;
     std::string err;

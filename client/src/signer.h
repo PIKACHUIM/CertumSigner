@@ -14,6 +14,8 @@ struct SignOptions {
     std::string tsa_url = "http://time.certum.pl/";
     bool timestamp = true;
     bool backup = false;
+    /** 文件已经带签名时直接跳过（图形界面的签名页默认勾选；命令行默认不跳过） */
+    bool skip_signed = false;
     bool self_check = true;
 
     bool wants(const std::string &algorithm) const;
@@ -31,7 +33,8 @@ public:
 
     /** 拉取并缓存签名证书（每次运行一次即可） */
     bool prepare(std::string &err);
-    bool sign_file(const std::string &path, std::string &err);
+    /** 返回值 true 表示这个文件处理成功（包含“已有签名，按要求跳过”）；skipped 用来区分 */
+    bool sign_file(const std::string &path, std::string &err, bool *skipped = nullptr);
 
     const std::string &certificate_subject() const { return subject_; }
     const std::string &certificate_fingerprint() const { return fingerprint_; }

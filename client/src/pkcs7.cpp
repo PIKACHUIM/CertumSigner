@@ -21,6 +21,7 @@ const char *kContentTypeOid = "1.2.840.113549.1.9.3";
 const char *kMessageDigestOid = "1.2.840.113549.1.9.4";
 const char *kRsaEncryptionOid = "1.2.840.113549.1.1.1";
 const char *kTimestampOid = "1.3.6.1.4.1.311.3.3.1";
+const char *kNestedSignatureOid = "1.3.6.1.4.1.311.2.4.1";
 
 std::string bio_to_string(BIO *bio) {
     char *data = nullptr;
@@ -182,10 +183,25 @@ std::string build_pkcs7(const Pkcs7Request &request, std::string &err) {
     // 在 SignerInfo 里 authenticatedAttributes 是 [0] IMPLICIT，内容与 SET 完全一致
     attrs_implicit[0] = static_cast<char>(0xA0);
 
-    std::string unsigned_attrs;
+    // 未认证属性：[1] IMPLICIT SET OF Attribute —— 时间戳 + 嵌套签名
+    std::vector<std::string> unsigned_items;
     if (!request.timestamp_token.empty()) {
-        std::string timestamp = attribute(kTimestampOid, request.timestamp_token);
-        unsigned_attrs = der::context(1, timestamp);
+        unsigned_items.push_back(attribute(kTimestampOid, request.timestamp_token));
+    }
+    if (!request.nested.empty()) {
+        std::string nested;
+        for (const auto &item : request.nested) nested += item;
+        // 属性值本身是 SET OF ContentInfo
+        unsigned_items.push_back(attribute(kNestedSignatureOid, nested));
+    }
+    if (unsigned_items.size() == 2 && unsigned_items[0] > unsigned_items[1]) {
+        std::swap(unsigned_items[0], unsigned_items[1]);
+    }
+    std::string unsigned_attrs;
+    if (!unsigned_items.empty()) {
+        std::string body;
+        for (const auto &item : unsigned_items) body += item;
+        unsigned_attrs = der::context(1, body);
     }
 
     // IssuerAndSerialNumber

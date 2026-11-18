@@ -95,6 +95,7 @@ bool load_settings(Settings &out, std::string &err) {
             if (!key_name.empty()) out.key_name = key_name;
             out.timestamp = root.get_bool("timestamp", out.timestamp);
             out.backup = root.get_bool("backup", out.backup);
+            out.skip_signed = root.get_bool("skip_signed", out.skip_signed);
         }
     }
 
@@ -138,6 +139,7 @@ bool save_settings(const Settings &settings, std::string &err) {
     root.members.emplace_back("algorithm", json_string(list.items.front().text));
     root.members.emplace_back("timestamp", json_bool(settings.timestamp));
     root.members.emplace_back("backup", json_bool(settings.backup));
+    root.members.emplace_back("skip_signed", json_bool(settings.skip_signed));
     root.members.emplace_back("lang", json_string(settings.lang));
     root.members.emplace_back("theme", json_string(settings.theme));
     root.members.emplace_back("username", json_string(settings.username));
