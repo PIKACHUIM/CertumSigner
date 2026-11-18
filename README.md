@@ -56,6 +56,17 @@ docs/          Certum 云签名协议逆向记录
 自定义域名在 `worker/wrangler.jsonc` 的 `routes` 里改（本仓库写的是 `sign.example.com`），
 部署后把同一个地址填进「系统设置 → 基础地址」，邮件里的链接就会用它。
 
+同一份代码想再开一套独立实例（不同 Worker、不同 KV、不同域名），另建一份配置即可，
+本仓库已带一个例子 `worker/wrangler.signui.jsonc`（`signui-work` / `signui-kvdb` / `signui.example.com`）：
+
+```bash
+cd worker
+npx wrangler kv namespace create signui-kvdb       # 新命名空间的 id 填进新配置
+npx wrangler deploy --config wrangler.signui.jsonc
+```
+
+两套实例的 KV 完全隔离，管理员账号、凭据、Key 都不共享；首次访问新域名同样会进 `/admin/setup`。
+
 部署完成后打开 `https://<你的域名>/`：
 
 1. 主页可以直接下载 Windows / Linux 客户端，右上角进入用户登录或管理员后台。

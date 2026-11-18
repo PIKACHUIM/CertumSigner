@@ -60,6 +60,19 @@ For registration / password reset, also configure email (optional; both toggles 
 The custom domain is configured in `routes` in `worker/wrangler.jsonc` (this repo uses
 `sign.example.com`); put the same address into Settings → Base URL so email links use it.
 
+To run a second, fully isolated instance of the same code (different worker, KV and domain), add
+another config — the repo ships `worker/wrangler.signui.jsonc` (`signui-work` / `signui-kvdb` /
+`signui.example.com`) as an example:
+
+```bash
+cd worker
+npx wrangler kv namespace create signui-kvdb       # put the returned id into the new config
+npx wrangler deploy --config wrangler.signui.jsonc
+```
+
+The two instances share nothing in KV (admin account, credentials, keys), and the new domain starts at
+`/admin/setup` like any fresh deployment.
+
 Then open `https://<your-domain>/`:
 
 1. The home page links to Windows / Linux builds and to the user sign-in / admin console.
