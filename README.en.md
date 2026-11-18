@@ -294,7 +294,12 @@ At runtime the email and seed come from the KV credential, so `CERTUM_*` is no l
   persisted settings toggles, registration reporting a clear error without Resend, email verification
   tokens (unverified sign-in 401 → verified sign-in 302), reset token (old password 401 / new password
   302), user-level quota (usage 5 / limit 1 → `/v1/sign` 429 `已超出账号今日限额`), self-service key quota
-  updates. The eight CI artifacts have not been produced yet; Linux GTK3 remains unbuilt locally.
+  updates. GitHub Actions run `44286722376` finished green (all four platform jobs) and published the
+  eight artifacts to the [latest release](https://github.com/PIKACHUIM/CertumSigner/releases/tag/latest):
+  `certumsigner-windows-{x64,arm64}-{gui,cli}.zip` (1.7-2.1 MB) and
+  `certumsigner-linux-{x64,arm64}-{gui,cli}.tar.gz` (110-132 KB). Windows links OpenSSL statically via
+  vcpkg `openssl:*-windows-static-md`; the Linux GTK3 GUI compiled for the first time on CI. The archives
+  were not downloaded and executed, only listed by name and size.
 - Exercised under `wrangler dev`: admin login, overview, user create/password/expiry/disable/enable,
   credential create (with non-ASCII label)/edit/disable/enable/delete/force login/refresh certificate,
   key create (secret shown once)/disable/delete, log page, stats JSON; user login, portal, self-service
@@ -315,7 +320,8 @@ At runtime the email and seed come from the KV credential, so `CERTUM_*` is no l
   returns the EV code signing certificate with the configured fingerprint (card `7507400891785917`);
   `/v1/sign` returns a 512-byte signature for a real SHA-256 digest, and after the client writes it into
   the PE, `WinVerifyTrust` reports **valid**, still valid after adding a real Certum timestamp.
-- Linux (libcurl + GTK3) builds and GUI interaction are untested; MSI/CAB unsupported.
+- Linux (libcurl + GTK3) compiles on CI; the binary and its GUI interaction remain untested; MSI/CAB
+  unsupported.
 
 ## License
 

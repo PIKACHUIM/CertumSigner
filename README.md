@@ -292,7 +292,12 @@ npm run deploy
   注册在未配置 Resend 时给出明确错误、邮箱验证令牌（未验证登录 401 → 验证后登录 302）、
   找回密码重置后旧口令 401 / 新口令 302、用户级配额（用量 5 / 上限 1 时 `/v1/sign` 返回 429
   「已超出账号今日限额」）、用户自助修改 Key 限额。
-- GitHub Actions 的 8 个多平台产物尚未在远端跑过一次；Linux GTK3 客户端仍未经本机编译。
+- GitHub Actions 已跑通（run `44286722376`，4 个平台任务全部 success），8 个产物发布到
+  [latest release](https://github.com/PIKACHUIM/CertumSigner/releases/tag/latest)：
+  `certumsigner-windows-{x64,arm64}-{gui,cli}.zip`（1.7~2.1 MB）与
+  `certumsigner-linux-{x64,arm64}-{gui,cli}.tar.gz`（110~132 KB），文件名与主页下载链接一致。
+  Windows 用 vcpkg `openssl:*-windows-static-md` 静态链接，Linux GTK3 GUI 首次在 CI 上真实编译通过；
+  产物只核对了 release 列表与体积，未下载执行。
 - `wrangler dev` 下逐条实测：管理员登录、概览、用户新建/改口令/改有效期/停用/启用、
   凭据新建（含中文标签）/编辑/停用/启用/删除/强制登录/刷新证书、Key 创建（明文只显示一次）/
   停用/删除、日志页、统计 JSON；用户登录、门户、自建 Key（必须选已分配证书）、
@@ -311,7 +316,7 @@ npm run deploy
   `/v1/certificate` 返回 EV 代码签名证书，指纹与凭据配置一致（卡片 `7507400891785917`）；
   `/v1/sign` 用真实 SHA-256 摘要换回 512 字节签名，客户端写进 PE 后
   `WinVerifyTrust` 返回 **`签名有效`**；加真实 Certum 时间戳后仍然有效。
-- Linux（libcurl + GTK3）构建与 GUI 交互仍未实测；MSI/CAB 不支持。
+- Linux（libcurl + GTK3）已在 CI 上编译通过，运行时与 GUI 交互仍未实测；MSI/CAB 不支持。
 
 ## 许可
 
