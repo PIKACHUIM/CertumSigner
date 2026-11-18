@@ -11,7 +11,15 @@ import { getCardFor, getSessionFor, peekCard, peekSession, refreshCardFor } from
 import { constantTimeEqual } from "../lib/encoding";
 import { createCaptcha, verifyCaptcha } from "../lib/captcha";
 import { mailConfigured } from "../lib/mail";
-import { ADMIN_COOKIE, createAdminSession, readAdminSession, revokeAdminSession } from "../store/admin";
+import { ADMIN_COOKIE, createAdminSession, readAdminSession, revokeAdminSession, revokeAllAdminSessions } from "../store/admin";
+import {
+  ADMIN_PASSWORD_MIN,
+  adminAuthState,
+  checkAdminCredentials,
+  createAdminAccount,
+  setAdminPassword,
+  touchAdminLogin,
+} from "../store/admin-account";
 import { readSettings, writeSettings } from "../store/settings";
 import { createApiKey, deleteApiKey, deleteKeysOfUser, listApiKeys, listKeysOfUser, setApiKeyEnabled } from "../store/keys";
 import {
@@ -43,6 +51,7 @@ import {
   adminLoginPage,
   adminLogsPage,
   adminSettingsPage,
+  adminSetupPage,
   adminUserPage,
   adminUsersPage,
   type CredentialStatus,
@@ -172,7 +181,52 @@ function queryMessages(c: Context<AdminEnv>): { notice?: string; error?: string 
 
 export const admin = new Hono<AdminEnv>();
 
+/* ------------------------------ 初始化管理员 ------------------------------ */
+
+admin.get("/admin/setup", async (c) => {
+  const state = await adminAuthState(c.env);
+  // 已经初始化过（KV 账号或旧版 ADMIN_PASSWORD）就没必要再暴露这个页面
+  if (state.mode !== "unconfigured") return c.redirect("/admin/login");
+  const context = pageContext(c);
+  return c.html(adminSetupPage({ prefs: context.prefs, t: context.t, self: context.self }));
+});
+
+admin.post("/admin/setup", async (c) => {
+  const context = pageContext(c);
+  const { t } = context;
+  if ((await adminAuthState(c.env)).mode !== "unconfigured") return c.redirect("/admin/login");
+
+  const form = await readForm(c);
+  const username = one(form, "username");
+  const password = one(form, "password");
+  const confirm = one(form, "confirm");
+  const render = (error: string, status: 400 | 500 = 400) =>
+    c.html(adminSetupPage({ ...context, self: "/admin/setup", error, username }), status);
+
+  if (!/^[A-Za-z0-9_.-]{3,32}$/.test(username)) return render(t("setup.errUser"));
+  if (password.length < ADMIN_PASSWORD_MIN) return render(t("setup.errShort"));
+  if (password !== confirm) return render(t("setup.errMismatch"));
+
+  try {
+    await createAdminAccount(c.env, { username, password });
+  } catch (error) {
+    return render(localizeError(t, error instanceof Error ? error.message : String(error)), 500);
+  }
+
+  const { cookie } = await createAdminSession(c.env, TTL_MS);
+  setCookie(c, ADMIN_COOKIE, cookie, {
+    httpOnly: true,
+    secure: isSecureRequest(c),
+    sameSite: "Lax",
+    path: "/",
+    maxAge: Math.floor(TTL_MS / 1000),
+  });
+  return c.redirect(`/admin?ok=${encodeURIComponent(t("setup.done"))}`);
+});
+
 admin.get("/admin/login", async (c) => {
+  const state = await adminAuthState(c.env);
+  if (state.mode === "unconfigured") return c.redirect("/admin/setup");
   const existing = await readAdminSession(c.env, getCookie(c, ADMIN_COOKIE));
   if (existing) return c.redirect("/admin");
   const context = pageContext(c);
@@ -182,6 +236,7 @@ admin.get("/admin/login", async (c) => {
       prefs: context.prefs,
       t: context.t,
       self: context.self,
+      useUsername: state.mode === "account",
       captcha: settings.loginCaptcha ? await createCaptcha(c.env) : undefined,
     }),
   );
@@ -191,14 +246,19 @@ admin.post("/admin/login", async (c) => {
   const context = pageContext(c);
   const { t } = context;
   const settings = await readSettings(c.env);
+  const state = await adminAuthState(c.env);
+  if (state.mode === "unconfigured") return c.redirect("/admin/setup");
+
   // 验证码是一次性的：任何失败页都要重新生成一张
-  const loginPage = async (error?: string, status: 401 | 429 | 500 = 401) =>
+  const loginPage = async (error?: string, status: 401 | 429 = 401, username = "") =>
     c.html(
       adminLoginPage({
         prefs: context.prefs,
         t,
         self: "/admin/login",
         error,
+        username,
+        useUsername: state.mode === "account",
         captcha: settings.loginCaptcha ? await createCaptcha(c.env) : undefined,
       }),
       status,
@@ -212,22 +272,23 @@ admin.post("/admin/login", async (c) => {
   const form = await readForm(c);
   if (settings.loginCaptcha && !(await verifyCaptcha(c.env, one(form, "captchaId"), one(form, "captcha")))) {
     await bumpLoginFailure(c.env, "admin", ip);
-    return loginPage(t("login.errCaptcha"), 401);
+    return loginPage(t("login.errCaptcha"), 401, one(form, "username"));
   }
 
+  const username = one(form, "username");
   const password = one(form, "password");
-  const expected = (c.env.ADMIN_PASSWORD ?? "").trim();
+  const ok =
+    state.mode === "account"
+      ? await checkAdminCredentials(c.env, username, password)
+      : constantTimeEqual(password, (c.env.ADMIN_PASSWORD ?? "").trim());
 
-  if (!expected) {
-    return loginPage(t("login.errNoPassword"), 500);
-  }
-
-  if (!password || !constantTimeEqual(password, expected)) {
+  if (!password || !ok) {
     await bumpLoginFailure(c.env, "admin", ip);
-    return loginPage(t("login.errBadPassword"), 401);
+    return loginPage(t("login.errBadPassword"), 401, username);
   }
 
   await c.env.CERTUM_KV.delete(`adminfail:${ip}`);
+  if (state.account) await touchAdminLogin(c.env, state.account);
   const { cookie } = await createAdminSession(c.env, TTL_MS);
   setCookie(c, ADMIN_COOKIE, cookie, {
     httpOnly: true,
@@ -244,7 +305,11 @@ const secure = new Hono<AdminEnv>();
 secure.use("*", async (c, next) => {
   const record = await readAdminSession(c.env, getCookie(c, ADMIN_COOKIE));
   if (!record) {
-    if (c.req.method === "GET") return c.redirect("/admin/login");
+    if (c.req.method === "GET") {
+      // 还没初始化就直接去建账号，少一次跳转
+      const state = await adminAuthState(c.env);
+      return c.redirect(state.mode === "unconfigured" ? "/admin/setup" : "/admin/login");
+    }
     return c.json({ ok: false, error: { code: "unauthorized", message: "会话已失效，请重新登录" } }, 401);
   }
   if (record.expiresAt < Date.now()) {
@@ -591,6 +656,7 @@ secure.post("/keys/:id/delete", async (c) => {
 
 secure.get("/settings", async (c) => {
   const settings = await readSettings(c.env);
+  const state = await adminAuthState(c.env);
   return c.html(
     adminSettingsPage({
       ...pageContext(c),
@@ -598,6 +664,8 @@ secure.get("/settings", async (c) => {
       csrf: c.get("adminSession").csrf,
       settings,
       mailReady: mailConfigured(c.env),
+      adminMode: state.mode,
+      adminUsername: state.account?.username,
     }),
   );
 });
@@ -614,6 +682,43 @@ secure.post("/settings", async (c) => {
     emailCaptcha: on("emailCaptcha"),
   });
   return backWith(c, "/admin/settings", "ok", tr(c)("settings.saved"));
+});
+
+secure.post("/settings/password", async (c) => {
+  const form = await readForm(c);
+  if (!(await checkCsrf(c, form))) return csrfFail(c);
+
+  const state = await adminAuthState(c.env);
+  if (state.mode !== "account" || !state.account) {
+    return backWith(c, "/admin/settings", "error", tr(c)("settings.passwordEnvMode"));
+  }
+
+  const current = one(form, "current");
+  const next = one(form, "next");
+  const confirm = one(form, "confirm");
+
+  if (!(await checkAdminCredentials(c.env, state.account.username, current))) {
+    return backWith(c, "/admin/settings", "error", tr(c)("settings.passwordWrong"));
+  }
+  if (next.length < ADMIN_PASSWORD_MIN) {
+    return backWith(c, "/admin/settings", "error", tr(c)("settings.passwordShort"));
+  }
+  if (next !== confirm) {
+    return backWith(c, "/admin/settings", "error", tr(c)("settings.passwordMismatch"));
+  }
+
+  await setAdminPassword(c.env, next);
+  // 旧会话全部作废，再给当前浏览器发一张新的，避免「改了口令但旧 cookie 还能用」
+  await revokeAllAdminSessions(c.env);
+  const { cookie } = await createAdminSession(c.env, TTL_MS);
+  setCookie(c, ADMIN_COOKIE, cookie, {
+    httpOnly: true,
+    secure: isSecureRequest(c),
+    sameSite: "Lax",
+    path: "/",
+    maxAge: Math.floor(TTL_MS / 1000),
+  });
+  return backWith(c, "/admin/settings", "ok", tr(c)("settings.passwordChanged"));
 });
 
 /* --------------------------------- 日志/API -------------------------------- */

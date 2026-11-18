@@ -26,9 +26,9 @@ export interface Env {
   /** 账号下有多张卡片时，用证书 DER 的 SHA-1 指纹挑出要用的那张 */
   CERTUM_CERTIFICATE_SHA1?: string;
 
-  /** 管理员密码（secret） */
+  /** 旧版管理员密码（secret）；没有 KV 管理员账号时作为回退登录方式 */
   ADMIN_PASSWORD: string;
-  /** 管理员会话签名密钥（secret） */
+  /** 管理员会话签名密钥（secret）；不配置时由初始化流程生成并存 KV */
   SESSION_SECRET: string;
   /** 设为 "0" 可关闭签名明细日志 */
   LOG_SIGNATURES?: string;
@@ -171,4 +171,15 @@ export interface AdminSessionRecord {
   csrf: string;
   createdAt: number;
   expiresAt: number;
+}
+
+/** 管理员账号：首次部署时在 /admin/setup 创建，口令只存 PBKDF2 哈希 */
+export interface AdminAccountRecord {
+  id: string;
+  username: string;
+  /** pbkdf2$迭代次数$salt$hash（Base64） */
+  passwordHash: string;
+  createdAt: number;
+  updatedAt: number;
+  lastLoginAt?: number;
 }

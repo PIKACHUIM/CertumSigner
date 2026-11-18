@@ -2,14 +2,14 @@
  * 普通用户：登录门户、自己建 API Key。用户名唯一，用 `uname:<小写>` 做索引。
  */
 import type { Env, UserRecord } from "../types";
-import { randomId } from "../lib/encoding";
-import { hashPassword, verifyPassword } from "../lib/passwords";
+import { randomId } from "../lib/encoding.ts";
+import { hashPassword, verifyPassword } from "../lib/passwords.ts";
 
 const PREFIX = "user:";
 const NAME_PREFIX = "uname:";
 const MAIL_PREFIX = "umail:";
 
-function validUsername(raw: string): string {
+export function validUsername(raw: string): string {
   const name = raw.trim();
   if (!/^[A-Za-z0-9_.-]{3,32}$/.test(name)) {
     throw new Error("用户名只能是 3~32 位字母、数字、下划线、点或短横线");

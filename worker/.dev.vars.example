@@ -13,7 +13,8 @@ CERTUM_OTP_PERIOD=30
 # 账号下有多张卡片时，用证书 DER 的 SHA-1 指纹指定用哪张（openssl x509 -fingerprint -sha1）
 # CERTUM_CERTIFICATE_SHA1=0000000000000000000000000000000000000000
 
-# 管理员登录密码（/admin）
+# 旧版管理员登录密码（/admin）。留空也行：首次打开 /admin 会进初始化页，
+# 账号存在 KV 里，之后这里填什么都不再使用
 ADMIN_PASSWORD=change-me-please
 
 # 用于给管理员会话 cookie 签名，随便一串 32+ 字符随机值

@@ -2,17 +2,12 @@
  * 用户门户会话：与管理员共用 HMAC cookie 方案，但 cookie 名、KV 前缀、TTL 都独立。
  */
 import type { Env, UserSessionRecord } from "../types";
-import { base64UrlEncode, randomToken } from "../lib/encoding";
+import { base64UrlEncode, randomToken } from "../lib/encoding.ts";
+import { readSessionSecret, requireSessionSecret } from "../lib/session-secret.ts";
 
 export const USER_COOKIE = "cs_user";
 const PREFIX = "usess:";
 const DEFAULT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-
-function secretOf(env: Env): string {
-  const secret = (env.SESSION_SECRET || env.ADMIN_PASSWORD || "").trim();
-  if (!secret) throw new Error("缺少 SESSION_SECRET / ADMIN_PASSWORD，无法签名会话 cookie");
-  return secret;
-}
 
 async function hmac(text: string, secret: string): Promise<string> {
   const key = await crypto.subtle.importKey(
@@ -43,7 +38,7 @@ export async function createUserSession(
     expirationTtl: Math.max(60, Math.floor(ttlMs / 1000)),
   });
 
-  const mac = await hmac(record.id, secretOf(env));
+  const mac = await hmac(record.id, await requireSessionSecret(env));
   return { record, cookie: `${record.id}.${mac}` };
 }
 
@@ -54,7 +49,9 @@ export async function readUserSession(env: Env, cookieValue: string | undefined)
 
   const sid = cookieValue.slice(0, dot);
   const mac = cookieValue.slice(dot + 1);
-  const expected = await hmac(sid, secretOf(env));
+  const secret = await readSessionSecret(env);
+  if (!secret) return null;
+  const expected = await hmac(sid, secret);
   if (mac !== expected) return null;
 
   const record = await env.CERTUM_KV.get<UserSessionRecord>(`${PREFIX}${sid}`, "json");

@@ -71,8 +71,18 @@ export function adminLoginPage(data: {
   error?: string;
   notice?: string;
   captcha?: CaptchaView;
+  /** KV 里存的是「用户名 + 口令」，登录页要显示用户名输入框 */
+  useUsername?: boolean;
+  username?: string;
 }): string {
   const { t } = data;
+  const show = escapeHtml(t("login.show"));
+  const hide = escapeHtml(t("login.hide"));
+  const usernameField = data.useUsername
+    ? `<label class="auth__field">${escapeHtml(t("login.username"))}
+      <input type="text" name="username" autocomplete="username" value="${escapeHtml(data.username ?? "")}" required autofocus>
+    </label>`
+    : "";
   return loginShell({
     title: t("login.adminTitle"),
     subtitle: t("login.adminSubtitle"),
@@ -83,12 +93,12 @@ export function adminLoginPage(data: {
     error: data.error,
     notice: data.notice,
     captcha: data.captcha,
-    body: `<label class="auth__field">${escapeHtml(t("login.password"))}
+    body: `${usernameField}<label class="auth__field">${escapeHtml(t("login.password"))}
       <div class="auth__box">
-        <input type="password" name="password" autocomplete="current-password" autofocus required>
-        <button type="button" class="auth__peek" data-peek data-show="${escapeHtml(
-          t("login.show"),
-        )}" data-hide="${escapeHtml(t("login.hide"))}">${escapeHtml(t("login.show"))}</button>
+        <input type="password" name="password" autocomplete="current-password" ${
+          data.useUsername ? "" : "autofocus "
+        }required>
+        <button type="button" class="auth__peek" data-peek data-show="${show}" data-hide="${hide}">${show}</button>
       </div>
     </label>
     ${data.captcha ? captchaField(data.captcha, t) : ""}
@@ -98,6 +108,51 @@ export function adminLoginPage(data: {
     <div class="auth__links"><span>${escapeHtml(t("login.toUser"))} <a href="/user/login">${escapeHtml(
       t("login.userLink"),
     )}</a></span><a href="/">${escapeHtml(t("login.backHome"))}</a></div>`,
+  });
+}
+
+export function adminSetupPage(data: {
+  prefs: Prefs;
+  t: Translate;
+  self: string;
+  error?: string;
+  username?: string;
+}): string {
+  const { t } = data;
+  const show = escapeHtml(t("login.show"));
+  const hide = escapeHtml(t("login.hide"));
+  return loginShell({
+    title: t("setup.title"),
+    subtitle: t("setup.subtitle"),
+    action: "/admin/setup",
+    prefs: data.prefs,
+    t,
+    self: data.self,
+    error: data.error,
+    body: `<label class="auth__field">${escapeHtml(t("setup.username"))}
+      <input type="text" name="username" autocomplete="username" value="${escapeHtml(
+        data.username ?? "admin",
+      )}" minlength="3" maxlength="32" required autofocus>
+    </label>
+    <label class="auth__field">${escapeHtml(t("setup.password"))}
+      <div class="auth__box">
+        <input type="password" name="password" autocomplete="new-password" minlength="10" required>
+        <button type="button" class="auth__peek" data-peek data-show="${show}" data-hide="${hide}">${show}</button>
+      </div>
+    </label>
+    <label class="auth__field">${escapeHtml(t("setup.confirm"))}
+      <div class="auth__box">
+        <input type="password" name="confirm" autocomplete="new-password" minlength="10" required>
+        <button type="button" class="auth__peek" data-peek data-show="${show}" data-hide="${hide}">${show}</button>
+      </div>
+    </label>
+    <p class="small muted" style="margin:0">${escapeHtml(t("setup.hint"))}</p>
+    <button class="btn btn--primary auth__submit" type="submit">
+      <span>${escapeHtml(t("setup.submit"))}</span><span class="arrow">→</span>
+    </button>
+    <div class="auth__links"><span>${escapeHtml(t("setup.retryHint"))}</span><a href="/">${escapeHtml(
+      t("login.backHome"),
+    )}</a></div>`,
   });
 }
 
@@ -838,6 +893,9 @@ export function adminLogsPage(data: LogsPageData): string {
 export interface SettingsPageData extends AdminNavData {
   settings: SystemSettings;
   mailReady: boolean;
+  /** account = KV 里的管理员账号；env = 旧版 ADMIN_PASSWORD */
+  adminMode: "unconfigured" | "account" | "env";
+  adminUsername?: string;
 }
 
 function toggle(name: string, label: string, hint: string, checked: boolean): string {
@@ -888,6 +946,50 @@ export function adminSettingsPage(data: SettingsPageData): string {
       <div class="row row--end">
         <button class="btn btn--primary" type="submit">${escapeHtml(t("settings.save"))}</button>
       </div>
-    </form>`,
+    </form>
+    ${adminAccountCard(data)}`,
   );
+}
+
+/** 管理员账号卡片：KV 账号可以改口令；旧版环境变量模式只展示说明 */
+function adminAccountCard(data: SettingsPageData): string {
+  const { t } = data;
+  const modePill =
+    data.adminMode === "account"
+      ? pill(t("settings.adminModeAccount"), "ok")
+      : pill(t("settings.adminModeEnv"), "warn");
+  const heading = `<div class="row" style="justify-content:space-between;margin-bottom:10px">
+      <h2 style="margin:0">${escapeHtml(t("settings.adminAccount"))}</h2>${modePill}
+    </div>`;
+
+  if (data.adminMode !== "account") {
+    return `<div class="card" style="margin-top:16px">
+      ${heading}
+      <p class="small muted" style="margin:0">${escapeHtml(t("settings.passwordEnvMode"))}</p>
+    </div>`;
+  }
+
+  return `<div class="card" style="margin-top:16px">
+    ${heading}
+    <p class="small muted" style="margin:0 0 12px">${escapeHtml(
+      t("settings.adminUser", { name: data.adminUsername ?? "" }),
+    )}</p>
+    <form method="post" action="/admin/settings/password">
+      <input type="hidden" name="csrf" value="${escapeHtml(data.csrf)}">
+      <div class="grid cols-2">
+        <label class="field">${escapeHtml(t("settings.currentPassword"))}
+          <input type="password" name="current" autocomplete="current-password" required>
+        </label>
+        <label class="field">${escapeHtml(t("settings.newPassword"))}
+          <input type="password" name="next" autocomplete="new-password" minlength="10" required>
+        </label>
+        <label class="field">${escapeHtml(t("settings.confirmPassword"))}
+          <input type="password" name="confirm" autocomplete="new-password" minlength="10" required>
+        </label>
+      </div>
+      <div class="row row--end" style="margin-top:14px">
+        <button class="btn btn--primary" type="submit">${escapeHtml(t("settings.changePassword"))}</button>
+      </div>
+    </form>
+  </div>`;
 }
