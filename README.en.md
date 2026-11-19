@@ -5,8 +5,8 @@
   <p>The private key never leaves Certum — no SimplySign Desktop and no signtool on your machine</p>
   <p>Cloud side runs on Cloudflare Workers (Hono + KV); the client is C++17: Win32 GUI on Windows, GTK3 GUI + CLI on Linux</p>
 
-<a href="LICENSE"><img src="https://img.shields.io/github/license/PIKACHUIM/CertumSigner?color=blue" alt="License" /></a>
-<a href="https://github.com/PIKACHUIM/CertumSigner/releases"><img src="https://img.shields.io/github/v/release/PIKACHUIM/CertumSigner?include_prereleases&sort=date&label=release" alt="Release" /></a>
+<a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0--or--later-blue.svg" alt="License" /></a>
+<a href="https://github.com/PIKACHUIM/CertumSigner/releases"><img src="https://img.shields.io/github/v/release/PIKACHUIM/CertumSigner?sort=date&label=release" alt="Release" /></a>
 <a href="https://github.com/PIKACHUIM/CertumSigner/actions/workflows/beta.yml"><img src="https://img.shields.io/github/actions/workflow/status/PIKACHUIM/CertumSigner/beta.yml?branch=main&label=client%20build" alt="Client build" /></a>
 <a href="https://github.com/PIKACHUIM/CertumSigner/stargazers"><img src="https://img.shields.io/github/stars/PIKACHUIM/CertumSigner?color=%23ED8936&logo=github" alt="Stars" /></a>
 <a href="https://github.com/PIKACHUIM/CertumSigner/forks"><img src="https://img.shields.io/github/forks/PIKACHUIM/CertumSigner?color=%239F7AEA&logo=github" alt="Forks" /></a>

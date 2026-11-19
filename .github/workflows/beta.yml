@@ -8,7 +8,8 @@ on:
     branches:
       - main
     paths:
-      - "client/**"
+      - "client/src/**"
+      - "client/CMakeLists.txt"
       - "LICENSE"
   workflow_dispatch:
 
