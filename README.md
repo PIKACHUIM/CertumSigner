@@ -285,7 +285,7 @@ curl -X POST https://sign.example.com/v1/sign \
 | 触发 | 结果 |
 | --- | --- |
 | 推 `v*` tag（如 `v1.0`） | 构建 8 个产物，发布带版本号的正式 Release，并设为 Latest |
-| `client/` 或 `LICENSE` 合进 `main` | 自动构建并刷新 [`beta`](https://github.com/PIKACHUIM/CertumSigner/releases/tag/beta) 预发布（不算 Latest） |
+| `client/src/**`、`client/CMakeLists.txt` 或 `LICENSE` 合进 `main` | 自动构建并刷新 [`beta`](https://github.com/PIKACHUIM/CertumSigner/releases/tag/beta) 预发布（不算 Latest） |
 | Actions 里手动运行 `Release` | 用输入的 tag 名发布正式版 |
 
 ```bash

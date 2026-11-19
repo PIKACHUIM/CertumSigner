@@ -283,7 +283,7 @@ Enterprise security agents (Tencent iOA in our tests) block unsigned binaries fr
 | Trigger | Result |
 | --- | --- |
 | Push a `v*` tag (e.g. `v1.0`) | build 8 artifacts and publish a versioned release, marked Latest |
-| `client/` or `LICENSE` lands on `main` | build and refresh the [`beta`](https://github.com/PIKACHUIM/CertumSigner/releases/tag/beta) prerelease (never Latest) |
+| `client/src/**`, `client/CMakeLists.txt` or `LICENSE` lands on `main` | build and refresh the [`beta`](https://github.com/PIKACHUIM/CertumSigner/releases/tag/beta) prerelease (never Latest) |
 | Run the `Release` workflow manually | publish a release under the tag name you enter |
 
 ```bash
