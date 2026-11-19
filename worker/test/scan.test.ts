@@ -201,6 +201,45 @@ test("上传时校验 SHA-256，轮询完成后写入结果缓存", async () => 
   }
 });
 
+test("Base64 分析 ID（带 == 填充）能存进 KV 并编码后回源", async () => {
+  const bytes = new TextEncoder().encode("base64 id");
+  const sha = await sha256Hex(bytes);
+  const env = { CERTUM_KV: new MemoryKV() } as unknown as Env;
+  const realFetch = globalThis.fetch;
+  // VirusTotal 真实返回的形状：Base64 + == 填充
+  const id = "NDM5OGY0Y2MxM2NlNTgwYWRlZTE4OWYwZTU0YTRhMDU6MTc5NTEwMzY4OQ==";
+  const requested: string[] = [];
+
+  globalThis.fetch = (async (input: unknown, init?: RequestInit) => {
+    const url = String(input);
+    requested.push(url);
+    if (url.endsWith("/files") && init?.method === "POST") {
+      return json({ data: { type: "analysis", id } });
+    }
+    return json({
+      data: { attributes: { status: "completed", stats: { malicious: 1, undetected: 60 }, date: 1_700_000_000 } },
+      meta: { file_info: { sha256: sha } },
+    });
+  }) as typeof fetch;
+
+  try {
+    const uploaded = await uploadForScan(env, settings(), bytes, "app.exe", sha);
+    assert.equal(uploaded.id, id);
+
+    const state = await pollScanAnalysis(env, settings(), id);
+    assert.ok(state);
+    assert.equal(state.done, true);
+    assert.equal(state.verdict?.malicious, 1);
+
+    // ID 里的 = 必须编码，否则上游按路径参数解析会出错
+    const analysisUrl = requested.find((url) => url.includes("/analyses/"));
+    assert.ok(analysisUrl, "没有请求 analyses 接口");
+    assert.ok(analysisUrl.includes(encodeURIComponent(id)), `分析 ID 未编码：${analysisUrl}`);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
 test("声明的 SHA-256 与上传内容不一致时拒绝上传", async () => {
   const bytes = new TextEncoder().encode("content");
   const env = { CERTUM_KV: new MemoryKV() } as unknown as Env;

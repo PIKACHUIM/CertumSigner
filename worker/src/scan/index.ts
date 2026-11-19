@@ -60,8 +60,8 @@ const MISS_PREFIX = "scan:miss:";
 const ANALYSIS_PREFIX = "scan:analysis:";
 const MISS_TTL = 60;
 const ANALYSIS_TTL = 60 * 60;
-/** 免费配额很紧，轮询结果至少间隔 10 秒才回源 */
-const POLL_INTERVAL_MS = 10_000;
+/** 免费配额是 4 次/分钟，20 秒间隔留出余量（多个任务同时轮询也不会打爆） */
+const POLL_INTERVAL_MS = 20_000;
 
 export function readScanSettings(config: RuntimeConfig): ScanSettings {
   return {
@@ -217,7 +217,7 @@ const virustotal: ProviderAdapter = {
   },
 
   async analysis(settings, id) {
-    const { status, json } = await requestJson("virustotal", `${settings.baseUrl}/analyses/${id}`, {
+    const { status, json } = await requestJson("virustotal", `${settings.baseUrl}/analyses/${encodeURIComponent(id)}`, {
       headers: { "x-apikey": settings.apiKey, accept: "application/json" },
     });
     if (status === 404) throw new ScanError("scan_analysis_not_found", 404, "查杀任务不存在或已过期");
@@ -273,7 +273,7 @@ const metadefender: ProviderAdapter = {
   },
 
   async analysis(settings, id) {
-    const { status, json } = await requestJson("metadefender", `${settings.baseUrl}/file/${id}`, {
+    const { status, json } = await requestJson("metadefender", `${settings.baseUrl}/file/${encodeURIComponent(id)}`, {
       headers: { apikey: settings.apiKey, accept: "application/json" },
     });
     if (status === 404) throw new ScanError("scan_analysis_not_found", 404, "查杀任务不存在或已过期");
@@ -380,7 +380,7 @@ export async function uploadForScan(
   return { id, sha256 };
 }
 
-/** 轮询分析结果；10 秒内重复调用只返回 KV 里的状态，避免打爆免费配额。 */
+/** 轮询分析结果；20 秒内重复调用只返回 KV 里的状态，避免打爆免费配额。 */
 export async function pollScanAnalysis(
   env: Env,
   settings: ScanSettings,

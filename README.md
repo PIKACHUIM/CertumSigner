@@ -279,7 +279,7 @@ curl -X POST https://sign.example.com/v1/sign \
 | `GET /v1/scan/policy` | 当前证书的扫描模式、风险阈值、服务商与手动上传页地址 |
 | `GET /v1/scan/check?sha256=` | 按原始文件 SHA-256 查询结果（`found=false` 表示未收录） |
 | `POST /v1/scan/upload?sha256=&name=` | 上传原始文件字节，Worker 中转给查杀服务，返回 `analysisId` |
-| `GET /v1/scan/analysis/:id` | 轮询查杀任务（Worker 内部 10 秒节流，节省免费配额） |
+| `GET /v1/scan/analysis/:id` | 轮询查杀任务（Worker 内部 20 秒节流，节省免费配额） |
 | `POST /v1/timestamp` | RFC3161 时间戳代理：请求体是 TSQ，返回 TSR |
 | `GET /captcha` | 生成一次性图形验证码（`{id, svg}`，5 分钟有效） |
 | `GET /prefs?lang=&mode=&theme=&back=` | 切换界面语言 / 明暗 / 主题，写 cookie 后 302 回 `back` |

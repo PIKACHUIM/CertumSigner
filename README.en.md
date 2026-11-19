@@ -277,7 +277,7 @@ Failures are always `{"ok":false,"error":{"code":"...","message":"..."}}` with c
 | `GET /v1/scan/policy` | scan mode, risk limit, provider and manual upload URL for the current certificate |
 | `GET /v1/scan/check?sha256=` | look up a raw-file SHA-256 (`found=false` means unknown) |
 | `POST /v1/scan/upload?sha256=&name=` | relay raw file bytes to the scanning provider; returns an `analysisId` |
-| `GET /v1/scan/analysis/:id` | poll an analysis (throttled 10 s internally to save free quota) |
+| `GET /v1/scan/analysis/:id` | poll an analysis (throttled 20 s internally to save free quota) |
 | `POST /v1/timestamp` | RFC3161 proxy: TSQ in, TSR out |
 | `GET /captcha` | issue a one-time image captcha (`{id, svg}`, 5-minute TTL) |
 | `GET /prefs?lang=&mode=&theme=&back=` | switch language / mode / theme, set cookies and 302 back |

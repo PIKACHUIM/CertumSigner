@@ -566,12 +566,21 @@ v1.post("/scan/upload", async (c) => {
   }
 });
 
-/** 轮询分析结果；Worker 内部有 10 秒节流，客户端可以放心每 3–5 秒问一次 */
+/** 轮询分析结果；Worker 内部有 20 秒节流，客户端可以放心每 3–5 秒问一次 */
 v1.get("/scan/analysis/:id", async (c) => {
   const credential = c.get("credential") as CredentialRecord;
   const policy = scanPolicyOf(credential);
-  const id = c.req.param("id");
-  if (!/^[A-Za-z0-9._-]{1,200}$/.test(id)) return jsonError(c, 400, "bad_analysis_id", "分析 ID 格式不正确");
+  // VirusTotal 的分析 ID 是带 == 填充的 Base64；个别边缘会保留百分号编码，这里先解一次
+  const rawId = c.req.param("id");
+  let id = rawId;
+  if (/%[0-9A-Fa-f]{2}/.test(rawId)) {
+    try {
+      id = decodeURIComponent(rawId);
+    } catch {
+      id = rawId;
+    }
+  }
+  if (!/^[A-Za-z0-9._=+-]{1,300}$/.test(id)) return jsonError(c, 400, "bad_analysis_id", "分析 ID 格式不正确");
 
   const config = await readConfig(c.env);
   const settings = readScanSettings(config);
