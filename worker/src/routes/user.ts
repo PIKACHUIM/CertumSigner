@@ -22,6 +22,7 @@ import { readUserLogs } from "../store/stats";
 import { constantTimeEqual, sha256Hex } from "../lib/encoding";
 import { readConfig } from "../store/config";
 import {
+  SCAN_BUFFER_LIMIT_BYTES,
   ScanError,
   evaluateVerdict,
   isScanConfigured,
@@ -781,7 +782,7 @@ secure.get("/scan", async (c) => {
       user: account,
       provider: settings.provider,
       configured: isScanConfigured(settings),
-      maxUploadMb: settings.maxUploadMb,
+      maxUploadMb: Math.min(settings.maxUploadMb, Math.floor(SCAN_BUFFER_LIMIT_BYTES / 1048576)),
       sha256: validSha || undefined,
       verdict: verdict ?? undefined,
       risk,
@@ -793,6 +794,13 @@ secure.get("/scan", async (c) => {
 });
 
 secure.post("/scan", async (c) => {
+  // 门户用 multipart 表单，会整份读进内存；超过缓冲上限必须在解析前挡掉
+  const declaredRaw = c.req.header("content-length");
+  const declared = declaredRaw ? Number(declaredRaw) : 0;
+  if (Number.isFinite(declared) && declared > SCAN_BUFFER_LIMIT_BYTES + 1048576) {
+    return backWith(c, "/user/scan", "error", tr(c)("scan.tooLargePortal"));
+  }
+
   const form = await c.req.parseBody();
   const csrf = typeof form["csrf"] === "string" ? form["csrf"] : "";
   if (!constantTimeEqual(csrf, c.get("userSession").csrf)) {
@@ -806,8 +814,8 @@ secure.post("/scan", async (c) => {
   const file = form["file"];
   if (!(file instanceof File)) return backWith(c, "/user/scan", "error", tr(c)("scan.chooseFile"));
   if (file.size <= 0) return backWith(c, "/user/scan", "error", tr(c)("scan.chooseFile"));
-  if (file.size > scanUploadLimitBytes(settings)) {
-    return backWith(c, "/user/scan", "error", tr(c)("scan.tooLarge", { mb: settings.maxUploadMb }));
+  if (file.size > SCAN_BUFFER_LIMIT_BYTES || file.size > scanUploadLimitBytes(settings)) {
+    return backWith(c, "/user/scan", "error", tr(c)("scan.tooLargePortal"));
   }
 
   try {

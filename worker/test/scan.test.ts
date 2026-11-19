@@ -11,6 +11,7 @@ import {
   riskScore,
   scanPolicyOf,
   uploadForScan,
+  uploadStreamForScan,
 } from "../src/scan/index.ts";
 import { sha256Hex } from "../src/lib/encoding.ts";
 
@@ -235,6 +236,86 @@ test("Base64 分析 ID（带 == 填充）能存进 KV 并编码后回源", async
     const analysisUrl = requested.find((url) => url.includes("/analyses/"));
     assert.ok(analysisUrl, "没有请求 analyses 接口");
     assert.ok(analysisUrl.includes(encodeURIComponent(id)), `分析 ID 未编码：${analysisUrl}`);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test("大文件走 upload_url 并流式转发，不在内存里拼整份 multipart", async () => {
+  const env = { CERTUM_KV: new MemoryKV() } as unknown as Env;
+  const realFetch = globalThis.fetch;
+  const sha = "c".repeat(64);
+  const urls: string[] = [];
+  let envelope = "";
+
+  globalThis.fetch = (async (input: unknown, init?: RequestInit) => {
+    const url = String(input);
+    urls.push(url);
+    if (url.endsWith("/files/upload_url")) return json({ data: "https://bigfiles.test/upload/one" });
+
+    const reader = (init?.body as ReadableStream<Uint8Array>).getReader();
+    const chunks: Uint8Array[] = [];
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) chunks.push(value);
+    }
+    envelope = Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))).toString("latin1");
+    return json({ data: { id: "an_big" } });
+  }) as typeof fetch;
+
+  try {
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("payload-"));
+        controller.enqueue(new TextEncoder().encode("bytes"));
+        controller.close();
+      },
+    });
+
+    const result = await uploadStreamForScan(env, settings(), body, "big.bin", sha, true);
+    assert.equal(result.id, "an_big");
+    assert.equal(result.sha256, sha);
+    assert.ok(urls[0]!.endsWith("/files/upload_url"), `应先取上传地址：${urls[0]}`);
+    assert.equal(urls[1], "https://bigfiles.test/upload/one");
+    assert.ok(envelope.includes('name="file"; filename="big.bin"'), envelope.slice(0, 200));
+    assert.ok(envelope.includes("payload-bytes"));
+    assert.ok(envelope.trimEnd().endsWith("--"), "multipart 缺少结束边界");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test("流式上传后 provider 返回的文件哈希与声明不一致时拒绝采用", async () => {
+  const env = { CERTUM_KV: new MemoryKV() } as unknown as Env;
+  const realFetch = globalThis.fetch;
+  const declared = "c".repeat(64);
+  const reported = "d".repeat(64);
+
+  globalThis.fetch = (async (input: unknown) => {
+    const url = String(input);
+    if (url.endsWith("/files/upload_url")) return json({ data: "https://bigfiles.test/upload/two" });
+    if (url.includes("bigfiles.test")) return json({ data: { id: "an_swap" } });
+    return json({
+      data: { attributes: { status: "completed", stats: { malicious: 0, undetected: 60 } } },
+      meta: { file_info: { sha256: reported } },
+    });
+  }) as typeof fetch;
+
+  try {
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("clean"));
+        controller.close();
+      },
+    });
+    await uploadStreamForScan(env, settings(), body, "switch.bin", declared, true);
+
+    await assert.rejects(
+      pollScanAnalysis(env, settings(), "an_swap"),
+      (error: unknown) =>
+        typeof error === "object" && error !== null && (error as { code?: string }).code === "scan_analysis_mismatch",
+    );
   } finally {
     globalThis.fetch = realFetch;
   }

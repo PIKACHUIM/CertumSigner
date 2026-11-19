@@ -307,14 +307,16 @@ curl -X POST https://sign.example.com/v1/sign \
 
 | Provider | 免费额度 | 单文件 | 说明 |
 | --- | --- | --- | --- |
-| VirusTotal（默认） | 4 次/分钟、500 次/天 | 32 MB（免费直传） | 支持按 SHA-256 查询，未收录再上传 |
-| MetaDefender Cloud | 约 1000 次 hash 查询/天、150 次扫描/天 | 750 MB | 支持按 SHA-256 查询；后台上传上限最高 64 MB |
+| VirusTotal（默认） | 4 次/分钟、500 次/天 | 32 MB 直传；大文件通道 650 MB | 支持按 SHA-256 查询，未收录再上传 |
+| MetaDefender Cloud | 约 1000 次 hash 查询/天、150 次扫描/天 | 750 MB | 支持按 SHA-256 查询；实际受域名入站上限约束 |
+
+**大文件**：≤ 32 MB 由 Worker 缓冲后转发（顺便重算 SHA-256 校验声明值）；> 32 MB 改成流式转发，VirusTotal 走 `/files/upload_url` 的一次性地址（单文件上限 650 MB），Worker 不会把文件读进内存。但 Worker 的入站请求体受**域名套餐**限制：Free / Pro 100 MB、Business 200 MB、Enterprise 最高 5 GB（可在域名的 `Maximum Upload Size` 里调整）。因此在 Free/Pro 上实际天花板是 100 MB；真要传 650 MB 需要 Enterprise 域名，代码无需修改。
 
 Cloudmersive 的免费版只有 600 次/月、3.5 MB，而且只能上传文件、不能按 hash 查询，不适合作为这里的「先查后传」入口，所以没有内置。
 
 **隐私与条款**：VirusTotal 公共 API 会把提交或查询的文件加入其公开样本库，且免费版不可用于商业产品；敏感构建请改用 MetaDefender 或自建私有扫描服务（把「查杀 API 地址」指向自己的反代/网关）。上传前请自行确认合规。
 
-**信任模型**：Worker 只能校验「声明的 SHA-256 在查杀服务里是干净的」，无法从 Authenticode 摘要反推原始文件；自动上传时 Worker 会重新计算上传内容的 SHA-256 并与声明值比对。API Key 持有者本身是受信主体，这个设计防的是客户端 bug / 误签，不是防恶意 Key 持有者。
+**信任模型**：Worker 只能校验「声明的 SHA-256 在查杀服务里是干净的」，无法从 Authenticode 摘要反推原始文件；自动上传时，≤32 MB 的文件由 Worker 重新计算 SHA-256 并与声明值比对，大文件流式转发无法边传边算，改为等查杀服务返回文件哈希后再核对，不一致就拒绝采用结果。API Key 持有者本身是受信主体，这个设计防的是客户端 bug / 误签，不是防恶意 Key 持有者。
 
 ## 发布与版本
 
@@ -344,7 +346,7 @@ git tag v1.0 && git push origin v1.0        # 发正式版
 - 打开后台或凭据页会按需触发 Certum 登录（未登录时最多重试 3 次 OTP），凭据错误时会有几次失败请求。
 - `SHA1` 摘要对 Certum EV 卡片会被云端拒绝，`/v1/sign` 返回 `digest_algorithm_unsupported`；要签老系统兼容的 SHA-1 只能换一张支持它的证书。
 - 只签 PE 文件（`.exe/.dll/.sys/.ocx` 等），不支持 MSI / CAB / 脚本。
-- 病毒查杀按原始文件 SHA-256 工作：VirusTotal 免费版直传上限 32 MB，更大的文件只能先在别处上传再让平台按 hash 查询；免费配额（VT 4 次/分钟）也决定了自动扫描不会很快，批量签名建议错峰。
+- 病毒查杀按原始文件 SHA-256 工作：≤32 MB 由 Worker 缓冲，32–650 MB 流式转发（VirusTotal 大文件通道）；但 Worker 入站请求体受域名套餐限制（Free / Pro 100 MB），650 MB 需要 Enterprise 域名。免费配额（VT 4 次/分钟）也决定了自动扫描不会很快，批量签名建议错峰。
 - VirusTotal 公共 API 会把样本加入公开库且不可用于商业产品；需要私密扫描请换 MetaDefender 或自建反代。
 - Workers 有子请求数限制：一次签名通常 3~8 个请求，批量签名请控制在十几条摘要内。
 - 注册 / 找回密码默认关闭；没配 Resend 时只能由管理员在用户详情页重置密码。
@@ -354,7 +356,7 @@ git tag v1.0 && git push origin v1.0        # 发正式版
 <details>
 <summary>展开查看实测记录</summary>
 
-- Worker：`npx tsc --noEmit` 通过，`npm test` 46 项通过（TOTP 命中 RFC 6238 向量、multipart 解析、编码 / 哈希、KV 存储与密码哈希、用户邮箱唯一性、管理员账号初始化与改密码、运行时配置保存回读、查杀风险阈值 / 结果缓存 / 上传 SHA-256 校验）。
+- Worker：`npx tsc --noEmit` 通过，`npm test` 49 项通过（TOTP 命中 RFC 6238 向量、multipart 解析、编码 / 哈希、KV 存储与密码哈希、用户邮箱唯一性、管理员账号初始化与改密码、运行时配置保存回读、查杀风险阈值 / 结果缓存 / 上传 SHA-256 校验 / 大文件流式转发与哈希核对）。
 - 真实 Certum 链路已跑通（2026-11，Windows x64）：邮箱 + TOTP 登录成功，`/v1/certificate` 返回 EV 代码签名证书，`/v1/sign` 用真实 SHA-256 摘要换回 512 字节签名，写进 PE 后 `WinVerifyTrust` 返回**签名有效**；加真实 Certum 时间戳后仍有效。
 - 界面：四套主题 × 明暗、中英切换、弹窗、900px 与手机宽度（390 / 563px）逐页核对无横向滚动；登录验证码刷新与校验、系统设置持久化、用户级配额、用户自助改 Key 限额均实测。
 - 客户端：MSVC 14.44 + Windows SDK 10.0.22621 + 静态 OpenSSL 3.5.9 以 `/W4 /permissive-` 零告警编译；Win32 GUI 走通登录 → 换发 Key → 拖拽批量签名 → `WinVerifyTrust` 校验；125% 缩放下布局不裁切。

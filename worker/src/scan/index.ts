@@ -36,6 +36,8 @@ export interface ScanAnalysisState {
   /** 上次真正请求 provider 的时间，用来节流免费配额 */
   checkedAt: number;
   createdAt: number;
+  /** 流式上传时 Worker 没算过哈希，只能事后用 provider 返回的 sha256 核对 */
+  unverified?: boolean;
 }
 
 export class ScanError extends Error {
@@ -97,6 +99,12 @@ export function evaluateVerdict(verdict: ScanVerdict, maxRisk: number): { risk: 
 export function scanUploadLimitBytes(settings: ScanSettings): number {
   return settings.maxUploadMb * 1024 * 1024;
 }
+
+/** 缓冲上传的硬上限：Worker 内存只有 128 MB，超过就改成流式转发 */
+export const SCAN_BUFFER_LIMIT_BYTES = 32 * 1024 * 1024;
+
+/** VirusTotal 的单文件硬上限（/files/upload_url 通道） */
+export const SCAN_MAX_BYTES = 650 * 1024 * 1024;
 
 function verdictKey(provider: string, sha256: string): string {
   return `${VERDICT_PREFIX}${provider}:${sha256}`;
@@ -312,6 +320,138 @@ function adapterOf(provider: ScanProviderId): ProviderAdapter {
   return provider === "metadefender" ? metadefender : virustotal;
 }
 
+/**
+ * 把请求体包成 multipart/form-data 并按块转发，不在 Worker 里整份缓冲。
+ * 650 MB 的文件也只会占用单个块的內存。
+ */
+function multipartStream(
+  body: ReadableStream<Uint8Array>,
+  filename: string,
+  boundary: string,
+): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+  const safe = filename.replace(/[\r\n"\\]/g, "_").slice(0, 120) || "upload.bin";
+  const prefix = encoder.encode(
+    `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${safe}"\r\nContent-Type: application/octet-stream\r\n\r\n`,
+  );
+  const suffix = encoder.encode(`\r\n--${boundary}--\r\n`);
+  const reader = body.getReader();
+  let stage = 0;
+
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      if (stage === 0) {
+        stage = 1;
+        controller.enqueue(prefix);
+        return;
+      }
+      if (stage === 1) {
+        const { done, value } = await reader.read();
+        if (!done) {
+          if (value && value.byteLength > 0) controller.enqueue(value);
+          return;
+        }
+        stage = 2;
+      }
+      controller.enqueue(suffix);
+      controller.close();
+    },
+  });
+}
+
+function uploadBoundary(): string {
+  return `----certumsigner${Date.now().toString(16)}${Math.random().toString(16).slice(2, 10)}`;
+}
+
+/** VirusTotal 大文件通道：一次性上传地址，单文件上限 650 MB */
+async function virustotalUploadUrl(settings: ScanSettings): Promise<string> {
+  const { status, json } = await requestJson("virustotal", `${settings.baseUrl}/files/upload_url`, {
+    headers: { "x-apikey": settings.apiKey, accept: "application/json" },
+  });
+  ensureOk("virustotal", status);
+  const url = (json as { data?: string } | null)?.data;
+  if (!url) throw new ScanError("scan_upload_failed", 502, "VirusTotal 没有返回大文件上传地址");
+  return url;
+}
+
+/** 流式上传：请求体直接转发给 provider，不经过 ArrayBuffer */
+async function streamUpload(
+  settings: ScanSettings,
+  body: ReadableStream<Uint8Array>,
+  filename: string,
+  large: boolean,
+): Promise<string> {
+  const boundary = uploadBoundary();
+
+  if (settings.provider === "virustotal") {
+    // 超过 32 MB 必须走 upload_url，否则直接 POST /files
+    const url = large ? await virustotalUploadUrl(settings) : `${settings.baseUrl}/files`;
+    const { status, json } = await requestJson("virustotal", url, {
+      method: "POST",
+      headers: {
+        "x-apikey": settings.apiKey,
+        accept: "application/json",
+        "content-type": `multipart/form-data; boundary=${boundary}`,
+      },
+      body: multipartStream(body, filename, boundary),
+    });
+    ensureOk("virustotal", status);
+    const id = (json as { data?: { id?: string } } | null)?.data?.id;
+    if (!id) throw new ScanError("scan_upload_failed", 502, "VirusTotal 没有返回分析 ID");
+    return id;
+  }
+
+  const { status, json } = await requestJson("metadefender", `${settings.baseUrl}/file`, {
+    method: "POST",
+    headers: {
+      apikey: settings.apiKey,
+      accept: "application/json",
+      "content-type": `multipart/form-data; boundary=${boundary}`,
+    },
+    body: multipartStream(body, filename, boundary),
+  });
+  ensureOk("metadefender", status);
+  const id = (json as { data_id?: string } | null)?.data_id;
+  if (!id) throw new ScanError("scan_upload_failed", 502, "MetaDefender 没有返回 data_id");
+  return id;
+}
+
+/**
+ * 大文件上传：Worker 不缓冲请求体，直接流式转发。
+ * 因为没算过哈希，只能先信任声明的 SHA-256，等 provider 返回文件哈希后再核对。
+ */
+export async function uploadStreamForScan(
+  env: Env,
+  settings: ScanSettings,
+  body: ReadableStream<Uint8Array>,
+  filename: string,
+  declaredSha256: string,
+  large: boolean,
+): Promise<{ id: string; sha256: string }> {
+  if (!settings.apiKey) {
+    throw new ScanError("scan_not_configured", 503, "还没有配置查杀 API Key");
+  }
+  const sha256 = declaredSha256.trim().toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(sha256)) {
+    throw new ScanError("scan_proof_required", 400, "流式上传必须提供原始文件的 SHA-256");
+  }
+
+  const id = await streamUpload(settings, body, filename, large);
+  const state: ScanAnalysisState = {
+    provider: settings.provider,
+    sha256,
+    done: false,
+    checkedAt: 0,
+    createdAt: Date.now(),
+    unverified: true,
+  };
+  await Promise.all([
+    env.CERTUM_KV.put(analysisKey(settings.provider, id), JSON.stringify(state), { expirationTtl: ANALYSIS_TTL }),
+    env.CERTUM_KV.delete(missKey(settings.provider, sha256)),
+  ]);
+  return { id, sha256 };
+}
+
 async function cacheVerdict(env: Env, settings: ScanSettings, verdict: ScanVerdict): Promise<void> {
   const ttl = Math.max(60, Math.floor(settings.cacheMinutes) * 60);
   await env.CERTUM_KV.put(verdictKey(settings.provider, verdict.sha256), JSON.stringify(verdict), {
@@ -397,7 +537,15 @@ export async function pollScanAnalysis(
   const result = await adapterOf(state.provider).analysis(settings, id);
   state.checkedAt = Date.now();
   if (result.done && result.verdict) {
-    const verdict: ScanVerdict = { ...result.verdict, sha256: result.verdict.sha256 || state.sha256 };
+    const reported = (result.verdict.sha256 || "").toLowerCase();
+    // 流式上传时 Worker 没算过哈希，必须用 provider 返回的 sha256 确认扫的就是这个文件
+    if (reported && reported !== state.sha256) {
+      throw new ScanError("scan_analysis_mismatch", 409, "查杀服务返回的文件哈希与声明的 SHA-256 不一致，已拒绝采用该结果");
+    }
+    if (!reported && state.unverified) {
+      throw new ScanError("scan_analysis_mismatch", 409, "查杀服务没有返回文件哈希，无法确认扫描对象，请改用 32 MB 以内上传");
+    }
+    const verdict: ScanVerdict = { ...result.verdict, sha256: reported || state.sha256 };
     state.done = true;
     state.verdict = verdict;
     await cacheVerdict(env, settings, verdict);

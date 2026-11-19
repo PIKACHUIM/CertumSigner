@@ -72,7 +72,7 @@ export async function readConfig(env: Env): Promise<RuntimeConfig> {
     scanProvider: normalizeProvider(stored.scanProvider),
     scanApiKey: text(stored.scanApiKey),
     scanBaseUrl: text(stored.scanBaseUrl).replace(/\/+$/, ""),
-    scanMaxUploadMb: clampInt(stored.scanMaxUploadMb, 32, 1, 64),
+    scanMaxUploadMb: clampInt(stored.scanMaxUploadMb, 32, 1, 650),
     scanCacheMinutes: clampInt(stored.scanCacheMinutes, 1440, 1, 10080),
     logSignatures: typeof stored.logSignatures === "boolean" ? stored.logSignatures : true,
     updatedAt: stored.updatedAt,
@@ -99,7 +99,7 @@ export async function writeConfig(env: Env, patch: Partial<Omit<RuntimeConfig, "
     if (typeof next[key] === "string" && !next[key]!.trim()) delete next[key];
   }
   next.scanProvider = normalizeProvider(next.scanProvider);
-  if (next.scanMaxUploadMb !== undefined) next.scanMaxUploadMb = clampInt(next.scanMaxUploadMb, 32, 1, 64);
+  if (next.scanMaxUploadMb !== undefined) next.scanMaxUploadMb = clampInt(next.scanMaxUploadMb, 32, 1, 650);
   if (next.scanCacheMinutes !== undefined) next.scanCacheMinutes = clampInt(next.scanCacheMinutes, 1440, 1, 10080);
   await env.CERTUM_KV.put(CONFIG_KEY, JSON.stringify(next));
   return readConfig(env);

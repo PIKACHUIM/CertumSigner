@@ -301,14 +301,16 @@ Risk level = malicious engines + suspicious engines; `0` means fully clean. `/v1
 
 | Provider | Free tier | File size | Notes |
 | --- | --- | --- | --- |
-| VirusTotal (default) | 4 req/min, 500/day | 32 MB direct upload | hash lookup first, upload only when unknown |
-| MetaDefender Cloud | ~1,000 hash lookups/day, 150 scans/day | 750 MB | hash lookup supported; the Worker caps uploads at 64 MB |
+| VirusTotal (default) | 4 req/min, 500/day | 32 MB direct; 650 MB large-file channel | hash lookup first, upload only when unknown |
+| MetaDefender Cloud | ~1,000 hash lookups/day, 150 scans/day | 750 MB | hash lookup supported; the effective cap is the zone request limit |
+
+**Large files**: uploads up to 32 MB are buffered by the Worker (which also recomputes the SHA-256 to verify the declared value). Larger files are streamed: VirusTotal uses a one-time `/files/upload_url` destination (650 MB per file) and the Worker never holds the file in memory. The Worker's inbound request body is still capped by the **domain plan**: Free / Pro 100 MB, Business 200 MB, Enterprise up to 5 GB via `Maximum Upload Size`. So on Free/Pro the real ceiling is 100 MB; true 650 MB uploads need an Enterprise zone, with no code change.
 
 Cloudmersive's free tier is 600 calls/month and 3.5 MB, and it only accepts uploads (no hash lookup), so it is not built in.
 
 **Privacy and terms**: the VirusTotal public API adds submitted or queried files to its public corpus and may not be used in commercial products. Use MetaDefender or point the base URL at your own private scanner for sensitive builds, and confirm compliance before uploading.
 
-**Trust model**: the Worker can only verify that the declared SHA-256 is clean in the scanning service; it cannot derive the raw file from the Authenticode digest. In auto mode the Worker recomputes the SHA-256 of the uploaded bytes and compares it with the declared value. The API key holder is trusted; this guards against client bugs and accidental signing, not a malicious key holder.
+**Trust model**: the Worker can only verify that the declared SHA-256 is clean in the scanning service; it cannot derive the raw file from the Authenticode digest. For uploads up to 32 MB the Worker recomputes the SHA-256 of the bytes and compares it with the declared value; larger streams cannot be hashed while relaying, so the Worker instead checks the file hash returned by the scanning service and discards the result on a mismatch. The API key holder is trusted; this guards against client bugs and accidental signing, not a malicious key holder.
 
 ### When the TSA is blocked
 
@@ -342,7 +344,7 @@ The old rolling `latest` release is gone: `/releases/latest` follows the newest 
 - Opening the console or credential pages may trigger a Certum sign-in (up to 3 OTP retries when not signed in); wrong credentials produce a few failed requests.
 - Certum EV cards reject `SHA1` digests: `/v1/sign` returns `digest_algorithm_unsupported`. Use a certificate that supports it if you really need SHA-1.
 - Only PE files (`.exe/.dll/.sys/.ocx`), no MSI / CAB / scripts.
-- Malware scanning works on the raw-file SHA-256: the VirusTotal free tier allows 32 MB direct uploads, so larger files must be uploaded elsewhere and checked by hash. Free quotas (4 req/min on VT) also make auto scanning slow; stagger batch signing.
+- Malware scanning works on the raw-file SHA-256: up to 32 MB is buffered, 32–650 MB is streamed through the VirusTotal large-file channel, but the Worker inbound body is capped by the domain plan (Free / Pro 100 MB), so 650 MB needs an Enterprise zone. Free quotas (4 req/min on VT) also make auto scanning slow; stagger batch signing.
 - The VirusTotal public API adds samples to its public corpus and is not licensed for commercial products; use MetaDefender or a private proxy for confidential builds.
 - Workers limits subrequests: a single signing call uses 3–8 of them, so keep batches to a dozen or so digests.
 - Registration and password reset are off by default; without Resend, only an admin can reset a password from the user detail page.
@@ -352,7 +354,7 @@ The old rolling `latest` release is gone: `/releases/latest` follows the newest 
 <details>
 <summary>What has actually been tested</summary>
 
-- Worker: `npx tsc --noEmit` passes; `npm test` passes 46 tests (TOTP against RFC 6238 vectors, multipart parsing, encoding/hashing, KV storage and password hashing, unique user emails, admin account setup and password change, runtime config round-trips, scan risk thresholds / result caching / upload SHA-256 verification).
+- Worker: `npx tsc --noEmit` passes; `npm test` passes 49 tests (TOTP against RFC 6238 vectors, multipart parsing, encoding/hashing, KV storage and password hashing, unique user emails, admin account setup and password change, runtime config round-trips, scan risk thresholds / result caching / upload SHA-256 verification / streaming large-file relay and hash cross-check).
 - Real Certum path works end to end (2026-11, Windows x64): email + TOTP sign-in, `/v1/certificate` returns the EV code-signing certificate, `/v1/sign` turns a real SHA-256 digest into a 512-byte signature, and after writing it into a PE `WinVerifyTrust` reports **valid**; still valid with a real Certum timestamp.
 - UI: four themes × light/dark, zh/en switching, dialogs, and mobile widths (390 / 563 px) checked page by page with no horizontal scrolling; captcha refresh and validation, settings persistence, user quotas and self-service key quota edits tested.
 - Client: MSVC 14.44 + Windows SDK 10.0.22621 + static OpenSSL 3.5.9 with `/W4 /permissive-` and no warnings; the Win32 GUI completed sign-in → key rotation → drag-and-drop batch signing → `WinVerifyTrust`, and layout holds at 125% scaling.

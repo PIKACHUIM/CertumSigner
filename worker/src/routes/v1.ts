@@ -27,6 +27,8 @@ import { readStats, recordSign } from "../store/stats";
 import { readConfig } from "../store/config.ts";
 import type { RuntimeConfig } from "../store/config.ts";
 import {
+  SCAN_BUFFER_LIMIT_BYTES,
+  SCAN_MAX_BYTES,
   ScanError,
   evaluateVerdict,
   isScanConfigured,
@@ -36,6 +38,7 @@ import {
   scanPolicyOf,
   scanUploadLimitBytes,
   uploadForScan,
+  uploadStreamForScan,
 } from "../scan";
 
 export type AppEnv = {
@@ -537,20 +540,54 @@ v1.post("/scan/upload", async (c) => {
     return jsonError(c, 503, "scan_not_configured", "管理员还没有配置查杀 API Key");
   }
 
-  const limit = scanUploadLimitBytes(settings);
-  const declared = Number(c.req.header("content-length") ?? "0");
-  if (Number.isFinite(declared) && declared > limit + 4096) {
-    return jsonError(c, 413, "scan_file_too_large", `文件超过后台设置的上传上限 ${settings.maxUploadMb} MB`);
+  const limit = Math.min(scanUploadLimitBytes(settings), SCAN_MAX_BYTES);
+  const declaredRaw = c.req.header("content-length");
+  const declared = declaredRaw ? Number(declaredRaw) : 0;
+  const knownLength = Number.isFinite(declared) && declared > 0;
+  if (knownLength && declared > limit) {
+    return jsonError(
+      c,
+      413,
+      "scan_file_too_large",
+      `文件 ${(declared / 1048576).toFixed(1)} MB，超过上传上限 ${Math.floor(limit / 1048576)} MB`,
+    );
   }
 
+  const declaredSha = normalizeSha256(c.req.query("sha256")) || undefined;
+  const filename = uploadFileName(c.req.query("name"), declaredSha ?? "upload");
+
+  // 超过 32 MB 或长度未知时不读进内存，直接把请求体流式转发给查杀服务。
+  // 大文件走 VirusTotal 的 /files/upload_url（单文件上限 650 MB）。
+  if (!knownLength || declared > SCAN_BUFFER_LIMIT_BYTES) {
+    if (!declaredSha) {
+      return jsonError(c, 400, "scan_proof_required", "大文件上传必须带 sha256 参数（原始文件 SHA-256）");
+    }
+    const stream = c.req.raw.body;
+    if (!stream) return jsonError(c, 400, "scan_empty_file", "上传内容为空");
+
+    try {
+      const result = await uploadStreamForScan(c.env, settings, stream, filename, declaredSha, true);
+      return c.json({
+        ok: true,
+        status: "queued",
+        analysisId: result.id,
+        sha256: result.sha256,
+        provider: settings.provider,
+        streaming: true,
+        policy,
+      });
+    } catch (error) {
+      return scanFailure(c, error);
+    }
+  }
+
+  // 小文件仍缓冲，以便重新计算 SHA-256 并核对声明的值
   const bytes = new Uint8Array(await c.req.arrayBuffer());
   if (bytes.byteLength === 0) return jsonError(c, 400, "scan_empty_file", "上传内容为空");
   if (bytes.byteLength > limit) {
     return jsonError(c, 413, "scan_file_too_large", `文件超过后台设置的上传上限 ${settings.maxUploadMb} MB`);
   }
 
-  const declaredSha = normalizeSha256(c.req.query("sha256")) || undefined;
-  const filename = uploadFileName(c.req.query("name"), declaredSha ?? "upload");
   try {
     const result = await uploadForScan(c.env, settings, bytes, filename, declaredSha);
     return c.json({

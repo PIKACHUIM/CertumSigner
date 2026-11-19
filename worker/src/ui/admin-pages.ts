@@ -1182,7 +1182,7 @@ export function adminSettingsPage(data: SettingsPageData): string {
             <span class="small muted">${escapeHtml(t("settings.scanBaseUrlHint"))}</span>
           </label>
           <label class="field">${escapeHtml(t("settings.scanMaxUploadMb"))}
-            <input type="number" name="scanMaxUploadMb" min="1" max="64" step="1"
+            <input type="number" name="scanMaxUploadMb" min="1" max="650" step="1"
               value="${data.config.scanMaxUploadMb}">
             <span class="small muted">${escapeHtml(t("settings.scanMaxUploadMbHint"))}</span>
           </label>

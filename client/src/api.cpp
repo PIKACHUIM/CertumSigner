@@ -243,6 +243,11 @@ bool ApiClient::upload_scan(const std::string &path, const std::string &sha256, 
         err = "上传扫描失败：" + response.error;
         return false;
     }
+    // 超过域名套餐的入站上限时，Cloudflare 会在 Worker 之前直接返回 HTML 413
+    if (response.status == 413) {
+        err = "文件超过服务端允许的上传体积（受 Cloudflare 套餐的入站上限约束，Free / Pro 为 100 MB）";
+        return false;
+    }
 
     Json root;
     if (!Json::parse(response.body, root, err)) {
