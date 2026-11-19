@@ -1191,6 +1191,12 @@ export function adminSettingsPage(data: SettingsPageData): string {
               value="${data.config.scanCacheMinutes}">
             <span class="small muted">${escapeHtml(t("settings.scanCacheMinutesHint"))}</span>
           </label>
+          ${toggle(
+            "scanDirectUpload",
+            t("settings.scanDirectUpload"),
+            t("settings.scanDirectUploadHint"),
+            data.config.scanDirectUpload,
+          )}
         </div>
         ${
           data.hasScanApiKey

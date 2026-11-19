@@ -791,6 +791,7 @@ secure.post("/settings", async (c) => {
     ...(scanProvider ? { scanProvider } : {}),
     ...(scanMaxRaw ? { scanMaxUploadMb: Number(scanMaxRaw) } : {}),
     ...(scanCacheRaw ? { scanCacheMinutes: Number(scanCacheRaw) } : {}),
+    ...(form["scanDirectUpload"] !== undefined ? { scanDirectUpload: on("scanDirectUpload") } : {}),
     resendFrom: one(form, "resendFrom"),
     turnstileSiteKey: one(form, "turnstileSiteKey"),
     certumChainPem,

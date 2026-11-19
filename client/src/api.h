@@ -21,6 +21,8 @@ struct ScanPolicy {
     int max_risk = 0;
     std::string provider;
     int max_upload_mb = 32;
+    /** 服务端允许客户端拿 Key 直传（会下发查杀 Key，默认关闭） */
+    bool direct_upload = false;
     /** 手动上传页地址（服务端根据 publicBaseUrl 生成） */
     std::string manual_url;
 };
@@ -55,6 +57,11 @@ public:
     /** 上传文件并建立分析任务；sha256 会用上传内容重新核对 */
     bool upload_scan(const std::string &path, const std::string &sha256, std::string &analysis_id,
                      std::string &uploaded_sha256, std::string &err);
+    /** 客户端直传用：向服务端要一次性上传地址与查杀 Key（需要管理员开启） */
+    bool fetch_upload_target(std::string &upload_url, std::string &api_key, long long &max_bytes,
+                             std::string &err);
+    /** 把直传得到的分析 ID 登记到 Worker，之后照常轮询 */
+    bool register_analysis(const std::string &analysis_id, const std::string &sha256, std::string &err);
     /** 轮询分析结果；done=false 表示还在扫描 */
     bool poll_scan(const std::string &analysis_id, ScanVerdict &out, bool &done, std::string &err);
 

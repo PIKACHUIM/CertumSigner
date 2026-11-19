@@ -342,9 +342,19 @@ int run_scan(const ParsedArgs &args) {
     }
 
     ApiClient api(settings.server, settings.api_key);
+    ScanPolicy policy;
+    if (!api.fetch_scan_policy(policy, err)) {
+        std::cerr << err << "\n";
+        return 1;
+    }
+    if (!policy.required) {
+        std::cout << "该证书没有开启病毒查杀，不需要上传扫描。\n";
+        return 0;
+    }
+
     ScanVerdict verdict;
     const bool ok = scan::scan_file(
-        api, path, [](const std::string &message) { std::cout << "  " << message << "\n"; }, verdict, err);
+        api, policy, path, [](const std::string &message) { std::cout << "  " << message << "\n"; }, verdict, err);
     if (!ok) {
         std::cerr << err << "\n";
         return 1;

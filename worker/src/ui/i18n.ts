@@ -33,6 +33,8 @@ const zh = {
   "settings.scanMaxUploadMbHint": "32 MB 以内由 Worker 直接转发；超过则走 VirusTotal 大文件通道（上限 650 MB）。实际还受域名套餐的入站上限约束：Free / Pro 100 MB、Business 200 MB、Enterprise 最高 5 GB。",
   "settings.scanCacheMinutes": "结果缓存（分钟）",
   "settings.scanCacheMinutesHint": "缓存能显著节省免费配额；默认 1440 分钟（24 小时）。",
+  "settings.scanDirectUpload": "允许客户端直传（会下发查杀 Key）",
+  "settings.scanDirectUploadHint": "开启后，持有平台 API Key 的客户端可以拿到查杀 Key 直接上传 VirusTotal，绕过 Worker 入站体积限制（Free / Pro 100 MB）。Key 会暴露给客户端，仅建议在完全可信的环境使用；关闭时统一由 Worker 流式中转。",
   "settings.scanTerms": "注意：VirusTotal 公共 API 会把提交或查询的文件加入其公开样本库，免费版不可用于商业产品；敏感文件请改用 MetaDefender 或自建私有扫描服务，并在上传前确认合规。",
 
   "cred.scanOff": "不扫描",
@@ -549,6 +551,8 @@ const en: Record<keyof Dict, string> = {
   "settings.scanMaxUploadMbHint": "Up to 32 MB is relayed directly by the Worker; larger files use VirusTotal's large-file channel (650 MB limit). The domain plan still caps the request body: Free / Pro 100 MB, Business 200 MB, Enterprise up to 5 GB.",
   "settings.scanCacheMinutes": "Result cache (minutes)",
   "settings.scanCacheMinutesHint": "Caching saves free-tier quota; default 1440 minutes (24 hours).",
+  "settings.scanDirectUpload": "Allow direct client uploads (exposes the scan key)",
+  "settings.scanDirectUploadHint": "When enabled, a client holding a platform API key can fetch the scan key and upload straight to VirusTotal, bypassing the Worker inbound body limit (100 MB on Free / Pro). The key is exposed to the client, so use this only in a fully trusted environment; when off, the Worker streams the upload instead.",
   "settings.scanTerms": "Note: the VirusTotal public API adds submitted or queried files to its public corpus and may not be used in commercial products. Use MetaDefender or a private scanner for sensitive builds, and confirm compliance before uploading.",
 
   "cred.scanOff": "No scan",

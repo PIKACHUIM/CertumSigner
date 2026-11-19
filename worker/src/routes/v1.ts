@@ -36,9 +36,11 @@ import {
   pollScanAnalysis,
   readScanSettings,
   scanPolicyOf,
+  registerAnalysis,
   scanUploadLimitBytes,
   uploadForScan,
   uploadStreamForScan,
+  virustotalUploadUrl,
 } from "../scan";
 
 export type AppEnv = {
@@ -466,6 +468,8 @@ v1.get("/scan/policy", async (c) => {
     provider: settings.provider,
     configured: isScanConfigured(settings),
     maxUploadMb: settings.maxUploadMb,
+    /** 开启后客户端可以拿 Key 直传；默认关闭 */
+    directUpload: settings.directUpload,
     manualUrl: manualScanUrl(config, c.req.url),
   });
 });
@@ -598,6 +602,79 @@ v1.post("/scan/upload", async (c) => {
       provider: settings.provider,
       policy,
     });
+  } catch (error) {
+    return scanFailure(c, error);
+  }
+});
+
+/**
+ * 客户端直传：把一次性上传地址和查杀 Key 一起下发。
+ * 仅当管理员显式开启 scanDirectUpload 时可用；Key 会暴露给持有平台 API Key 的客户端，
+ * 换来的是绕过 Worker 入站上限（Free/Pro 100 MB），可传 VirusTotal 的 650 MB。
+ */
+v1.post("/scan/upload-target", async (c) => {
+  const credential = c.get("credential") as CredentialRecord;
+  const policy = scanPolicyOf(credential);
+  if (policy.mode === "off") {
+    return jsonError(c, 403, "scan_disabled", "这套证书没有开启病毒查杀，不需要上传扫描");
+  }
+
+  const config = await readConfig(c.env);
+  const settings = readScanSettings(config);
+  if (!isScanConfigured(settings)) {
+    return jsonError(c, 503, "scan_not_configured", "管理员还没有配置查杀 API Key");
+  }
+  if (!settings.directUpload) {
+    return jsonError(c, 403, "scan_direct_disabled", "管理员没有开启客户端直传，请让文件经 Worker 中转");
+  }
+  if (settings.provider !== "virustotal") {
+    return jsonError(c, 501, "scan_direct_unsupported", "客户端直传目前只支持 VirusTotal");
+  }
+
+  try {
+    const url = await virustotalUploadUrl(settings);
+    return c.json({
+      ok: true,
+      provider: settings.provider,
+      uploadUrl: url,
+      apiKey: settings.apiKey,
+      maxBytes: SCAN_MAX_BYTES,
+      warning: "查杀 API Key 已下发到客户端，请仅在可信环境使用",
+    });
+  } catch (error) {
+    return scanFailure(c, error);
+  }
+});
+
+/** 登记客户端直传得到的分析 ID，之后照常轮询 /scan/analysis/:id */
+v1.post("/scan/analysis", async (c) => {
+  const credential = c.get("credential") as CredentialRecord;
+  const policy = scanPolicyOf(credential);
+  if (policy.mode === "off") {
+    return jsonError(c, 403, "scan_disabled", "这套证书没有开启病毒查杀");
+  }
+
+  const config = await readConfig(c.env);
+  const settings = readScanSettings(config);
+  if (!isScanConfigured(settings)) {
+    return jsonError(c, 503, "scan_not_configured", "管理员还没有配置查杀 API Key");
+  }
+
+  let body: { analysisId?: string; sha256?: string };
+  try {
+    body = (await c.req.json()) as { analysisId?: string; sha256?: string };
+  } catch {
+    return jsonError(c, 400, "bad_json", "请求体必须是 JSON");
+  }
+
+  const id = typeof body.analysisId === "string" ? body.analysisId.trim() : "";
+  if (!/^[A-Za-z0-9._=+-]{1,300}$/.test(id)) return jsonError(c, 400, "bad_analysis_id", "分析 ID 格式不正确");
+  const sha256 = normalizeSha256(body.sha256);
+  if (!sha256) return jsonError(c, 400, "bad_sha256", "sha256 必须是 64 位十六进制");
+
+  try {
+    await registerAnalysis(c.env, settings, id, sha256);
+    return c.json({ ok: true, analysisId: id, sha256, provider: settings.provider });
   } catch (error) {
     return scanFailure(c, error);
   }

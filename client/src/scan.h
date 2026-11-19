@@ -23,10 +23,14 @@ bool ensure_clear(ApiClient &api, const ScanPolicy &policy, const std::string &p
                   std::string &sha256_out, std::string &err);
 
 /** 主动扫描（CLI `scan`）：未收录就上传并等待，返回最终结果 */
-bool scan_file(ApiClient &api, const std::string &path, const LogFn &log, ScanVerdict &out, std::string &err);
+bool scan_file(ApiClient &api, const ScanPolicy &policy, const std::string &path, const LogFn &log,
+               ScanVerdict &out, std::string &err);
 
-/** 上传并等待分析完成；结果写入 out，allowed 由调用方判断 */
-bool upload_and_wait(ApiClient &api, const std::string &path, const std::string &sha256, int max_upload_mb,
+/**
+ * 上传并等待分析完成；结果写入 out，allowed 由调用方判断。
+ * policy.direct_upload 为真时由客户端直传 provider（需要服务端下发 Key）。
+ */
+bool upload_and_wait(ApiClient &api, const ScanPolicy &policy, const std::string &path, const std::string &sha256,
                      const LogFn &log, ScanVerdict &out, std::string &err);
 
 } // namespace scan

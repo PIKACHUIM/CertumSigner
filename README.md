@@ -312,6 +312,8 @@ curl -X POST https://sign.example.com/v1/sign \
 
 **大文件**：≤ 32 MB 由 Worker 缓冲后转发（顺便重算 SHA-256 校验声明值）；> 32 MB 改成流式转发，VirusTotal 走 `/files/upload_url` 的一次性地址（单文件上限 650 MB），Worker 不会把文件读进内存。但 Worker 的入站请求体受**域名套餐**限制：Free / Pro 100 MB、Business 200 MB、Enterprise 最高 5 GB（可在域名的 `Maximum Upload Size` 里调整）。因此在 Free/Pro 上实际天花板是 100 MB；真要传 650 MB 需要 Enterprise 域名，代码无需修改。
 
+**直传模式（`scanDirectUpload`，默认关闭）**：在后台「系统设置 → 病毒查杀」打开后，`/v1/scan/upload-target` 会把 VirusTotal 的一次性上传地址连同 API Key 一起下发给客户端，由客户端直接上传，Worker 不搬运字节——速度快，也不受 Worker 入站 100 MB 限制，但 **Key 会暴露给客户端**，只建议在完全可信的环境里开。传完客户端用 `/v1/scan/analysis` 登记分析 ID，Worker 照旧按 SHA-256 缓存结果并在 `/v1/sign` 强制校验。关闭时（默认）走 Worker 流式中转，Key 不出服务端。
+
 Cloudmersive 的免费版只有 600 次/月、3.5 MB，而且只能上传文件、不能按 hash 查询，不适合作为这里的「先查后传」入口，所以没有内置。
 
 **隐私与条款**：VirusTotal 公共 API 会把提交或查询的文件加入其公开样本库，且免费版不可用于商业产品；敏感构建请改用 MetaDefender 或自建私有扫描服务（把「查杀 API 地址」指向自己的反代/网关）。上传前请自行确认合规。
@@ -356,7 +358,7 @@ git tag v1.0 && git push origin v1.0        # 发正式版
 <details>
 <summary>展开查看实测记录</summary>
 
-- Worker：`npx tsc --noEmit` 通过，`npm test` 49 项通过（TOTP 命中 RFC 6238 向量、multipart 解析、编码 / 哈希、KV 存储与密码哈希、用户邮箱唯一性、管理员账号初始化与改密码、运行时配置保存回读、查杀风险阈值 / 结果缓存 / 上传 SHA-256 校验 / 大文件流式转发与哈希核对）。
+- Worker：`npx tsc --noEmit` 通过，`npm test` 51 项通过（TOTP 命中 RFC 6238 向量、multipart 解析、编码 / 哈希、KV 存储与密码哈希、用户邮箱唯一性、管理员账号初始化与改密码、运行时配置保存回读、查杀风险阈值 / 结果缓存 / 上传 SHA-256 校验 / 大文件流式转发与哈希核对 / 直传目标下发与分析 ID 登记）。
 - 真实 Certum 链路已跑通（2026-11，Windows x64）：邮箱 + TOTP 登录成功，`/v1/certificate` 返回 EV 代码签名证书，`/v1/sign` 用真实 SHA-256 摘要换回 512 字节签名，写进 PE 后 `WinVerifyTrust` 返回**签名有效**；加真实 Certum 时间戳后仍有效。
 - 界面：四套主题 × 明暗、中英切换、弹窗、900px 与手机宽度（390 / 563px）逐页核对无横向滚动；登录验证码刷新与校验、系统设置持久化、用户级配额、用户自助改 Key 限额均实测。
 - 客户端：MSVC 14.44 + Windows SDK 10.0.22621 + 静态 OpenSSL 3.5.9 以 `/W4 /permissive-` 零告警编译；Win32 GUI 走通登录 → 换发 Key → 拖拽批量签名 → `WinVerifyTrust` 校验；125% 缩放下布局不裁切。

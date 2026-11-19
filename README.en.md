@@ -306,6 +306,8 @@ Risk level = malicious engines + suspicious engines; `0` means fully clean. `/v1
 
 **Large files**: uploads up to 32 MB are buffered by the Worker (which also recomputes the SHA-256 to verify the declared value). Larger files are streamed: VirusTotal uses a one-time `/files/upload_url` destination (650 MB per file) and the Worker never holds the file in memory. The Worker's inbound request body is still capped by the **domain plan**: Free / Pro 100 MB, Business 200 MB, Enterprise up to 5 GB via `Maximum Upload Size`. So on Free/Pro the real ceiling is 100 MB; true 650 MB uploads need an Enterprise zone, with no code change.
 
+**Direct upload (`scanDirectUpload`, off by default)**: when enabled under Admin → Settings → Malware scanning, `/v1/scan/upload-target` hands the client a one-time VirusTotal upload URL together with the API key and the client posts the file itself, so no bytes travel through the Worker — faster, and not bound by the 100 MB inbound cap, but **the key reaches the client** and should only be enabled in a fully trusted environment. The client then registers the analysis ID via `/v1/scan/analysis`; the Worker still caches results by SHA-256 and enforces them in `/v1/sign`. With the switch off (the default) uploads stream through the Worker and the key never leaves the server.
+
 Cloudmersive's free tier is 600 calls/month and 3.5 MB, and it only accepts uploads (no hash lookup), so it is not built in.
 
 **Privacy and terms**: the VirusTotal public API adds submitted or queried files to its public corpus and may not be used in commercial products. Use MetaDefender or point the base URL at your own private scanner for sensitive builds, and confirm compliance before uploading.
@@ -354,7 +356,7 @@ The old rolling `latest` release is gone: `/releases/latest` follows the newest 
 <details>
 <summary>What has actually been tested</summary>
 
-- Worker: `npx tsc --noEmit` passes; `npm test` passes 49 tests (TOTP against RFC 6238 vectors, multipart parsing, encoding/hashing, KV storage and password hashing, unique user emails, admin account setup and password change, runtime config round-trips, scan risk thresholds / result caching / upload SHA-256 verification / streaming large-file relay and hash cross-check).
+- Worker: `npx tsc --noEmit` passes; `npm test` passes 51 tests (TOTP against RFC 6238 vectors, multipart parsing, encoding/hashing, KV storage and password hashing, unique user emails, admin account setup and password change, runtime config round-trips, scan risk thresholds / result caching / upload SHA-256 verification / streaming large-file relay and hash cross-check / direct-upload target and analysis registration).
 - Real Certum path works end to end (2026-11, Windows x64): email + TOTP sign-in, `/v1/certificate` returns the EV code-signing certificate, `/v1/sign` turns a real SHA-256 digest into a 512-byte signature, and after writing it into a PE `WinVerifyTrust` reports **valid**; still valid with a real Certum timestamp.
 - UI: four themes × light/dark, zh/en switching, dialogs, and mobile widths (390 / 563 px) checked page by page with no horizontal scrolling; captcha refresh and validation, settings persistence, user quotas and self-service key quota edits tested.
 - Client: MSVC 14.44 + Windows SDK 10.0.22621 + static OpenSSL 3.5.9 with `/W4 /permissive-` and no warnings; the Win32 GUI completed sign-in → key rotation → drag-and-drop batch signing → `WinVerifyTrust`, and layout holds at 125% scaling.

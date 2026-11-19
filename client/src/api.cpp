@@ -186,6 +186,7 @@ bool ApiClient::fetch_scan_policy(ScanPolicy &out, std::string &err) {
     out.max_risk = root.find("policy") ? static_cast<int>(root.find("policy")->get_number("maxRisk", 0)) : 0;
     out.provider = root.get_string("provider");
     out.max_upload_mb = static_cast<int>(root.get_number("maxUploadMb", 32));
+    out.direct_upload = root.get_bool("directUpload", false);
     out.manual_url = root.get_string("manualUrl");
     return true;
 }
@@ -263,6 +264,66 @@ bool ApiClient::upload_scan(const std::string &path, const std::string &sha256, 
     uploaded_sha256 = root.get_string("sha256");
     if (analysis_id.empty()) {
         err = "查杀服务没有返回分析 ID";
+        return false;
+    }
+    return true;
+}
+
+bool ApiClient::fetch_upload_target(std::string &upload_url, std::string &api_key, long long &max_bytes,
+                                    std::string &err) {
+    HttpHeaders headers;
+    headers.emplace_back("Authorization", "Bearer " + api_key_);
+    headers.emplace_back("Content-Type", "application/json");
+    headers.emplace_back("Accept", "application/json");
+    headers.emplace_back("X-Client", "certumsigner/1.0");
+
+    HttpResponse response = http_post(url_for("/v1/scan/upload-target"), headers, "{}", 60);
+    if (!response.error.empty()) {
+        err = "获取直传地址失败：" + response.error;
+        return false;
+    }
+
+    Json root;
+    if (!Json::parse(response.body, root, err)) {
+        err = "查杀服务返回的不是 JSON：" + shorten(response.body);
+        return false;
+    }
+    if (!response.ok()) {
+        err = error_message(root, "获取直传地址失败（HTTP " + std::to_string(response.status) + "）");
+        return false;
+    }
+
+    upload_url = root.get_string("uploadUrl");
+    api_key = root.get_string("apiKey");
+    max_bytes = static_cast<long long>(root.get_number("maxBytes", 0));
+    if (upload_url.empty() || api_key.empty()) {
+        err = "服务端没有返回可用的直传地址";
+        return false;
+    }
+    return true;
+}
+
+bool ApiClient::register_analysis(const std::string &analysis_id, const std::string &sha256, std::string &err) {
+    HttpHeaders headers;
+    headers.emplace_back("Authorization", "Bearer " + api_key_);
+    headers.emplace_back("Content-Type", "application/json");
+    headers.emplace_back("Accept", "application/json");
+    headers.emplace_back("X-Client", "certumsigner/1.0");
+
+    const std::string body = "{\"analysisId\":\"" + analysis_id + "\",\"sha256\":\"" + sha256 + "\"}";
+    HttpResponse response = http_post(url_for("/v1/scan/analysis"), headers, body, 60);
+    if (!response.error.empty()) {
+        err = "登记扫描任务失败：" + response.error;
+        return false;
+    }
+
+    Json root;
+    if (!Json::parse(response.body, root, err)) {
+        err = "查杀服务返回的不是 JSON：" + shorten(response.body);
+        return false;
+    }
+    if (!response.ok() || !root.get_bool("ok", false)) {
+        err = error_message(root, "登记扫描任务失败（HTTP " + std::to_string(response.status) + "）");
         return false;
     }
     return true;

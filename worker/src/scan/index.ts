@@ -26,6 +26,8 @@ export interface ScanSettings {
   baseUrl: string;
   maxUploadMb: number;
   cacheMinutes: number;
+  /** 允许客户端拿 Key 直传（默认关闭，见后台警告） */
+  directUpload: boolean;
 }
 
 export interface ScanAnalysisState {
@@ -72,6 +74,7 @@ export function readScanSettings(config: RuntimeConfig): ScanSettings {
     baseUrl: (config.scanBaseUrl || DEFAULT_BASE[config.scanProvider]).replace(/\/+$/, ""),
     maxUploadMb: config.scanMaxUploadMb,
     cacheMinutes: config.scanCacheMinutes,
+    directUpload: config.scanDirectUpload,
   };
 }
 
@@ -363,8 +366,8 @@ function uploadBoundary(): string {
   return `----certumsigner${Date.now().toString(16)}${Math.random().toString(16).slice(2, 10)}`;
 }
 
-/** VirusTotal 大文件通道：一次性上传地址，单文件上限 650 MB */
-async function virustotalUploadUrl(settings: ScanSettings): Promise<string> {
+/** VirusTotal 大文件通道：一次性上传地址，单文件上限 650 MB（客户端直传也用它） */
+export async function virustotalUploadUrl(settings: ScanSettings): Promise<string> {
   const { status, json } = await requestJson("virustotal", `${settings.baseUrl}/files/upload_url`, {
     headers: { "x-apikey": settings.apiKey, accept: "application/json" },
   });
@@ -518,6 +521,46 @@ export async function uploadForScan(
     env.CERTUM_KV.delete(missKey(settings.provider, sha256)),
   ]);
   return { id, sha256 };
+}
+
+/**
+ * 登记客户端直传得到的分析 ID。
+ * 文件没经过 Worker，无法在登记时校验哈希，只能等 provider 返回 sha256 再核对。
+ */
+export async function registerAnalysis(
+  env: Env,
+  settings: ScanSettings,
+  id: string,
+  sha256: string,
+): Promise<void> {
+  if (!settings.apiKey) {
+    throw new ScanError("scan_not_configured", 503, "还没有配置查杀 API Key");
+  }
+  const sha = sha256.trim().toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(sha)) {
+    throw new ScanError("bad_sha256", 400, "sha256 必须是 64 位十六进制");
+  }
+
+  const existing = await env.CERTUM_KV.get<ScanAnalysisState>(analysisKey(settings.provider, id), "json");
+  if (existing) {
+    if (existing.provider !== settings.provider || existing.sha256 !== sha) {
+      throw new ScanError("scan_analysis_conflict", 409, "该分析 ID 已经登记为另一个文件");
+    }
+    return;
+  }
+
+  const state: ScanAnalysisState = {
+    provider: settings.provider,
+    sha256: sha,
+    done: false,
+    checkedAt: 0,
+    createdAt: Date.now(),
+    unverified: true,
+  };
+  await Promise.all([
+    env.CERTUM_KV.put(analysisKey(settings.provider, id), JSON.stringify(state), { expirationTtl: ANALYSIS_TTL }),
+    env.CERTUM_KV.delete(missKey(settings.provider, sha)),
+  ]);
 }
 
 /** 轮询分析结果；20 秒内重复调用只返回 KV 里的状态，避免打爆免费配额。 */

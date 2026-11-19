@@ -37,6 +37,16 @@ test("没有任何配置时用默认值", async () => {
   assert.equal(config.resendFrom, "");
   assert.equal(config.certumChainPem, "");
   assert.equal(config.logSignatures, true);
+  assert.equal(config.scanMaxUploadMb, 32);
+  assert.equal(config.scanDirectUpload, false);
+});
+
+test("客户端直传开关默认关闭，开启后可读回", async () => {
+  const { env } = makeEnv();
+  await writeConfig(env, { scanDirectUpload: true });
+  assert.equal((await readConfig(env)).scanDirectUpload, true);
+  await writeConfig(env, { scanDirectUpload: false });
+  assert.equal((await readConfig(env)).scanDirectUpload, false);
 });
 
 test("保存后读回 KV 配置并去掉尾部斜杠", async () => {

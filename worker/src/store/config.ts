@@ -36,6 +36,8 @@ export interface RuntimeConfig {
   scanMaxUploadMb: number;
   /** 查杀结果缓存时长（分钟）；缓存能显著节省免费 API 配额 */
   scanCacheMinutes: number;
+  /** 允许客户端拿查杀 API Key 直传 provider（绕过 Worker 入站上限，但会下发 Key） */
+  scanDirectUpload: boolean;
   /** 是否记录签名明细日志（关掉只留统计） */
   logSignatures: boolean;
   updatedAt?: number;
@@ -74,6 +76,7 @@ export async function readConfig(env: Env): Promise<RuntimeConfig> {
     scanBaseUrl: text(stored.scanBaseUrl).replace(/\/+$/, ""),
     scanMaxUploadMb: clampInt(stored.scanMaxUploadMb, 32, 1, 650),
     scanCacheMinutes: clampInt(stored.scanCacheMinutes, 1440, 1, 10080),
+    scanDirectUpload: stored.scanDirectUpload === true,
     logSignatures: typeof stored.logSignatures === "boolean" ? stored.logSignatures : true,
     updatedAt: stored.updatedAt,
   };

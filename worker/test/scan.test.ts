@@ -8,6 +8,7 @@ import {
   lookupVerdict,
   pollScanAnalysis,
   readScanSettings,
+  registerAnalysis,
   riskScore,
   scanPolicyOf,
   uploadForScan,
@@ -319,6 +320,27 @@ test("流式上传后 provider 返回的文件哈希与声明不一致时拒绝�
   } finally {
     globalThis.fetch = realFetch;
   }
+});
+
+test("客户端直传的分析 ID 只能登记一次，不能改挂到别的文件", async () => {
+  const kv = new MemoryKV();
+  const env = { CERTUM_KV: kv } as unknown as Env;
+  const sha = "e".repeat(64);
+
+  await registerAnalysis(env, settings(), "an_direct", sha);
+  const state = JSON.parse(kv.store.get("scan:analysis:virustotal:an_direct") ?? "{}");
+  assert.equal(state.sha256, sha);
+  assert.equal(state.unverified, true);
+  assert.equal(state.done, false);
+
+  // 同一 ID 换一个哈希必须拒绝，避免拿干净文件的扫描结果冒充别的文件
+  await assert.rejects(
+    registerAnalysis(env, settings(), "an_direct", "f".repeat(64)),
+    (error: unknown) =>
+      typeof error === "object" && error !== null && (error as { code?: string }).code === "scan_analysis_conflict",
+  );
+  // 重复登记同一个哈希是幂等的
+  await registerAnalysis(env, settings(), "an_direct", sha);
 });
 
 test("声明的 SHA-256 与上传内容不一致时拒绝上传", async () => {
