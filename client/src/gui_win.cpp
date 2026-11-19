@@ -428,6 +428,9 @@ struct App {
     std::wstring note;      // 页面内提示（已保存等）
     bool busy = false;
     bool show_key = false;
+    bool status_batch = false;  // status 是否为「完成：x 成功，y 失败」，切语言时按计数重译
+    int done_ok = 0;
+    int done_fail = 0;
 
     std::vector<FileItem> files;
     std::vector<KeyItem> keys;
@@ -823,6 +826,25 @@ void apply_control_theme(HWND control) {
     }
 }
 
+BOOL CALLBACK theme_child_proc(HWND child, LPARAM) {
+    apply_control_theme(child);
+    return TRUE;
+}
+
+/**
+ * 语言 / 主题切换后原地重绘整窗。
+ * 自绘页面画在父窗口上，原生控件（列表、输入框、按钮）各自独立成窗口；
+ * 只 InvalidateRect 父窗口的话子控件会保留旧外观（反之亦然），
+ * 所以这里连同所有子控件一起失效并立即绘制，避免「切换后要再点一下才变」。
+ */
+void repaint_all_controls() {
+    App *a = g_app;
+    if (!a || !a->window) return;
+    if (!IsWindowVisible(a->window)) return;
+    RedrawWindow(a->window, nullptr, nullptr,
+                 RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN | RDW_UPDATENOW);
+}
+
 void rebuild_brushes() {
     App *a = g_app;
     if (!a) return;
@@ -919,14 +941,14 @@ void set_page(Page page) {
         EnableWindow(a->keyUse, a->keys.empty() ? FALSE : TRUE);
     }
 
-    InvalidateRect(a->window, nullptr, FALSE);
-    UpdateWindow(a->window);
+    repaint_all_controls();
 }
 
 void set_status(int phase, const std::wstring &text) {
     if (!g_app) return;
     g_app->phase = phase;
     g_app->status = text;
+    g_app->status_batch = false;
     InvalidateRect(g_app->window, nullptr, FALSE);
 }
 
@@ -2367,13 +2389,15 @@ void refresh_theme_selectors() {
     App *a = g_app;
     if (!a) return;
     BOOL dark_flag = a->dark ? TRUE : FALSE;
+    // 20 = DWMWA_USE_IMMERSIVE_DARK_MODE，19 是 1903~20H1 的旧编号
     DwmSetWindowAttribute(a->window, 20, &dark_flag, sizeof(dark_flag));
+    DwmSetWindowAttribute(a->window, 19, &dark_flag, sizeof(dark_flag));
+    // 改完标题栏属性要重算一次非客户区，否则标题栏会等到下次缩放才变色
+    SetWindowPos(a->window, nullptr, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
     rebuild_brushes();
-    HWND edits[] = {a->lgServer, a->lgUser, a->lgPass, a->keyName, a->logBox, a->stServer, a->stKey};
-    for (HWND control : edits) apply_control_theme(control);
-    HWND combos[] = {a->keyCred, a->stTsa, a->stLang, a->stTheme};
-    for (HWND control : combos) apply_control_theme(control);
-    InvalidateRect(a->window, nullptr, FALSE);
+    EnumChildWindows(a->window, theme_child_proc, 0);
+    repaint_all_controls();
 }
 
 void apply_theme_choice() {
@@ -2389,9 +2413,15 @@ void apply_lang_choice() {
     App *a = g_app;
     if (!a) return;
     a->lang = a->settings.lang.empty() ? system_lang() : a->settings.lang;
-    if (a->status.empty() || a->phase == 0) a->status = tr("sign.ready");
+    if (a->phase == 0) {
+        a->status = tr("sign.ready");
+    } else if (a->status_batch) {
+        wchar_t buffer[128] = {0};
+        swprintf_s(buffer, tr("sign.done").c_str(), a->done_ok, a->done_fail);
+        a->status = buffer;
+    }
     apply_language_to_controls();
-    InvalidateRect(a->window, nullptr, FALSE);
+    repaint_all_controls();
 }
 
 /* -------------------------------- 下拉框 --------------------------------- */
@@ -2480,7 +2510,6 @@ void dropdown_apply(int id, int index) {
         apply_theme_choice();
     }
     save_settings_silent();
-    InvalidateRect(a->window, nullptr, FALSE);
 }
 
 void draw_dropdown_item(const DRAWITEMSTRUCT *item) {
@@ -2594,6 +2623,7 @@ void dropdown_open(int id) {
     if (items.empty()) return;
 
     ensure_popup(a->window);
+    apply_control_theme(g_popupList);
     g_menu.source = id;
     g_menu.items = items;
 
@@ -2737,7 +2767,6 @@ void toggle_language() {
     if (!a) return;
     a->settings.lang = a->lang == "zh" ? "en" : "zh";
     apply_lang_choice();
-    if (a->stLang) InvalidateRect(a->stLang, nullptr, FALSE);
     save_settings_silent();
 }
 
@@ -3057,6 +3086,14 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
             a->hot = 0;
         }
         return 0;
+    case WM_SETTINGCHANGE:
+    case WM_THEMECHANGED:
+        // 「跟随系统」时，系统切换明暗要立刻跟上
+        if (a && a->settings.theme == "auto") {
+            const bool dark = is_dark_system();
+            if (dark != a->dark) apply_theme_choice();
+        }
+        return 0;
     case WM_TIMER:
         if (wparam == TIMER_ANIM && a) {
             a->anim = (a->anim + 2) % 1000;
@@ -3099,6 +3136,11 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
         swprintf_s(buffer, tr("sign.done").c_str(), ok_count, fail_count);
         set_busy(false);
         set_status(fail_count == 0 ? 2 : 3, buffer);
+        if (a) {
+            a->done_ok = ok_count;
+            a->done_fail = fail_count;
+            a->status_batch = true;
+        }
         append_log(narrow(buffer));
         return 0;
     }
