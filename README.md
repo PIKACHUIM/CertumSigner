@@ -66,8 +66,9 @@ Certum SimplySign 只提供「对一段摘要做 RSA 签名」的能力，签名
 
 - **多套 Certum 凭据**：邮箱 + TOTP 种子 + 证书 SHA-1 指纹作为一条「凭据」存在 KV，可同时挂多套（不同账号 / 不同卡片），各自独立缓存登录会话与卡片信息。
 - **按哈希代理签名**：`POST /v1/sign` 传一条或一批摘要，`algorithm` 支持 SHA-1 / SHA-256 / SHA-384 / SHA-512，一次云端调用最多 16 条。
+- **病毒查杀（可选，按证书）**：每套证书可设「不扫描 / 手动上传 / 自动上传」和允许签名的最大风险等级；查询与上传都经 Worker 中转，支持 VirusTotal 与 MetaDefender Cloud，结果按原始文件 SHA-256 缓存。
 - **管理员后台**（`/admin`）：请求量 / 成功失败 / 算法分布 / 近 7 天曲线 / 最近签名；用户、凭据、Key 的增删改与停用；完整签名记录（每条可看时间、Key、凭据、摘要前缀、结果、耗时、IP、UA 与错误）。
-- **用户门户**（`/user`）：邮箱 + 密码登录，从管理员分配的证书里挑一套自建 Key，改名称与每日限额，查看自己的调用记录。明文只在创建后显示一次，列表里默认只露前几位。
+- **用户门户**（`/user`）：邮箱 + 密码登录，从管理员分配的证书里挑一套自建 Key，改名称与每日限额，查看自己的调用记录；证书要求查杀时可从「病毒扫描」页手动上传未收录的文件。明文只在创建后显示一次，列表里默认只露前几位。
 - **限额**：Key 级与用户级每日额度同时生效（0 = 不限），`/v1/sign` 在调用云端前就返回 `429 quota_exceeded`。
 - **注册 / 找回密码**（默认关闭）：注册必须完成邮箱验证才能登录，找回密码通过 Resend 发送一次性链接（1 小时有效）。
 - **登录验证码**（默认关闭）：勾选后用户、管理员与桌面客户端登录都要验证码，类型可选 4 位数字图形码或 Cloudflare Turnstile（密钥没填齐时自动退回图形码）。
@@ -80,6 +81,7 @@ Certum SimplySign 只提供「对一段摘要做 RSA 签名」的能力，签名
 - **自己拼 PKCS#7**：不依赖 signtool，`/v1/sign` 之外的一切都在本地完成；签名前用证书公钥自检，签完可 `verify`。
 - **图形界面**：Windows 是自绘 Win32（双击不弹控制台），Linux 是 GTK3；拖文件进窗口即可批量签名，实时状态胶囊，可跳过已有签名的文件。
 - **时间戳兜底**：直连 TSA 被企业安全软件拦掉时，自动改走 Worker 的 `/v1/timestamp` 转发。
+- **签名前查杀**：证书要求扫描时先算原始文件 SHA-256；自动模式直接经 Worker 上传并轮询，手动模式提示到 `/user/scan` 或运行 `certumsigner scan`。
 - **中英双语 + 明暗主题**，中文与含空格路径完整支持。
 
 ## 客户端
@@ -119,6 +121,9 @@ certumsigner sign dist/ --recursive --yes         # 整个目录
 certumsigner sign app.exe --sha256 --sha384       # 同一文件写多份签名
 certumsigner sign legacy.dll --sha1               # 老系统要求时（EV 卡片会拒绝）
 certumsigner sign app.exe --no-timestamp --backup # 不加时间戳、保留原文件
+
+# 病毒查杀（证书设为手动上传时）
+certumsigner scan app.exe                         # 上传 / 轮询，打印风险等级
 
 # 校验与排查
 certumsigner hash app.exe                         # 打印 Authenticode 摘要
@@ -219,8 +224,10 @@ docs/          Certum 云签名协议逆向记录
 curl -X POST https://sign.example.com/v1/sign \
   -H "Authorization: Bearer csk_xxx" \
   -H "Content-Type: application/json" \
-  -d '{"hash":"<64 位 SHA-256 十六进制>","algorithm":"sha256"}'
+  -d '{"hash":"<64 位 SHA-256 十六进制>","algorithm":"sha256","file":{"sha256":"<原始文件 SHA-256>"}}'
 ```
+
+`file.sha256` 只在证书开启病毒查杀时必需：服务端会按它复核扫描结果，缺了返回 `scan_proof_required`。没开查杀的证书可以不带。
 
 批量（一次云端调用，最多 16 条）：
 
@@ -248,7 +255,7 @@ curl -X POST https://sign.example.com/v1/sign \
 }
 ```
 
-失败响应统一为 `{"ok":false,"error":{"code":"...","message":"..."}}`：`bad_hash` / `bad_algorithm` / `unauthorized` / `quota_exceeded` / `credential_missing` / `credential_disabled` / `digest_algorithm_unsupported` / `task_failed` / `signature_missing` 等。
+失败响应统一为 `{"ok":false,"error":{"code":"...","message":"..."}}`：`bad_hash` / `bad_algorithm` / `unauthorized` / `quota_exceeded` / `credential_missing` / `credential_disabled` / `digest_algorithm_unsupported` / `task_failed` / `signature_missing` / `scan_proof_required` / `scan_required` / `scan_risk_too_high` / `scan_not_configured` 等。
 
 ### 桌面客户端接口
 
@@ -269,6 +276,10 @@ curl -X POST https://sign.example.com/v1/sign \
 | `GET /v1/certificate` | 当前凭据的签名证书 PEM + 可选证书链 |
 | `GET /v1/whoami` | 当前 Key 的归属用户、Key 限额 / 用户限额、今日用量、绑定凭据 |
 | `GET /v1/stats` | 全局统计 + 自己与账号的用量 |
+| `GET /v1/scan/policy` | 当前证书的扫描模式、风险阈值、服务商与手动上传页地址 |
+| `GET /v1/scan/check?sha256=` | 按原始文件 SHA-256 查询结果（`found=false` 表示未收录） |
+| `POST /v1/scan/upload?sha256=&name=` | 上传原始文件字节，Worker 中转给查杀服务，返回 `analysisId` |
+| `GET /v1/scan/analysis/:id` | 轮询查杀任务（Worker 内部 10 秒节流，节省免费配额） |
 | `POST /v1/timestamp` | RFC3161 时间戳代理：请求体是 TSQ，返回 TSR |
 | `GET /captcha` | 生成一次性图形验证码（`{id, svg}`，5 分钟有效） |
 | `GET /prefs?lang=&mode=&theme=&back=` | 切换界面语言 / 明暗 / 主题，写 cookie 后 302 回 `back` |
@@ -279,6 +290,31 @@ curl -X POST https://sign.example.com/v1/sign \
 ### 时间戳被拦怎么办
 
 企业网里的安全软件（实测腾讯 iOA）会拦未签名程序的出网请求，客户端直连 TSA 会拿到 HTTP 403 + `检测到风险软件的网络连接`。客户端的处理是：直连失败就自动改走 `POST /v1/timestamp`（带同一个 Bearer Key），由 Worker 转发到 TSA 上游。想强制走代理可以 `--tsa worker`。
+
+### 病毒查杀
+
+扫描策略挂在**证书凭据**上，同一平台的不同证书可以不一样：
+
+| 模式 | 文件未收录时 | 上传方式 |
+| --- | --- | --- |
+| 不扫描 | 不校验 | — |
+| 手动上传 | 客户端报错并给出 `/user/scan` 与 `certumsigner scan` 两种入口 | 用户主动上传 |
+| 自动上传 | 客户端签名前自动上传并轮询 | 经 Worker 中转 |
+
+风险等级 = 报毒引擎数 + 可疑引擎数，`0` 表示必须全绿；允许值在凭据编辑弹窗里设置。`/v1/sign` 会再次按 `file.sha256` 查结果，未收录返回 `409 scan_required`，超阈值返回 `403 scan_risk_too_high`，服务商未配置返回 `503 scan_not_configured`（强制扫描失败即拒绝签名，不会静默放行）。
+
+**服务商与免费额度**（后台「系统设置 → 病毒查杀」填 API Key）：
+
+| Provider | 免费额度 | 单文件 | 说明 |
+| --- | --- | --- | --- |
+| VirusTotal（默认） | 4 次/分钟、500 次/天 | 32 MB（免费直传） | 支持按 SHA-256 查询，未收录再上传 |
+| MetaDefender Cloud | 约 1000 次 hash 查询/天、150 次扫描/天 | 750 MB | 支持按 SHA-256 查询；后台上传上限最高 64 MB |
+
+Cloudmersive 的免费版只有 600 次/月、3.5 MB，而且只能上传文件、不能按 hash 查询，不适合作为这里的「先查后传」入口，所以没有内置。
+
+**隐私与条款**：VirusTotal 公共 API 会把提交或查询的文件加入其公开样本库，且免费版不可用于商业产品；敏感构建请改用 MetaDefender 或自建私有扫描服务（把「查杀 API 地址」指向自己的反代/网关）。上传前请自行确认合规。
+
+**信任模型**：Worker 只能校验「声明的 SHA-256 在查杀服务里是干净的」，无法从 Authenticode 摘要反推原始文件；自动上传时 Worker 会重新计算上传内容的 SHA-256 并与声明值比对。API Key 持有者本身是受信主体，这个设计防的是客户端 bug / 误签，不是防恶意 Key 持有者。
 
 ## 发布与版本
 
@@ -308,6 +344,8 @@ git tag v1.0 && git push origin v1.0        # 发正式版
 - 打开后台或凭据页会按需触发 Certum 登录（未登录时最多重试 3 次 OTP），凭据错误时会有几次失败请求。
 - `SHA1` 摘要对 Certum EV 卡片会被云端拒绝，`/v1/sign` 返回 `digest_algorithm_unsupported`；要签老系统兼容的 SHA-1 只能换一张支持它的证书。
 - 只签 PE 文件（`.exe/.dll/.sys/.ocx` 等），不支持 MSI / CAB / 脚本。
+- 病毒查杀按原始文件 SHA-256 工作：VirusTotal 免费版直传上限 32 MB，更大的文件只能先在别处上传再让平台按 hash 查询；免费配额（VT 4 次/分钟）也决定了自动扫描不会很快，批量签名建议错峰。
+- VirusTotal 公共 API 会把样本加入公开库且不可用于商业产品；需要私密扫描请换 MetaDefender 或自建反代。
 - Workers 有子请求数限制：一次签名通常 3~8 个请求，批量签名请控制在十几条摘要内。
 - 注册 / 找回密码默认关闭；没配 Resend 时只能由管理员在用户详情页重置密码。
 
@@ -316,7 +354,7 @@ git tag v1.0 && git push origin v1.0        # 发正式版
 <details>
 <summary>展开查看实测记录</summary>
 
-- Worker：`npx tsc --noEmit` 通过，`npm test` 39 项通过（TOTP 命中 RFC 6238 向量、multipart 解析、编码 / 哈希、KV 存储与密码哈希、用户邮箱唯一性、管理员账号初始化与改密码、运行时配置保存回读）。
+- Worker：`npx tsc --noEmit` 通过，`npm test` 46 项通过（TOTP 命中 RFC 6238 向量、multipart 解析、编码 / 哈希、KV 存储与密码哈希、用户邮箱唯一性、管理员账号初始化与改密码、运行时配置保存回读、查杀风险阈值 / 结果缓存 / 上传 SHA-256 校验）。
 - 真实 Certum 链路已跑通（2026-11，Windows x64）：邮箱 + TOTP 登录成功，`/v1/certificate` 返回 EV 代码签名证书，`/v1/sign` 用真实 SHA-256 摘要换回 512 字节签名，写进 PE 后 `WinVerifyTrust` 返回**签名有效**；加真实 Certum 时间戳后仍有效。
 - 界面：四套主题 × 明暗、中英切换、弹窗、900px 与手机宽度（390 / 563px）逐页核对无横向滚动；登录验证码刷新与校验、系统设置持久化、用户级配额、用户自助改 Key 限额均实测。
 - 客户端：MSVC 14.44 + Windows SDK 10.0.22621 + 静态 OpenSSL 3.5.9 以 `/W4 /permissive-` 零告警编译；Win32 GUI 走通登录 → 换发 Key → 拖拽批量签名 → `WinVerifyTrust` 校验；125% 缩放下布局不裁切。

@@ -5,7 +5,7 @@
  * KV 在 Cloudflare 侧是静态加密的，但任何能读这个 namespace 的代码/令牌都能拿到明文，
  * 所以生产环境请收紧 API Token 权限（只给这个 namespace 的 KV 读写）。
  */
-import type { CredentialRecord, Env } from "../types";
+import type { CredentialRecord, Env, ScanMode } from "../types";
 import { randomToken } from "../lib/encoding.ts";
 import { base32Decode, parseOtpUri, resolveOtpConfig, type OtpConfig } from "../lib/totp.ts";
 
@@ -13,12 +13,26 @@ const PREFIX = "cred:";
 export const CRED_SESSION_PREFIX = "certum:sess:";
 export const CRED_CARD_PREFIX = "certum:card:";
 
+const SCAN_MODES: readonly ScanMode[] = ["off", "manual", "auto"];
+
+export function normalizeScanMode(value: unknown): ScanMode {
+  return SCAN_MODES.includes(value as ScanMode) ? (value as ScanMode) : "off";
+}
+
+export function clampScanRisk(value: unknown): number {
+  const number = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(number)) return 0;
+  return Math.min(100, Math.max(0, Math.floor(number)));
+}
+
 export interface CreateCredentialInput {
   label: string;
   email: string;
   /** otpauth:// URI 或裸 Base32 种子 */
   otp: string;
   certificateSha1?: string;
+  scanMode?: ScanMode;
+  scanMaxRisk?: number;
   createdBy: string;
 }
 
@@ -70,6 +84,8 @@ export async function createCredential(env: Env, input: CreateCredentialInput): 
     email,
     otpUri,
     certificateSha1: normalizeSha1(input.certificateSha1),
+    scanMode: normalizeScanMode(input.scanMode),
+    scanMaxRisk: clampScanRisk(input.scanMaxRisk),
     enabled: true,
     createdAt: Date.now(),
     createdBy: input.createdBy,
@@ -115,7 +131,14 @@ export async function setCredentialEnabled(env: Env, id: string, enabled: boolea
 export async function updateCredential(
   env: Env,
   id: string,
-  patch: { label?: string; email?: string; otp?: string; certificateSha1?: string },
+  patch: {
+    label?: string;
+    email?: string;
+    otp?: string;
+    certificateSha1?: string;
+    scanMode?: ScanMode;
+    scanMaxRisk?: number;
+  },
 ): Promise<boolean> {
   const record = await getCredential(env, id);
   if (!record) return false;
@@ -125,6 +148,8 @@ export async function updateCredential(
     record.otpUri = normalizeOtpInput(patch.otp, record.email);
   }
   if (patch.certificateSha1 !== undefined) record.certificateSha1 = normalizeSha1(patch.certificateSha1);
+  if (patch.scanMode !== undefined) record.scanMode = normalizeScanMode(patch.scanMode);
+  if (patch.scanMaxRisk !== undefined) record.scanMaxRisk = clampScanRisk(patch.scanMaxRisk);
   record.lastError = undefined;
   await saveCredential(env, record);
   return true;

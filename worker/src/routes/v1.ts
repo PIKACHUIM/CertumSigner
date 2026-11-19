@@ -1,10 +1,14 @@
 /**
  * 对外签名 API。
  *
- *   POST /v1/sign         { hash | hashes, algorithm, encoding }
- *   GET  /v1/certificate  签名证书 + 可选证书链
- *   GET  /v1/whoami       当前 Key 的身份与额度
- *   POST /v1/timestamp    RFC3161 时间戳代理（客户端出网被拦时走这里）
+ *   POST /v1/sign              { hash | hashes, algorithm, encoding, file? }
+ *   GET  /v1/certificate       签名证书 + 可选证书链
+ *   GET  /v1/whoami            当前 Key 的身份与额度
+ *   POST /v1/timestamp         RFC3161 时间戳代理（客户端出网被拦时走这里）
+ *   GET  /v1/scan/policy       当前证书的病毒查杀策略
+ *   GET  /v1/scan/check        按原始文件 SHA-256 查扫描结果
+ *   POST /v1/scan/upload       上传文件到查杀服务（自动模式 / 手动上传都走这里）
+ *   GET  /v1/scan/analysis/:id 轮询查杀任务
  *
  * 鉴权：Authorization: Bearer csk_xxx（也接受 X-Api-Key，方便一些 CI 插件）。
  */
@@ -21,6 +25,18 @@ import { getCredential } from "../store/credentials";
 import { getUser } from "../store/users";
 import { readStats, recordSign } from "../store/stats";
 import { readConfig } from "../store/config.ts";
+import type { RuntimeConfig } from "../store/config.ts";
+import {
+  ScanError,
+  evaluateVerdict,
+  isScanConfigured,
+  lookupVerdict,
+  pollScanAnalysis,
+  readScanSettings,
+  scanPolicyOf,
+  scanUploadLimitBytes,
+  uploadForScan,
+} from "../scan";
 
 export type AppEnv = {
   Bindings: Env;
@@ -33,6 +49,23 @@ export const v1 = new Hono<AppEnv>();
 
 function jsonError(c: Context<AppEnv>, status: number, code: string, message: string) {
   return c.json({ ok: false, error: { code, message } }, status as ContentfulStatusCode);
+}
+
+/** 查杀接口的统一错误出口；非 ScanError 继续往上抛 */
+function scanFailure(c: Context<AppEnv>, error: unknown): Response {
+  if (error instanceof ScanError) {
+    return c.json({ ok: false, error: { code: error.code, message: error.message } }, error.status as ContentfulStatusCode);
+  }
+  throw error;
+}
+
+function uploadFileName(raw: string | undefined, sha256: string): string {
+  const base = (raw ?? "")
+    .split(/[\\/]/)
+    .pop()
+    ?.replace(/[\u0000-\u001f]/g, "")
+    .trim();
+  return base ? base.slice(0, 120) : `${sha256}.bin`;
 }
 
 /** 提取并校验 Key */
@@ -76,6 +109,18 @@ interface SignBody {
   hashes?: string[];
   algorithm?: string;
   encoding?: string;
+  /** 原始文件信息：开启病毒查杀的证书必须携带 sha256 */
+  file?: { sha256?: string; name?: string; size?: number };
+}
+
+function normalizeSha256(raw: unknown): string {
+  const value = typeof raw === "string" ? normalizeHex(raw) : "";
+  return /^[0-9a-f]{64}$/.test(value) ? value : "";
+}
+
+function manualScanUrl(config: RuntimeConfig, requestUrl: string): string {
+  const base = config.publicBaseUrl || new URL(requestUrl).origin;
+  return `${base.replace(/\/+$/, "")}/user/scan`;
 }
 
 function normalizeAlgorithm(raw: string | undefined): SignAlgorithm {
@@ -155,6 +200,73 @@ v1.post("/sign", async (c) => {
 
     const digests = normalizeDigests(rawList, encoding, algorithm);
 
+    // 证书级病毒查杀：off 不校验；manual / auto 都要求先有扫描结果
+    const config = await readConfig(c.env);
+    const scanSettings = readScanSettings(config);
+    const policy = scanPolicyOf(credential);
+    let scanMeta: { sha256: string; risk: number; provider: string } | undefined;
+    if (policy.mode !== "off") {
+      if (!isScanConfigured(scanSettings)) {
+        return jsonError(
+          c,
+          503,
+          "scan_not_configured",
+          "该证书要求病毒查杀，但管理员还没有在系统设置里配置查杀 API Key",
+        );
+      }
+
+      const sha256 = normalizeSha256(body.file?.sha256);
+      if (!sha256) {
+        return jsonError(
+          c,
+          400,
+          "scan_proof_required",
+          "该证书要求病毒查杀，签名请求必须携带 file.sha256（原始文件 SHA-256），请升级客户端",
+        );
+      }
+
+      const verdict = await lookupVerdict(c.env, scanSettings, sha256);
+      if (!verdict) {
+        const uploadUrl = manualScanUrl(config, c.req.url);
+        return c.json(
+          {
+            ok: false,
+            error: {
+              code: "scan_required",
+              message:
+                policy.mode === "auto"
+                  ? "文件尚未通过病毒查杀，客户端应自动上传扫描；也可以打开手动上传页"
+                  : `文件尚未通过病毒查杀，请先打开 ${uploadUrl} 手动上传扫描，或运行 certumsigner scan <文件> 后再签名`,
+            },
+            scan: {
+              policy,
+              sha256,
+              provider: scanSettings.provider,
+              uploadMode: policy.mode,
+              manualUrl: uploadUrl,
+            },
+          },
+          409,
+        );
+      }
+
+      const { risk, allowed } = evaluateVerdict(verdict, policy.maxRisk);
+      if (!allowed) {
+        return c.json(
+          {
+            ok: false,
+            error: {
+              code: "scan_risk_too_high",
+              message: `病毒查杀未通过：风险等级 ${risk}（报毒 ${verdict.malicious} + 可疑 ${verdict.suspicious}），超过允许的 ${policy.maxRisk}`,
+            },
+            scan: { policy, verdict, risk, maxRisk: policy.maxRisk, allowed: false },
+          },
+          403,
+        );
+      }
+      scanMeta = { sha256, risk, provider: scanSettings.provider };
+    }
+
     if (key.dailyQuota > 0) {
       const used = await getDailyUsage(c.env, key.id);
       if (used + digests.length > key.dailyQuota) {
@@ -195,6 +307,9 @@ v1.post("/sign", async (c) => {
       userAgent: (c.req.header("user-agent") ?? "").slice(0, 120),
       userId: key.userId,
       credentialId: credential.id,
+      ...(scanMeta
+        ? { scanSha256: scanMeta.sha256, scanRisk: scanMeta.risk, scanProvider: scanMeta.provider }
+        : {}),
     };
 
     c.executionCtx.waitUntil(
@@ -230,9 +345,10 @@ v1.post("/sign", async (c) => {
   } catch (error) {
     const duration = Date.now() - started;
     const certumError = error instanceof CertumError ? error : null;
-    const status = certumError?.status ?? 500;
-    const code = certumError?.code ?? "internal_error";
-    const message = certumError?.message ?? `内部错误：${String(error)}`;
+    const scanError = error instanceof ScanError ? error : null;
+    const status = certumError?.status ?? scanError?.status ?? 500;
+    const code = certumError?.code ?? scanError?.code ?? "internal_error";
+    const message = certumError?.message ?? scanError?.message ?? `内部错误：${String(error)}`;
 
     const log: SignLogRecord = {
       id: randomId(),
@@ -332,6 +448,153 @@ v1.get("/stats", async (c) => {
     today: stats.today,
     total: stats.total,
   });
+});
+
+/* -------------------------------- 病毒查杀 -------------------------------- */
+
+/** 当前 Key 绑定的证书要求哪种查杀策略；旧客户端可以忽略，新版会据此决定是否自动上传 */
+v1.get("/scan/policy", async (c) => {
+  const credential = c.get("credential") as CredentialRecord;
+  const config = await readConfig(c.env);
+  const settings = readScanSettings(config);
+  return c.json({
+    ok: true,
+    policy: scanPolicyOf(credential),
+    provider: settings.provider,
+    configured: isScanConfigured(settings),
+    maxUploadMb: settings.maxUploadMb,
+    manualUrl: manualScanUrl(config, c.req.url),
+  });
+});
+
+/** 按原始文件 SHA-256 查结果；found=false 表示查杀服务里还没有这个文件 */
+v1.get("/scan/check", async (c) => {
+  const credential = c.get("credential") as CredentialRecord;
+  const sha256 = normalizeSha256(c.req.query("sha256"));
+  if (!sha256) return jsonError(c, 400, "bad_sha256", "sha256 必须是 64 位十六进制");
+
+  const config = await readConfig(c.env);
+  const settings = readScanSettings(config);
+  const policy = scanPolicyOf(credential);
+  const manualUrl = manualScanUrl(config, c.req.url);
+  const provider = settings.provider;
+
+  if (policy.mode === "off") {
+    return c.json({ ok: true, policy, provider, configured: isScanConfigured(settings), found: false, allowed: true, skipped: true, manualUrl });
+  }
+  if (!isScanConfigured(settings)) {
+    return jsonError(c, 503, "scan_not_configured", "该证书要求病毒查杀，但管理员还没有配置查杀 API Key");
+  }
+
+  try {
+    const verdict = await lookupVerdict(c.env, settings, sha256);
+    if (!verdict) {
+      return c.json({
+        ok: true,
+        policy,
+        provider,
+        configured: true,
+        found: false,
+        allowed: false,
+        reason: "not_scanned",
+        sha256,
+        manualUrl,
+      });
+    }
+    const { risk, allowed } = evaluateVerdict(verdict, policy.maxRisk);
+    return c.json({
+      ok: true,
+      policy,
+      provider,
+      configured: true,
+      found: true,
+      allowed,
+      risk,
+      maxRisk: policy.maxRisk,
+      reason: allowed ? "ok" : "risk_too_high",
+      verdict,
+      manualUrl,
+    });
+  } catch (error) {
+    return scanFailure(c, error);
+  }
+});
+
+/**
+ * 上传文件到查杀服务：自动模式由客户端直接调用，手动模式由用户门户 / CLI 调用。
+ * 请求体是原始文件字节（application/octet-stream），不是 multipart，省一次内存拷贝。
+ */
+v1.post("/scan/upload", async (c) => {
+  const credential = c.get("credential") as CredentialRecord;
+  const policy = scanPolicyOf(credential);
+  if (policy.mode === "off") {
+    return jsonError(c, 403, "scan_disabled", "这套证书没有开启病毒查杀，不需要上传扫描");
+  }
+
+  const config = await readConfig(c.env);
+  const settings = readScanSettings(config);
+  if (!isScanConfigured(settings)) {
+    return jsonError(c, 503, "scan_not_configured", "管理员还没有配置查杀 API Key");
+  }
+
+  const limit = scanUploadLimitBytes(settings);
+  const declared = Number(c.req.header("content-length") ?? "0");
+  if (Number.isFinite(declared) && declared > limit + 4096) {
+    return jsonError(c, 413, "scan_file_too_large", `文件超过后台设置的上传上限 ${settings.maxUploadMb} MB`);
+  }
+
+  const bytes = new Uint8Array(await c.req.arrayBuffer());
+  if (bytes.byteLength === 0) return jsonError(c, 400, "scan_empty_file", "上传内容为空");
+  if (bytes.byteLength > limit) {
+    return jsonError(c, 413, "scan_file_too_large", `文件超过后台设置的上传上限 ${settings.maxUploadMb} MB`);
+  }
+
+  const declaredSha = normalizeSha256(c.req.query("sha256")) || undefined;
+  const filename = uploadFileName(c.req.query("name"), declaredSha ?? "upload");
+  try {
+    const result = await uploadForScan(c.env, settings, bytes, filename, declaredSha);
+    return c.json({
+      ok: true,
+      status: "queued",
+      analysisId: result.id,
+      sha256: result.sha256,
+      provider: settings.provider,
+      policy,
+    });
+  } catch (error) {
+    return scanFailure(c, error);
+  }
+});
+
+/** 轮询分析结果；Worker 内部有 10 秒节流，客户端可以放心每 3–5 秒问一次 */
+v1.get("/scan/analysis/:id", async (c) => {
+  const credential = c.get("credential") as CredentialRecord;
+  const policy = scanPolicyOf(credential);
+  const id = c.req.param("id");
+  if (!/^[A-Za-z0-9._-]{1,200}$/.test(id)) return jsonError(c, 400, "bad_analysis_id", "分析 ID 格式不正确");
+
+  const config = await readConfig(c.env);
+  const settings = readScanSettings(config);
+  const manualUrl = manualScanUrl(config, c.req.url);
+  try {
+    const state = await pollScanAnalysis(c.env, settings, id);
+    if (!state) return jsonError(c, 404, "scan_analysis_not_found", "查杀任务不存在或已过期，请重新上传");
+    const evaluation = state.done && state.verdict ? evaluateVerdict(state.verdict, policy.maxRisk) : null;
+    return c.json({
+      ok: true,
+      status: state.done ? "completed" : "pending",
+      sha256: state.sha256,
+      provider: state.provider,
+      verdict: state.verdict ?? null,
+      risk: evaluation?.risk ?? 0,
+      maxRisk: policy.maxRisk,
+      allowed: evaluation?.allowed ?? false,
+      policy,
+      manualUrl,
+    });
+  } catch (error) {
+    return scanFailure(c, error);
+  }
 });
 
 /**

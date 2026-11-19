@@ -4,6 +4,7 @@
 #include "digest.h"
 #include "pe.h"
 #include "pkcs7.h"
+#include "scan.h"
 #include "spc.h"
 #include "tsa.h"
 #include "util.h"
@@ -92,7 +93,16 @@ bool Signer::prepare(std::string &err) {
     ApiClient api(options.server, options.api_key);
     RemoteCertificate remote;
     if (!api.fetch_certificate(remote, err)) return false;
-    return adopt_certificate(remote.pem, remote.chain, remote.serial, err);
+    if (!adopt_certificate(remote.pem, remote.chain, remote.serial, err)) return false;
+
+    // 查杀策略挂在证书上：旧版 Worker 没有 /v1/scan/policy，取不到时按「不要求扫描」处理
+    if (!api.fetch_scan_policy(scan_policy_, err)) return false;
+    if (scan_policy_.required) {
+        write("病毒查杀：" + std::string(scan_policy_.mode == "auto" ? "自动上传" : "手动上传") +
+              "，允许风险 ≤ " + std::to_string(scan_policy_.max_risk) +
+              (scan_policy_.provider.empty() ? "" : "（" + scan_policy_.provider + "）"));
+    }
+    return true;
 }
 
 bool Signer::sign_file(const std::string &path, std::string &err, bool *skipped) {
@@ -120,6 +130,14 @@ bool Signer::sign_file(const std::string &path, std::string &err, bool *skipped)
     }
 
     const std::vector<std::string> algorithms = effective_algorithms(options.algorithms);
+
+    // 证书要求先过病毒查杀时，签名前把原始文件 SHA-256 一起提交给 Worker 复核
+    ApiClient api(options.server, options.api_key);
+    std::string file_sha256;
+    if (scan_policy_.required) {
+        auto scan_log = [this](const std::string &message) { write(message); };
+        if (!scan::ensure_clear(api, scan_policy_, path, scan_log, file_sha256, err)) return false;
+    }
 
     // 时间戳代理与鉴权头：每种算法各要一次时间戳，提前算好
     const std::string proxy = worker_tsa_url(options.server);
@@ -158,10 +176,9 @@ bool Signer::sign_file(const std::string &path, std::string &err, bool *skipped)
         }
 
         write("请求云端签名（" + label + "）：" + to_hex(attrs_digest).substr(0, 16) + "…");
-        ApiClient api(options.server, options.api_key);
         RemoteCertificate remote;
         std::string signature_hex;
-        if (!api.sign_digest(to_hex(attrs_digest), api_algorithm, signature_hex, remote, err)) {
+        if (!api.sign_digest(to_hex(attrs_digest), api_algorithm, signature_hex, remote, err, file_sha256)) {
             return false;
         }
 

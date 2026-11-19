@@ -601,8 +601,16 @@ export function adminCredentialsPage(data: CredentialsPageData): string {
   const rows = data.credentials
     .map((cred) => {
       const status = data.statuses[cred.id] ?? {};
+      const scanMode = cred.scanMode ?? "off";
+      const scanText =
+        scanMode === "off"
+          ? t("cred.scanOff")
+          : `${t(scanMode === "auto" ? "cred.scanAuto" : "cred.scanManual")} · ${t("cred.scanMaxRiskShort", {
+              n: cred.scanMaxRisk ?? 0,
+            })}`;
       return `<tr>
         <td><strong>${escapeHtml(cred.label)}</strong><div class="small muted">${escapeHtml(cred.email)}</div>
+          <div class="small">${scanMode === "off" ? `<span class="muted">${escapeHtml(scanText)}</span>` : pill(scanText, "muted")}</div>
           ${cred.lastError ? `<div class="small" style="color:var(--bad)">${escapeHtml(cred.lastError.slice(0, 90))}</div>` : ""}</td>
         <td class="small mono hide-xs">${
           cred.certificateSha1 ? escapeHtml(cred.certificateSha1) : `<span class="muted">${escapeHtml(t("cred.firstCard"))}</span>`
@@ -659,6 +667,18 @@ export function adminCredentialsPage(data: CredentialsPageData): string {
       <label class="field wide">${escapeHtml(t("cred.sha1Field"))}
         <input type="text" name="certificateSha1" placeholder="${escapeHtml(t("cred.sha1Hint"))}">
       </label>
+      <label class="field">${escapeHtml(t("cred.scanMode"))}
+        <select name="scanMode">
+          <option value="off">${escapeHtml(t("cred.scanOff"))}</option>
+          <option value="manual">${escapeHtml(t("cred.scanManual"))}</option>
+          <option value="auto">${escapeHtml(t("cred.scanAuto"))}</option>
+        </select>
+        <span class="small muted">${escapeHtml(t("cred.scanModeHint"))}</span>
+      </label>
+      <label class="field">${escapeHtml(t("cred.scanMaxRisk"))}
+        <input type="number" name="scanMaxRisk" min="0" max="100" step="1" value="0">
+        <span class="small muted">${escapeHtml(t("cred.scanMaxRiskHint"))}</span>
+      </label>
     </div>`,
   });
 
@@ -687,6 +707,25 @@ export function adminCredentialsPage(data: CredentialsPageData): string {
             <input type="text" name="certificateSha1" value="${escapeHtml(cred.certificateSha1 ?? "")}" placeholder="${escapeHtml(
               t("cred.sha1Hint"),
             )}">
+          </label>
+          <label class="field">${escapeHtml(t("cred.scanMode"))}
+            <select name="scanMode">
+              <option value="off" ${(cred.scanMode ?? "off") === "off" ? "selected" : ""}>${escapeHtml(
+                t("cred.scanOff"),
+              )}</option>
+              <option value="manual" ${cred.scanMode === "manual" ? "selected" : ""}>${escapeHtml(
+                t("cred.scanManual"),
+              )}</option>
+              <option value="auto" ${cred.scanMode === "auto" ? "selected" : ""}>${escapeHtml(
+                t("cred.scanAuto"),
+              )}</option>
+            </select>
+            <span class="small muted">${escapeHtml(t("cred.scanModeHint"))}</span>
+          </label>
+          <label class="field">${escapeHtml(t("cred.scanMaxRisk"))}
+            <input type="number" name="scanMaxRisk" min="0" max="100" step="1"
+              value="${cred.scanMaxRisk ?? 0}">
+            <span class="small muted">${escapeHtml(t("cred.scanMaxRiskHint"))}</span>
           </label>
         </div>`,
       }),
@@ -909,6 +948,12 @@ function logDetailDialog(log: SignLogRecord, data: { t: Translate; userName: Map
       t("logs.credential"),
       escapeHtml(log.credentialId ? data.credName.get(log.credentialId) ?? t("keys.deletedCred") : "—"),
     ],
+    ...(log.scanSha256
+      ? ([
+          [t("logs.scan"), `${log.scanRisk ?? 0} · ${log.scanProvider ?? ""}`],
+          [t("logs.scanSha"), `<span class="mono">${escapeHtml(log.scanSha256)}</span>`],
+        ] as Array<[string, string]>)
+      : []),
     [t("logs.algorithm"), escapeHtml(log.algorithm.toUpperCase())],
     [t("logs.digest"), `<span class="mono">${escapeHtml(log.digestPrefix)}…</span>`],
     [t("logs.digestCount"), escapeHtml(String(log.count))],
@@ -970,6 +1015,7 @@ export interface SettingsPageData extends AdminNavData {
   /** 只暴露「有没有填过」，密钥本身不回传 */
   hasResendApiKey: boolean;
   hasTurnstileSecret: boolean;
+  hasScanApiKey: boolean;
   mailReady: boolean;
   adminUsername?: string;
 }
@@ -1107,6 +1153,55 @@ export function adminSettingsPage(data: SettingsPageData): string {
               )}</p>`
             : ""
         }
+      </div>
+      <div class="card" style="margin-bottom:16px">
+        <h2>${escapeHtml(t("settings.scan"))} ${
+          data.hasScanApiKey ? pill(t("settings.scanReady"), "ok") : pill(t("settings.scanOff"), "warn")
+        }</h2>
+        <p class="small muted" style="margin:0 0 12px">${escapeHtml(t("settings.scanHint"))}</p>
+        <div class="form-grid">
+          <label class="field">${escapeHtml(t("settings.scanProvider"))}
+            <select name="scanProvider">
+              <option value="virustotal" ${
+                data.config.scanProvider === "metadefender" ? "" : "selected"
+              }>VirusTotal</option>
+              <option value="metadefender" ${
+                data.config.scanProvider === "metadefender" ? "selected" : ""
+              }>MetaDefender Cloud</option>
+            </select>
+            <span class="small muted">${escapeHtml(t("settings.scanProviderHint"))}</span>
+          </label>
+          <label class="field">${escapeHtml(t("settings.scanApiKey"))}
+            <input type="password" name="scanApiKey" autocomplete="new-password" spellcheck="false"
+              placeholder="${escapeHtml(data.hasScanApiKey ? t("settings.scanApiKeySet") : "vt_… / md_…")}">
+            <span class="small muted">${escapeHtml(t("settings.scanApiKeyHint"))}</span>
+          </label>
+          <label class="field">${escapeHtml(t("settings.scanBaseUrl"))}
+            <input type="url" name="scanBaseUrl" value="${escapeHtml(data.config.scanBaseUrl)}"
+              placeholder="https://www.virustotal.com/api/v3">
+            <span class="small muted">${escapeHtml(t("settings.scanBaseUrlHint"))}</span>
+          </label>
+          <label class="field">${escapeHtml(t("settings.scanMaxUploadMb"))}
+            <input type="number" name="scanMaxUploadMb" min="1" max="64" step="1"
+              value="${data.config.scanMaxUploadMb}">
+            <span class="small muted">${escapeHtml(t("settings.scanMaxUploadMbHint"))}</span>
+          </label>
+          <label class="field">${escapeHtml(t("settings.scanCacheMinutes"))}
+            <input type="number" name="scanCacheMinutes" min="1" max="10080" step="1"
+              value="${data.config.scanCacheMinutes}">
+            <span class="small muted">${escapeHtml(t("settings.scanCacheMinutesHint"))}</span>
+          </label>
+        </div>
+        ${
+          data.hasScanApiKey
+            ? `<div class="checks" style="margin-top:10px">
+                <label><input type="checkbox" name="clearScanApiKey" value="1"> ${escapeHtml(
+                  t("settings.clearScanApiKey"),
+                )}</label>
+              </div>`
+            : ""
+        }
+        <p class="small muted" style="margin:10px 0 0">${escapeHtml(t("settings.scanTerms"))}</p>
       </div>
       <div class="row row--end">
         <button class="btn btn--primary" type="submit">${escapeHtml(t("settings.save"))}</button>

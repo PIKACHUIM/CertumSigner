@@ -5,6 +5,7 @@
 #include "gui.h"
 #include "pe.h"
 #include "pkcs7.h"
+#include "scan.h"
 #include "settings.h"
 #include "signer.h"
 #include "util.h"
@@ -59,6 +60,7 @@ void print_usage() {
         << "CertumSigner " << kVersion << " —— Certum 云签名客户端（Windows / Linux）\n\n"
         << "用法：\n"
         << "  certumsigner sign <文件或目录>... [选项]\n"
+        << "  certumsigner scan <文件>            手动上传并等待病毒查杀结果\n"
         << "  certumsigner cert [--save <证书路径>]\n"
         << "  certumsigner hash <文件> [--sha1|--sha256|--sha384|--sha512]\n"
         << "  certumsigner verify <文件>\n"
@@ -198,7 +200,7 @@ bool parse_args(int argc, char **argv, ParsedArgs &out, std::string &err) {
     }
 
     if (out.command.empty() && !out.gui && !out.help) {
-        err = "缺少子命令（sign / cert / hash / verify / config）";
+        err = "缺少子命令（sign / scan / cert / hash / verify / config）";
         return false;
     }
     return true;
@@ -313,6 +315,53 @@ int run_hash(const ParsedArgs &args) {
         std::cout << to_hex(digest) << "\n";
     }
     return 0;
+}
+
+int run_scan(const ParsedArgs &args) {
+    Settings settings;
+    std::string err;
+    if (!load_settings(settings, err)) {
+        std::cerr << err << "\n";
+        return 1;
+    }
+    if (!args.server.empty()) settings.server = args.server;
+    if (!args.api_key.empty()) settings.api_key = args.api_key;
+    if (settings.server.empty() || settings.api_key.empty()) {
+        std::cerr << "缺少服务地址或 API Key（certumsigner config --server … --api-key csk_…）\n";
+        return 1;
+    }
+    if (args.positionals.empty()) {
+        std::cerr << "用法：certumsigner scan <文件>\n";
+        return 1;
+    }
+
+    const std::string &path = args.positionals[0];
+    if (!file_exists(path)) {
+        std::cerr << "文件不存在：" << path << "\n";
+        return 1;
+    }
+
+    ApiClient api(settings.server, settings.api_key);
+    ScanVerdict verdict;
+    const bool ok = scan::scan_file(
+        api, path, [](const std::string &message) { std::cout << "  " << message << "\n"; }, verdict, err);
+    if (!ok) {
+        std::cerr << err << "\n";
+        return 1;
+    }
+
+    std::cout << "SHA-256  : " << verdict.sha256 << "\n"
+              << "风险等级 : " << verdict.risk << "（报毒 " << verdict.malicious << " + 可疑 " << verdict.suspicious
+              << "）\n"
+              << "引擎统计 : 共 " << verdict.total << " 个，未检出 " << verdict.undetected << "，无害 "
+              << verdict.harmless << "\n";
+    if (!verdict.permalink.empty()) std::cout << "结果页   : " << verdict.permalink << "\n";
+    if (verdict.allowed) {
+        std::cout << "结果     : 通过，可以签名\n";
+        return 0;
+    }
+    std::cout << "结果     : 风险超过证书允许的等级，签名会被服务端拒绝\n";
+    return 1;
 }
 
 int run_verify(const ParsedArgs &args) {
@@ -482,6 +531,7 @@ int cli_main(int argc, char **argv) {
     if (args.command == "config") return run_config(args);
     if (args.command == "cert") return run_cert(args);
     if (args.command == "hash") return run_hash(args);
+    if (args.command == "scan") return run_scan(args);
     if (args.command == "verify") return run_verify(args);
     if (args.command == "sign") return run_sign(args);
 

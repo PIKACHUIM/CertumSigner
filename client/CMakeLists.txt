@@ -30,6 +30,7 @@ add_executable(certumsigner
     src/api.cpp
     src/settings.cpp
     src/signer.cpp
+    src/scan.cpp
 )
 
 target_include_directories(certumsigner PRIVATE src)

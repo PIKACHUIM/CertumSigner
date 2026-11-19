@@ -33,10 +33,12 @@ import {
   updateApiKey,
 } from "../store/keys";
 import {
+  clampScanRisk,
   createCredential,
   deleteCredential,
   getCredential,
   listCredentials,
+  normalizeScanMode,
   setCredentialEnabled,
   updateCredential,
 } from "../store/credentials";
@@ -519,6 +521,8 @@ secure.post("/credentials", async (c) => {
       email: one(form, "email"),
       otp: one(form, "otp"),
       certificateSha1: one(form, "certificateSha1") || undefined,
+      scanMode: normalizeScanMode(one(form, "scanMode")),
+      scanMaxRisk: clampScanRisk(one(form, "scanMaxRisk")),
       createdBy: c.get("adminSession").id,
     });
     return backWith(c, "/admin/credentials", "ok", tr(c)("msg.credSaved", { name: cred.label }));
@@ -542,6 +546,9 @@ secure.post("/credentials/:id/update", async (c) => {
       otp: one(form, "otp") || undefined,
       // 空字符串表示「清掉证书指纹」，与「没提交」区分开
       certificateSha1: one(form, "certificateSha1"),
+      // 老页面没有这两个字段时保持原值，避免保存一次就把查杀关掉
+      scanMode: form["scanMode"] !== undefined ? normalizeScanMode(one(form, "scanMode")) : undefined,
+      scanMaxRisk: form["scanMaxRisk"] !== undefined ? clampScanRisk(one(form, "scanMaxRisk")) : undefined,
     });
     return backWith(c, "/admin/credentials", ok ? "ok" : "error", ok ? tr(c)("msg.credUpdated", { name: existing.label }) : tr(c)("msg.notFoundCred"));
   } catch (error) {
@@ -727,9 +734,10 @@ secure.get("/settings", async (c) => {
       csrf: c.get("adminSession").csrf,
       settings,
       // 密钥不回传给浏览器，页面只显示「已配置/未配置」
-      config: { ...config, resendApiKey: "", turnstileSecretKey: "" },
+      config: { ...config, resendApiKey: "", turnstileSecretKey: "", scanApiKey: "" },
       hasResendApiKey: !!config.resendApiKey,
       hasTurnstileSecret: !!config.turnstileSecretKey,
+      hasScanApiKey: !!config.scanApiKey,
       mailReady: (await mailConfigured(c.env)),
       adminUsername: state.account?.username,
     }),
@@ -746,10 +754,12 @@ secure.post("/settings", async (c) => {
   const publicBaseUrl = one(form, "publicBaseUrl");
   const certumApiBase = one(form, "certumApiBase");
   const tsaUpstream = one(form, "tsaUpstream");
+  const scanBaseUrl = one(form, "scanBaseUrl");
   const urls: Array<[string, string]> = [
     [publicBaseUrl, tr(c)("settings.publicBaseUrl")],
     [certumApiBase, tr(c)("settings.certumApiBase")],
     [tsaUpstream, tr(c)("settings.tsaUpstream")],
+    [scanBaseUrl, tr(c)("settings.scanBaseUrl")],
   ];
   for (const [value, label] of urls) {
     if (value && !/^https?:\/\/[^\s]+$/i.test(value)) return fail(tr(c)("settings.badUrl", { name: label }));
@@ -767,14 +777,29 @@ secure.post("/settings", async (c) => {
     resetEnabled: on("resetEnabled"),
     emailCaptcha: on("emailCaptcha"),
   });
+  const scanProviderRaw = one(form, "scanProvider");
+  const scanProvider =
+    scanProviderRaw === "metadefender" ? "metadefender" : scanProviderRaw === "virustotal" ? "virustotal" : undefined;
+  const scanMaxRaw = one(form, "scanMaxUploadMb");
+  const scanCacheRaw = one(form, "scanCacheMinutes");
+
   await writeConfig(c.env, {
     publicBaseUrl,
     certumApiBase,
     tsaUpstream,
+    scanBaseUrl,
+    ...(scanProvider ? { scanProvider } : {}),
+    ...(scanMaxRaw ? { scanMaxUploadMb: Number(scanMaxRaw) } : {}),
+    ...(scanCacheRaw ? { scanCacheMinutes: Number(scanCacheRaw) } : {}),
     resendFrom: one(form, "resendFrom"),
     turnstileSiteKey: one(form, "turnstileSiteKey"),
     certumChainPem,
     logSignatures: on("logSignatures"),
+    ...(on("clearScanApiKey")
+      ? { scanApiKey: "" }
+      : one(form, "scanApiKey").trim()
+        ? { scanApiKey: one(form, "scanApiKey").trim() }
+        : {}),
     ...(on("clearResendApiKey")
       ? { resendApiKey: "" }
       : one(form, "resendApiKey").trim()

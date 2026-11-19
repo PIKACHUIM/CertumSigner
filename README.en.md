@@ -66,8 +66,9 @@ Certum SimplySign only offers "sign this digest with an RSA key". Normally that 
 
 - **Multiple Certum credentials**: email + TOTP seed + certificate SHA-1 fingerprint is one credential in KV; keep as many as you need (different accounts / cards), each with its own cached sign-in session and card info.
 - **Digest signing proxy**: `POST /v1/sign` takes one digest or a batch, `algorithm` supports SHA-1 / SHA-256 / SHA-384 / SHA-512, up to 16 digests per cloud call.
+- **Malware scanning (optional, per credential)**: each credential can require `off / manual upload / auto upload` and a maximum risk level. Lookups and uploads are relayed by the Worker, backed by VirusTotal or MetaDefender Cloud, cached by raw-file SHA-256.
 - **Admin console** (`/admin`): request volume, success/failure, algorithm mix, 7-day chart, recent signatures; create/edit/disable users, credentials and keys; a full signing log with time, key, credential, digest prefix, result, duration, IP, UA and error.
-- **User portal** (`/user`): sign in with email + password, create a key from the certificates an admin assigned, rename it or change its daily quota, and inspect your own calls. A key's plaintext is shown once; lists only ever display its prefix.
+- **User portal** (`/user`): sign in with email + password, create a key from the certificates an admin assigned, rename it or change its daily quota, and inspect your own calls. When a certificate requires scanning, a Virus Scan page lets you upload unknown files manually. A key's plaintext is shown once; lists only ever display its prefix.
 - **Quotas**: key-level and user-level daily quotas apply together (0 = unlimited); `/v1/sign` returns `429 quota_exceeded` before touching Certum.
 - **Registration / password reset** (off by default): registration requires email verification before sign-in; reset sends a one-hour link through Resend.
 - **Sign-in captcha** (off by default): once enabled, user, admin and desktop-client sign-in all need one, either a 4-digit image captcha or Cloudflare Turnstile (falls back to the image captcha when its keys are missing).
@@ -80,6 +81,7 @@ Certum SimplySign only offers "sign this digest with an RSA key". Normally that 
 - **Own PKCS#7**: no signtool involved. Everything except the RSA signature happens locally, and the returned signature is verified against the certificate public key before it is written.
 - **GUI**: hand-drawn Win32 on Windows (no console window), GTK3 on Linux; drop files in, batch sign, live status pills, optionally skip files that are already signed.
 - **Timestamp fallback**: when enterprise security software blocks the TSA, the client retries through the Worker's `/v1/timestamp` proxy.
+- **Pre-sign malware check**: when the certificate requires it, the client hashes the raw file; auto mode uploads through the Worker and polls, manual mode points to `/user/scan` or `certumsigner scan`.
 - **Bilingual UI with light/dark themes**, and proper support for Chinese and space-containing paths.
 
 ## Client
@@ -117,6 +119,9 @@ certumsigner sign dist/ --recursive --yes         # whole directory
 certumsigner sign app.exe --sha256 --sha384       # multiple signatures in one file
 certumsigner sign legacy.dll --sha1               # old systems (EV cards reject it)
 certumsigner sign app.exe --no-timestamp --backup # no timestamp, keep the original
+
+# malware scan (when the certificate requires manual upload)
+certumsigner scan app.exe                         # upload / poll, print the risk level
 
 # inspect
 certumsigner hash app.exe                         # print the Authenticode digest
@@ -217,8 +222,10 @@ Auth: `Authorization: Bearer csk_…` (or `X-Api-Key`). The credential bound to 
 curl -X POST https://sign.example.com/v1/sign \
   -H "Authorization: Bearer csk_xxx" \
   -H "Content-Type: application/json" \
-  -d '{"hash":"<64 hex chars, SHA-256>","algorithm":"sha256"}'
+  -d '{"hash":"<64 hex chars, SHA-256>","algorithm":"sha256","file":{"sha256":"<raw-file SHA-256>"}}'
 ```
+
+`file.sha256` is required only when the certificate enforces scanning: the Worker checks the scan result against it and otherwise returns `scan_proof_required`. Certificates without scanning can omit it.
 
 Batch (one cloud call, up to 16 digests):
 
@@ -267,12 +274,41 @@ Failures are always `{"ok":false,"error":{"code":"...","message":"..."}}` with c
 | `GET /v1/certificate` | signing certificate PEM of the current credential, plus optional chain |
 | `GET /v1/whoami` | owner, key quota / user quota, today's usage and bound credential |
 | `GET /v1/stats` | global stats plus your own and the account's usage |
+| `GET /v1/scan/policy` | scan mode, risk limit, provider and manual upload URL for the current certificate |
+| `GET /v1/scan/check?sha256=` | look up a raw-file SHA-256 (`found=false` means unknown) |
+| `POST /v1/scan/upload?sha256=&name=` | relay raw file bytes to the scanning provider; returns an `analysisId` |
+| `GET /v1/scan/analysis/:id` | poll an analysis (throttled 10 s internally to save free quota) |
 | `POST /v1/timestamp` | RFC3161 proxy: TSQ in, TSR out |
 | `GET /captcha` | issue a one-time image captcha (`{id, svg}`, 5-minute TTL) |
 | `GET /prefs?lang=&mode=&theme=&back=` | switch language / mode / theme, set cookies and 302 back |
 | `GET /health` | liveness probe (no cloud requests) |
 
 Admin JSON stats: `GET /admin/api/stats` (admin session required).
+
+### Malware scanning
+
+The policy lives on the **certificate credential**, so different certificates on the same Worker can behave differently:
+
+| Mode | When the file is unknown | Upload path |
+| --- | --- | --- |
+| Off | no check | — |
+| Manual | the client fails and points to `/user/scan` or `certumsigner scan` | user-initiated |
+| Auto | the client uploads and polls before signing | relayed by the Worker |
+
+Risk level = malicious engines + suspicious engines; `0` means fully clean. `/v1/sign` re-checks `file.sha256`: unknown files return `409 scan_required`, excessive risk returns `403 scan_risk_too_high`, and a missing provider key returns `503 scan_not_configured`. Mandatory scanning fails closed.
+
+**Providers and free tiers** (set the API key in Admin → Settings → Malware scanning):
+
+| Provider | Free tier | File size | Notes |
+| --- | --- | --- | --- |
+| VirusTotal (default) | 4 req/min, 500/day | 32 MB direct upload | hash lookup first, upload only when unknown |
+| MetaDefender Cloud | ~1,000 hash lookups/day, 150 scans/day | 750 MB | hash lookup supported; the Worker caps uploads at 64 MB |
+
+Cloudmersive's free tier is 600 calls/month and 3.5 MB, and it only accepts uploads (no hash lookup), so it is not built in.
+
+**Privacy and terms**: the VirusTotal public API adds submitted or queried files to its public corpus and may not be used in commercial products. Use MetaDefender or point the base URL at your own private scanner for sensitive builds, and confirm compliance before uploading.
+
+**Trust model**: the Worker can only verify that the declared SHA-256 is clean in the scanning service; it cannot derive the raw file from the Authenticode digest. In auto mode the Worker recomputes the SHA-256 of the uploaded bytes and compares it with the declared value. The API key holder is trusted; this guards against client bugs and accidental signing, not a malicious key holder.
 
 ### When the TSA is blocked
 
@@ -306,6 +342,8 @@ The old rolling `latest` release is gone: `/releases/latest` follows the newest 
 - Opening the console or credential pages may trigger a Certum sign-in (up to 3 OTP retries when not signed in); wrong credentials produce a few failed requests.
 - Certum EV cards reject `SHA1` digests: `/v1/sign` returns `digest_algorithm_unsupported`. Use a certificate that supports it if you really need SHA-1.
 - Only PE files (`.exe/.dll/.sys/.ocx`), no MSI / CAB / scripts.
+- Malware scanning works on the raw-file SHA-256: the VirusTotal free tier allows 32 MB direct uploads, so larger files must be uploaded elsewhere and checked by hash. Free quotas (4 req/min on VT) also make auto scanning slow; stagger batch signing.
+- The VirusTotal public API adds samples to its public corpus and is not licensed for commercial products; use MetaDefender or a private proxy for confidential builds.
 - Workers limits subrequests: a single signing call uses 3–8 of them, so keep batches to a dozen or so digests.
 - Registration and password reset are off by default; without Resend, only an admin can reset a password from the user detail page.
 
@@ -314,7 +352,7 @@ The old rolling `latest` release is gone: `/releases/latest` follows the newest 
 <details>
 <summary>What has actually been tested</summary>
 
-- Worker: `npx tsc --noEmit` passes; `npm test` passes 39 tests (TOTP against RFC 6238 vectors, multipart parsing, encoding/hashing, KV storage and password hashing, unique user emails, admin account setup and password change, runtime config round-trips).
+- Worker: `npx tsc --noEmit` passes; `npm test` passes 46 tests (TOTP against RFC 6238 vectors, multipart parsing, encoding/hashing, KV storage and password hashing, unique user emails, admin account setup and password change, runtime config round-trips, scan risk thresholds / result caching / upload SHA-256 verification).
 - Real Certum path works end to end (2026-11, Windows x64): email + TOTP sign-in, `/v1/certificate` returns the EV code-signing certificate, `/v1/sign` turns a real SHA-256 digest into a 512-byte signature, and after writing it into a PE `WinVerifyTrust` reports **valid**; still valid with a real Certum timestamp.
 - UI: four themes × light/dark, zh/en switching, dialogs, and mobile widths (390 / 563 px) checked page by page with no horizontal scrolling; captcha refresh and validation, settings persistence, user quotas and self-service key quota edits tested.
 - Client: MSVC 14.44 + Windows SDK 10.0.22621 + static OpenSSL 3.5.9 with `/W4 /permissive-` and no warnings; the Win32 GUI completed sign-in → key rotation → drag-and-drop batch signing → `WinVerifyTrust`, and layout holds at 125% scaling.

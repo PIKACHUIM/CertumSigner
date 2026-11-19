@@ -26,6 +26,33 @@ std::string shorten(const std::string &text, size_t limit = 200) {
     return flat.size() > limit ? flat.substr(0, limit) + "…" : flat;
 }
 
+std::string url_encode(const std::string &text) {
+    static const char *hex = "0123456789ABCDEF";
+    std::string out;
+    out.reserve(text.size() * 3);
+    for (unsigned char c : text) {
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' ||
+            c == '_' || c == '.' || c == '~') {
+            out.push_back(static_cast<char>(c));
+        } else {
+            out.push_back('%');
+            out.push_back(hex[c >> 4]);
+            out.push_back(hex[c & 0x0F]);
+        }
+    }
+    return out;
+}
+
+void read_verdict(const Json &node, ScanVerdict &out) {
+    out.malicious = static_cast<int>(node.get_number("malicious", 0));
+    out.suspicious = static_cast<int>(node.get_number("suspicious", 0));
+    out.undetected = static_cast<int>(node.get_number("undetected", 0));
+    out.harmless = static_cast<int>(node.get_number("harmless", 0));
+    out.total = static_cast<int>(node.get_number("total", 0));
+    out.sha256 = node.get_string("sha256");
+    out.permalink = node.get_string("permalink");
+}
+
 } // namespace
 
 ApiClient::ApiClient(std::string base_url, std::string api_key)
@@ -77,8 +104,12 @@ bool ApiClient::fetch_certificate(RemoteCertificate &out, std::string &err) {
 }
 
 bool ApiClient::sign_digest(const std::string &digest_hex, const std::string &algorithm,
-                            std::string &signature_hex, RemoteCertificate &certificate, std::string &err) {
-    std::string body = "{\"hash\":\"" + digest_hex + "\",\"algorithm\":\"" + algorithm + "\"}";
+                            std::string &signature_hex, RemoteCertificate &certificate, std::string &err,
+                            const std::string &file_sha256) {
+    std::string body = "{\"hash\":\"" + digest_hex + "\",\"algorithm\":\"" + algorithm + "\"";
+    // 开启病毒查杀的证书：服务端按原始文件 SHA-256 复核扫描结果
+    if (!file_sha256.empty()) body += ",\"file\":{\"sha256\":\"" + file_sha256 + "\"}";
+    body += "}";
 
     HttpHeaders headers;
     headers.emplace_back("Authorization", "Bearer " + api_key_);
@@ -120,6 +151,151 @@ bool ApiClient::sign_digest(const std::string &digest_hex, const std::string &al
         }
     }
 
+    return true;
+}
+
+bool ApiClient::fetch_scan_policy(ScanPolicy &out, std::string &err) {
+    HttpHeaders headers;
+    headers.emplace_back("Authorization", "Bearer " + api_key_);
+    headers.emplace_back("Accept", "application/json");
+    headers.emplace_back("X-Client", "certumsigner/1.0");
+
+    HttpResponse response = http_get(url_for("/v1/scan/policy"), headers);
+    if (!response.error.empty()) {
+        err = "请求查杀策略失败：" + response.error;
+        return false;
+    }
+    // 旧版 Worker 没有查杀接口，按「不要求扫描」处理，保持向后兼容
+    if (response.status == 404) {
+        out = ScanPolicy{};
+        return true;
+    }
+
+    Json root;
+    if (!Json::parse(response.body, root, err)) {
+        err = "查杀策略不是 JSON：" + shorten(response.body);
+        return false;
+    }
+    if (!response.ok()) {
+        err = error_message(root, "获取查杀策略失败（HTTP " + std::to_string(response.status) + "）");
+        return false;
+    }
+
+    out.mode = root.find("policy") ? root.find("policy")->get_string("mode", "off") : "off";
+    out.required = out.mode == "manual" || out.mode == "auto";
+    out.max_risk = root.find("policy") ? static_cast<int>(root.find("policy")->get_number("maxRisk", 0)) : 0;
+    out.provider = root.get_string("provider");
+    out.max_upload_mb = static_cast<int>(root.get_number("maxUploadMb", 32));
+    out.manual_url = root.get_string("manualUrl");
+    return true;
+}
+
+bool ApiClient::check_scan(const std::string &sha256, ScanVerdict &out, std::string &err) {
+    HttpHeaders headers;
+    headers.emplace_back("Authorization", "Bearer " + api_key_);
+    headers.emplace_back("Accept", "application/json");
+    headers.emplace_back("X-Client", "certumsigner/1.0");
+
+    HttpResponse response = http_get(url_for("/v1/scan/check?sha256=" + url_encode(sha256)), headers);
+    if (!response.error.empty()) {
+        err = "查询病毒查杀结果失败：" + response.error;
+        return false;
+    }
+
+    Json root;
+    if (!Json::parse(response.body, root, err)) {
+        err = "查杀服务返回的不是 JSON：" + shorten(response.body);
+        return false;
+    }
+    if (!response.ok()) {
+        err = error_message(root, "查询查杀结果失败（HTTP " + std::to_string(response.status) + "）");
+        return false;
+    }
+
+    out = ScanVerdict{};
+    out.found = root.get_bool("found", false);
+    out.allowed = root.get_bool("allowed", false);
+    out.risk = static_cast<int>(root.get_number("risk", 0));
+    out.reason = root.get_string("reason");
+    if (const Json *verdict = root.find("verdict")) read_verdict(*verdict, out);
+    return true;
+}
+
+bool ApiClient::upload_scan(const std::string &path, const std::string &sha256, std::string &analysis_id,
+                            std::string &uploaded_sha256, std::string &err) {
+    std::string bytes;
+    if (!read_file(path, bytes, err)) return false;
+    if (bytes.empty()) {
+        err = "文件为空：" + path;
+        return false;
+    }
+
+    HttpHeaders headers;
+    headers.emplace_back("Authorization", "Bearer " + api_key_);
+    headers.emplace_back("Content-Type", "application/octet-stream");
+    headers.emplace_back("Accept", "application/json");
+    headers.emplace_back("X-Client", "certumsigner/1.0");
+
+    const std::string url = url_for("/v1/scan/upload?sha256=" + url_encode(sha256) +
+                                    "&name=" + url_encode(file_name(path)));
+    HttpResponse response = http_post(url, headers, bytes, 180);
+    if (!response.error.empty()) {
+        err = "上传扫描失败：" + response.error;
+        return false;
+    }
+
+    Json root;
+    if (!Json::parse(response.body, root, err)) {
+        err = "查杀服务返回的不是 JSON：" + shorten(response.body);
+        return false;
+    }
+    if (!response.ok()) {
+        err = error_message(root, "上传扫描失败（HTTP " + std::to_string(response.status) + "）");
+        return false;
+    }
+
+    analysis_id = root.get_string("analysisId");
+    uploaded_sha256 = root.get_string("sha256");
+    if (analysis_id.empty()) {
+        err = "查杀服务没有返回分析 ID";
+        return false;
+    }
+    return true;
+}
+
+bool ApiClient::poll_scan(const std::string &analysis_id, ScanVerdict &out, bool &done, std::string &err) {
+    HttpHeaders headers;
+    headers.emplace_back("Authorization", "Bearer " + api_key_);
+    headers.emplace_back("Accept", "application/json");
+    headers.emplace_back("X-Client", "certumsigner/1.0");
+
+    HttpResponse response = http_get(url_for("/v1/scan/analysis/" + url_encode(analysis_id)), headers);
+    if (!response.error.empty()) {
+        err = "查询扫描进度失败：" + response.error;
+        return false;
+    }
+
+    Json root;
+    if (!Json::parse(response.body, root, err)) {
+        err = "查杀服务返回的不是 JSON：" + shorten(response.body);
+        return false;
+    }
+    if (!response.ok()) {
+        err = error_message(root, "查询扫描进度失败（HTTP " + std::to_string(response.status) + "）");
+        return false;
+    }
+
+    out = ScanVerdict{};
+    done = root.get_string("status") == "completed";
+    out.found = done;
+    out.allowed = root.get_bool("allowed", false);
+    out.risk = static_cast<int>(root.get_number("risk", 0));
+    out.sha256 = root.get_string("sha256");
+    const std::string fallback_sha = out.sha256;
+    if (const Json *verdict = root.find("verdict"); verdict && verdict->type == Json::Type::Object) {
+        read_verdict(*verdict, out);
+    }
+    if (out.sha256.empty()) out.sha256 = fallback_sha;
     return true;
 }
 

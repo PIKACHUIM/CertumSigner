@@ -2,7 +2,7 @@
  * 运行时配置：全部存在 KV（`settings:config`），后台「系统设置 → 服务与地址」改。
  * 部署时不用把基础地址、TSA、发件人、证书链塞进 wrangler.jsonc，保存即生效。
  */
-import type { Env } from "../types";
+import type { Env, ScanProviderId } from "../types";
 import { DEFAULT_API_BASE } from "../certum/config.ts";
 
 const CONFIG_KEY = "settings:config";
@@ -26,6 +26,16 @@ export interface RuntimeConfig {
   turnstileSecretKey: string;
   /** /v1/timestamp 转发的 RFC3161 服务 */
   tsaUpstream: string;
+  /** 病毒查杀服务 */
+  scanProvider: ScanProviderId;
+  /** 查杀服务 API Key（只存在 KV，不回传浏览器） */
+  scanApiKey: string;
+  /** 自定义查杀 API 根地址；空 = 用 provider 默认地址（可指向自建代理） */
+  scanBaseUrl: string;
+  /** 单文件上传上限（MB），免费 VirusTotal 的直传上限是 32 MB */
+  scanMaxUploadMb: number;
+  /** 查杀结果缓存时长（分钟）；缓存能显著节省免费 API 配额 */
+  scanCacheMinutes: number;
   /** 是否记录签名明细日志（关掉只留统计） */
   logSignatures: boolean;
   updatedAt?: number;
@@ -35,6 +45,16 @@ type StoredConfig = Partial<Omit<RuntimeConfig, "updatedAt">> & { updatedAt?: nu
 
 function text(value?: string): string {
   return (value ?? "").trim();
+}
+
+function clampInt(value: unknown, fallback: number, min: number, max: number): number {
+  const number = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.min(max, Math.max(min, Math.floor(number)));
+}
+
+function normalizeProvider(value: unknown): ScanProviderId {
+  return value === "metadefender" ? "metadefender" : "virustotal";
 }
 
 /** KV 里的值优先，缺失时用默认值 */
@@ -49,6 +69,11 @@ export async function readConfig(env: Env): Promise<RuntimeConfig> {
     turnstileSiteKey: text(stored.turnstileSiteKey),
     turnstileSecretKey: text(stored.turnstileSecretKey),
     tsaUpstream: (text(stored.tsaUpstream) || DEFAULT_TSA_UPSTREAM).replace(/\/+$/, ""),
+    scanProvider: normalizeProvider(stored.scanProvider),
+    scanApiKey: text(stored.scanApiKey),
+    scanBaseUrl: text(stored.scanBaseUrl).replace(/\/+$/, ""),
+    scanMaxUploadMb: clampInt(stored.scanMaxUploadMb, 32, 1, 64),
+    scanCacheMinutes: clampInt(stored.scanCacheMinutes, 1440, 1, 10080),
     logSignatures: typeof stored.logSignatures === "boolean" ? stored.logSignatures : true,
     updatedAt: stored.updatedAt,
   };
@@ -68,9 +93,14 @@ export async function writeConfig(env: Env, patch: Partial<Omit<RuntimeConfig, "
     "turnstileSiteKey",
     "turnstileSecretKey",
     "tsaUpstream",
+    "scanApiKey",
+    "scanBaseUrl",
   ] as const) {
     if (typeof next[key] === "string" && !next[key]!.trim()) delete next[key];
   }
+  next.scanProvider = normalizeProvider(next.scanProvider);
+  if (next.scanMaxUploadMb !== undefined) next.scanMaxUploadMb = clampInt(next.scanMaxUploadMb, 32, 1, 64);
+  if (next.scanCacheMinutes !== undefined) next.scanCacheMinutes = clampInt(next.scanCacheMinutes, 1440, 1, 10080);
   await env.CERTUM_KV.put(CONFIG_KEY, JSON.stringify(next));
   return readConfig(env);
 }

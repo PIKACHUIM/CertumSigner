@@ -160,6 +160,19 @@ certumsigner sign app.exe --tsa worker                    # 强制走 Worker 的
 不带时间戳的签名。TSA 地址的优先级是：`--tsa` > `CERTUM_SIGNER_TSA` > 配置文件 `tsa_url` >
 内置 `tsa_name`（默认 DigiCert）。
 
+### 2.1 病毒查杀（证书要求时）
+
+管理员给证书设置了「必须扫描」后，签名前会先算**原始文件 SHA-256** 并让 Worker 按它查结果：
+
+- **自动上传**：文件未收录时，客户端经 Worker 中转上传并轮询，完成后继续签名。
+- **手动上传**：客户端直接报错并给出两个入口——打开 `https://你的域名/user/scan` 上传，或运行：
+
+```bash
+certumsigner scan app.exe
+```
+
+`scan` 会打印风险等级（报毒 + 可疑）、引擎统计与结果页链接；风险超过证书允许值时签名会被服务端拒绝（`scan_risk_too_high`）。没有开启查杀的证书不需要这一步，`sign` 行为与以前完全一致。
+
 ### 3. 校验与排查
 
 ```bash
@@ -198,7 +211,9 @@ GUI 是自绘的 Win32 界面（手写绘制，不依赖任何 UI 框架），�
 ## 签名流程（和 signtool 的差别）
 
 ```
-文件 ──Authenticode 摘要(SHA1/SHA256/SHA384/SHA512)──►  SpcIndirectDataContent
+文件 ──（证书要求查杀时）原始 SHA-256 ──► /v1/scan/check / upload / analysis
+  │
+  └──Authenticode 摘要(SHA1/SHA256/SHA384/SHA512)──►  SpcIndirectDataContent
                                               │
                         ┌─────────────────────┴──────────────┐
                         │ 组装 authenticatedAttributes       │
@@ -235,6 +250,7 @@ GUI 是自绘的 Win32 界面（手写绘制，不依赖任何 UI 框架），�
 - Linux 上无法用 `WinVerifyTrust` 校验，请用 `osslsigncode verify` 或回 Windows 用 `signtool verify /pa`。
 - SHA-1 摘要对真实 Certum EV 卡片会被云端拒绝（`digest.algorithm.error`），实际只能用 SHA-256；
   客户端会原样显示 Worker 返回的原因。
+- 病毒查杀按原始文件 SHA-256：VirusTotal 免费版单文件直传 32 MB，更大的文件需先在 `scan`/网页之外的渠道上传；自动扫描受服务商免费配额限制，首次扫描通常要等 1–2 分钟。
 
 ## 实测记录（2026-11，Windows x64）
 

@@ -5,7 +5,7 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
-import type { ApiKeyRecord, Env, UserRecord, UserSessionRecord } from "../types";
+import type { ApiKeyRecord, Env, ScanVerdict, UserRecord, UserSessionRecord } from "../types";
 import { authenticateUserDetailed, createUser, deleteUser, findUserByEmail, getUser, updateUser, userExpired } from "../store/users";
 import { listCredentials } from "../store/credentials";
 import {
@@ -19,7 +19,18 @@ import {
   updateApiKey,
 } from "../store/keys";
 import { readUserLogs } from "../store/stats";
-import { constantTimeEqual } from "../lib/encoding";
+import { constantTimeEqual, sha256Hex } from "../lib/encoding";
+import { readConfig } from "../store/config";
+import {
+  ScanError,
+  evaluateVerdict,
+  isScanConfigured,
+  lookupVerdict,
+  pollScanAnalysis,
+  readScanSettings,
+  scanUploadLimitBytes,
+  uploadForScan,
+} from "../scan";
 import { issueCaptcha, verifyCaptchaFor } from "../lib/captcha";
 import { mailConfigured, mailTemplate, sendMail, siteBase } from "../lib/mail";
 import { createEmailToken, peekEmailToken, consumeEmailToken, RESET_TTL_MS, VERIFY_TTL_MS } from "../store/email-tokens";
@@ -44,6 +55,7 @@ import {
   userRegisterPage,
   userResetConfirmPage,
   userResetPage,
+  userScanPage,
   userVerifyPage,
 } from "../ui/user-pages";
 
@@ -712,6 +724,108 @@ secure.post("/keys/:id/delete", async (c) => {
   if (!key) return backWith(c, "/user", "error", tr(c)("msg.notFoundKey"));
   await deleteApiKey(c.env, key.id);
   return backWith(c, "/user", "ok", tr(c)("msg.keyDeleted"));
+});
+
+/* -------------------------------- 病毒扫描 -------------------------------- */
+
+secure.get("/scan", async (c) => {
+  const account = c.get("user");
+  const context = pageContext(c);
+  const messages = queryMessages(c);
+  const config = await readConfig(c.env);
+  const settings = readScanSettings(config);
+  const url = new URL(c.req.url);
+  const sha = (url.searchParams.get("sha256") ?? "").trim().toLowerCase();
+  const validSha = /^[0-9a-f]{64}$/.test(sha) ? sha : "";
+  const analysisId = url.searchParams.get("analysis") ?? "";
+
+  let verdict: ScanVerdict | null = null;
+  let pending = false;
+  let error: string | undefined;
+  if (settings.apiKey && (validSha || analysisId)) {
+    try {
+      if (analysisId) {
+        const state = await pollScanAnalysis(c.env, settings, analysisId);
+        if (state?.done) verdict = state.verdict ?? null;
+        else pending = !!state;
+      } else if (validSha) {
+        verdict = await lookupVerdict(c.env, settings, validSha);
+      }
+    } catch (caught) {
+      error = caught instanceof Error ? caught.message : String(caught);
+    }
+  }
+
+  // 能否签名取该用户名下最严格的证书策略；没有开启扫描的证书时只显示风险
+  let risk: number | undefined;
+  let allowed: boolean | undefined;
+  if (verdict) {
+    const credentials = (await listCredentials(c.env)).filter(
+      (cred) => account.credentialIds.includes(cred.id) && (cred.scanMode ?? "off") !== "off",
+    );
+    if (credentials.length > 0) {
+      const maxRisk = Math.min(...credentials.map((cred) => Math.max(0, Math.floor(cred.scanMaxRisk ?? 0))));
+      const evaluation = evaluateVerdict(verdict, maxRisk);
+      risk = evaluation.risk;
+      allowed = evaluation.allowed;
+    } else {
+      risk = verdict.malicious + verdict.suspicious;
+    }
+  }
+
+  return c.html(
+    userScanPage({
+      ...context,
+      ...messages,
+      csrf: c.get("userSession").csrf,
+      user: account,
+      provider: settings.provider,
+      configured: isScanConfigured(settings),
+      maxUploadMb: settings.maxUploadMb,
+      sha256: validSha || undefined,
+      verdict: verdict ?? undefined,
+      risk,
+      allowed,
+      pending,
+      error: messages.error ?? error,
+    }),
+  );
+});
+
+secure.post("/scan", async (c) => {
+  const form = await c.req.parseBody();
+  const csrf = typeof form["csrf"] === "string" ? form["csrf"] : "";
+  if (!constantTimeEqual(csrf, c.get("userSession").csrf)) {
+    return c.html(`<h1>${tr(c)("msg.csrf")}</h1>`, 403);
+  }
+
+  const config = await readConfig(c.env);
+  const settings = readScanSettings(config);
+  if (!isScanConfigured(settings)) return backWith(c, "/user/scan", "error", tr(c)("scan.notConfigured"));
+
+  const file = form["file"];
+  if (!(file instanceof File)) return backWith(c, "/user/scan", "error", tr(c)("scan.chooseFile"));
+  if (file.size <= 0) return backWith(c, "/user/scan", "error", tr(c)("scan.chooseFile"));
+  if (file.size > scanUploadLimitBytes(settings)) {
+    return backWith(c, "/user/scan", "error", tr(c)("scan.tooLarge", { mb: settings.maxUploadMb }));
+  }
+
+  try {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const sha256 = await sha256Hex(bytes);
+    // 已经扫过就直接看结果，不浪费配额重复上传
+    const existing = await lookupVerdict(c.env, settings, sha256);
+    if (existing) return c.redirect(`/user/scan?sha256=${sha256}`);
+
+    const result = await uploadForScan(c.env, settings, bytes, file.name || `${sha256}.bin`, sha256);
+    return c.redirect(
+      `/user/scan?sha256=${result.sha256}&analysis=${encodeURIComponent(result.id)}&pending=1`,
+    );
+  } catch (caught) {
+    const message =
+      caught instanceof ScanError || caught instanceof Error ? caught.message : String(caught);
+    return backWith(c, "/user/scan", "error", message);
+  }
 });
 
 secure.get("/logs", async (c) => {

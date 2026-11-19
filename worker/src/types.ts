@@ -12,6 +12,30 @@ export interface Env {
 
 export type SignAlgorithm = "sha1" | "sha256" | "sha384" | "sha512";
 
+/** 病毒查杀模式：off = 不要求；manual = 未扫描时提示手动上传；auto = 客户端自动上传 */
+export type ScanMode = "off" | "manual" | "auto";
+
+/** 已实现的查杀服务；Cloudmersive 免费额度太小且不支持按 hash 查询，暂不内置 */
+export type ScanProviderId = "virustotal" | "metadefender";
+
+/** 查杀服务返回的检测结果（统一 VirusTotal / MetaDefender 的差异） */
+export interface ScanVerdict {
+  provider: string;
+  sha256: string;
+  /** 判定为恶意的引擎数 */
+  malicious: number;
+  /** 判定为可疑的引擎数 */
+  suspicious: number;
+  undetected: number;
+  harmless: number;
+  /** 参与检测的引擎总数 */
+  total: number;
+  /** 结果页（供人工复核） */
+  permalink?: string;
+  /** 扫描时间（毫秒） */
+  scanDate?: number;
+}
+
 /** 云端凭据（登录后缓存到 KV，避免每次签名都走一遍 OTP 登录） */
 export interface CertumSession {
   token: string;
@@ -46,6 +70,10 @@ export interface CredentialRecord {
   otpUri: string;
   /** 证书 DER 的 SHA-1（可选）：账号下多张卡时用来挑证书 */
   certificateSha1?: string;
+  /** 使用这套证书签名前是否必须通过病毒查杀（旧记录缺省视为 off） */
+  scanMode?: ScanMode;
+  /** 允许签名的最大风险等级 = 报毒引擎数 + 可疑引擎数，0 表示必须全绿 */
+  scanMaxRisk?: number;
   enabled: boolean;
   createdAt: number;
   createdBy: string;
@@ -118,6 +146,10 @@ export interface SignLogRecord {
   error?: string;
   userId?: string;
   credentialId?: string;
+  /** 查杀审计信息：原始文件 SHA-256、风险等级与使用的 provider */
+  scanSha256?: string;
+  scanRisk?: number;
+  scanProvider?: string;
 }
 
 export interface StatsBucket {

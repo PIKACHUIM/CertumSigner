@@ -1,5 +1,5 @@
 /** 用户门户页面 */
-import type { ApiKeyRecord, CredentialRecord, SignLogRecord, UserRecord } from "../types";
+import type { ApiKeyRecord, CredentialRecord, ScanVerdict, SignLogRecord, UserRecord } from "../types";
 import type { Translate } from "./i18n";
 import type { Prefs } from "./prefs";
 import {
@@ -40,6 +40,7 @@ function nav(t: Translate): NavItem[] {
   return [
     { href: "/user", label: t("nav.myKeys"), icon: navIcon("keys") },
     { href: "/user/logs", label: t("nav.myLogs"), icon: navIcon("logs") },
+    { href: "/user/scan", label: t("nav.scan"), icon: navIcon("scan") },
   ];
 }
 
@@ -371,6 +372,12 @@ function logDetailDialog(log: SignLogRecord, t: Translate): string {
     [t("logs.algorithm"), escapeHtml(log.algorithm.toUpperCase())],
     [t("logs.digest"), `<span class="mono">${escapeHtml(log.digestPrefix)}…</span>`],
     [t("logs.digestCount"), escapeHtml(String(log.count))],
+    ...(log.scanSha256
+      ? ([
+          [t("logs.scan"), `${log.scanRisk ?? 0} · ${log.scanProvider ?? ""}`],
+          [t("logs.scanSha"), `<span class="mono">${escapeHtml(log.scanSha256)}</span>`],
+        ] as Array<[string, string]>)
+      : []),
     [t("logs.result"), log.ok ? pill(t("common.success"), "ok") : pill(t("common.failure"), "bad")],
     [t("logs.duration"), `${log.durationMs} ms`],
     [t("logs.ip"), `<span class="mono">${escapeHtml(log.ip || "—")}</span>`],
@@ -545,6 +552,129 @@ export function userDashboardPage(data: UserPageData): string {
     ${editDialogs}
     ${recent.map((log) => logDetailDialog(log, t)).join("")}`,
   );
+}
+
+export function userScanPage(data: ScanPageData): string {
+  const { t } = data;
+  const resultUrl = data.sha256 ? `/user/scan?sha256=${encodeURIComponent(data.sha256)}` : "/user/scan";
+
+  let result = "";
+  if (data.verdict) {
+    const verdict = data.verdict;
+    const allowed = data.allowed;
+    const badge =
+      allowed === undefined
+        ? pill(t("scan.queryOnly"), "muted")
+        : allowed
+          ? pill(t("scan.allowed"), "ok")
+          : pill(t("scan.blocked"), "bad");
+    result = `<div class="card">
+      <h2>${escapeHtml(t("scan.result"))} ${badge}</h2>
+      <dl class="kv">
+        <dt>${escapeHtml(t("scan.sha"))}</dt><dd class="mono small">${escapeHtml(verdict.sha256)}</dd>
+        <dt>${escapeHtml(t("scan.provider"))}</dt><dd>${escapeHtml(verdict.provider)}</dd>
+        <dt>${escapeHtml(t("scan.risk"))}</dt><dd>${data.risk ?? 0}（${escapeHtml(
+          t("scan.riskDetail", { malicious: verdict.malicious, suspicious: verdict.suspicious }),
+        )}）</dd>
+        <dt>${escapeHtml(t("scan.engines"))}</dt><dd>${escapeHtml(
+          t("scan.enginesDetail", {
+            total: verdict.total,
+            undetected: verdict.undetected,
+            harmless: verdict.harmless,
+          }),
+        )}</dd>
+        ${
+          verdict.scanDate
+            ? `<dt>${escapeHtml(t("scan.scanDate"))}</dt><dd>${fmtTime(verdict.scanDate)}</dd>`
+            : ""
+        }
+        ${
+          verdict.permalink
+            ? `<dt>${escapeHtml(t("scan.permalink"))}</dt><dd><a href="${escapeHtml(
+                verdict.permalink,
+              )}" target="_blank" rel="noopener noreferrer">${escapeHtml(verdict.permalink)}</a></dd>`
+            : ""
+        }
+      </dl>
+      <p class="small muted" style="margin:12px 0 0">${escapeHtml(
+        allowed === undefined
+          ? t("scan.queryOnlyHint")
+          : allowed
+            ? t("scan.allowedHint")
+            : t("scan.blockedHint"),
+      )}</p>
+    </div>`;
+  } else if (data.pending) {
+    result = `<div class="card">
+      <h2>${escapeHtml(t("scan.result"))} ${pill(t("scan.pending"), "warn")}</h2>
+      <p class="small" style="margin:0">${escapeHtml(t("scan.pendingHint"))}</p>
+      <p style="margin:12px 0 0"><a class="btn btn--sm btn--ghost" href="${resultUrl}">${escapeHtml(
+        t("scan.refresh"),
+      )}</a></p>
+    </div>`;
+  } else if (data.sha256) {
+    result = `<div class="card">
+      <h2>${escapeHtml(t("scan.result"))} ${pill(t("scan.notFound"), "warn")}</h2>
+      <p class="small" style="margin:0">${escapeHtml(t("scan.notFoundHint"))}</p>
+    </div>`;
+  }
+
+  const body = `<div class="grid cols-2">
+    <div class="card">
+      <h2>${escapeHtml(t("scan.upload"))}</h2>
+      <p class="small muted" style="margin:0 0 12px">${escapeHtml(
+        data.configured
+          ? t("scan.uploadHint", { mb: data.maxUploadMb, provider: data.provider })
+          : t("scan.notConfigured"),
+      )}</p>
+      <form method="post" action="/user/scan" enctype="multipart/form-data">
+        <input type="hidden" name="csrf" value="${escapeHtml(data.csrf)}">
+        <label class="field">${escapeHtml(t("scan.file"))}
+          <input type="file" name="file" required>
+        </label>
+        <div class="row row--end">
+          <button class="btn btn--primary" type="submit">${escapeHtml(t("scan.submit"))}</button>
+        </div>
+      </form>
+    </div>
+    ${result || `<div class="card"><h2>${escapeHtml(t("scan.result"))}</h2><p class="small muted" style="margin:0">${escapeHtml(
+      t("scan.empty"),
+    )}</p></div>`}
+  </div>
+  <p class="small muted" style="margin:14px 0 0">${escapeHtml(t("settings.scanTerms"))}</p>`;
+
+  return shell({
+    title: t("scan.title"),
+    subtitle: t("scan.subtitle"),
+    active: "/user/scan",
+    self: data.self,
+    nav: nav(t),
+    csrf: data.csrf,
+    userLabel: `${t("chrome.signedInAs")}：${data.user.email}`,
+    prefs: data.prefs,
+    t,
+    notice: data.notice,
+    error: data.error,
+    body,
+  });
+}
+
+export interface ScanPageData {
+  prefs: Prefs;
+  t: Translate;
+  self: string;
+  csrf: string;
+  user: UserRecord;
+  provider: string;
+  configured: boolean;
+  maxUploadMb: number;
+  sha256?: string;
+  verdict?: ScanVerdict;
+  risk?: number;
+  allowed?: boolean;
+  pending?: boolean;
+  notice?: string;
+  error?: string;
 }
 
 export function userLogsPage(data: UserPageData): string {

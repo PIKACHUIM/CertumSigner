@@ -1,5 +1,7 @@
 #pragma once
-// 签名流程编排：摘要 → 云端签名 → PKCS#7 → 写入 PE
+// 签名流程编排：摘要 → 病毒查杀 → 云端签名 → PKCS#7 → 写入 PE
+#include "api.h"
+
 #include <functional>
 #include <string>
 #include <vector>
@@ -39,6 +41,7 @@ public:
     const std::string &certificate_subject() const { return subject_; }
     const std::string &certificate_fingerprint() const { return fingerprint_; }
     const std::string &card_serial() const { return card_serial_; }
+    const ScanPolicy &scan_policy() const { return scan_policy_; }
 
 private:
     void write(const std::string &message) const {
@@ -52,6 +55,7 @@ private:
     std::string subject_;
     std::string fingerprint_;
     std::string card_serial_;
+    ScanPolicy scan_policy_;
 };
 
 } // namespace cs
