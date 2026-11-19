@@ -1,141 +1,33 @@
-name: Build and publish clients
+name: Release
 
-# 构建 Windows / Linux × x64 / arm64 的 GUI 与 CLI 客户端，
-# 全部上传到 tag 为 latest 的 GitHub Release（主页下载链接就指向这里）。
+# 正式版：推 v* tag（例如 v1.0）时构建并发布带版本号的 GitHub Release。
+# 同时清理早期滚动发布的 latest release/tag —— 首页的 /releases/latest 会自动
+# 指向最新的正式版（预发布版不算 latest）。
 
 on:
   push:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "要发布的版本 tag（例如 v1.0），必须与当前提交对应"
+        required: true
+        type: string
 
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build:
-    name: ${{ matrix.family }}-${{ matrix.arch }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: windows-latest
-            family: windows
-            arch: x64
-            triplet: x64-windows-static-md
-          # 在 x64 主机上交叉编译 arm64（vcpkg 原生支持该 triplet）
-          - os: windows-latest
-            family: windows
-            arch: arm64
-            triplet: arm64-windows-static-md
-          - os: ubuntu-24.04
-            family: linux
-            arch: x64
-          - os: ubuntu-24.04-arm
-            family: linux
-            arch: arm64
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Linux dependencies
-        if: matrix.family == 'linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential cmake libssl-dev libcurl4-openssl-dev libgtk-3-dev
-
-      - name: Set up vcpkg
-        if: matrix.family == 'windows'
-        shell: pwsh
-        run: |
-          $root = $env:VCPKG_INSTALLATION_ROOT
-          if (-not $root -or -not (Test-Path (Join-Path $root 'vcpkg.exe'))) {
-            $root = Join-Path $env:RUNNER_TEMP 'vcpkg'
-            if (-not (Test-Path (Join-Path $root 'vcpkg.exe'))) {
-              git clone --depth 1 https://github.com/microsoft/vcpkg.git $root
-              & (Join-Path $root 'bootstrap-vcpkg.bat') -disableMetrics
-            }
-          }
-          "VCPKG_ROOT=$root" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-
-      - name: Install OpenSSL (Windows)
-        if: matrix.family == 'windows'
-        shell: pwsh
-        run: |
-          & (Join-Path $env:VCPKG_ROOT 'vcpkg.exe') install "openssl:${{ matrix.triplet }}" --clean-after-build
-
-      - name: Build GUI (Windows)
-        if: matrix.family == 'windows'
-        shell: pwsh
-        run: |
-          cmake -B build-gui -S client -A ${{ matrix.arch }} `
-            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
-            -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }} `
-            -DCS_BUILD_GUI=ON
-          cmake --build build-gui --config Release --parallel
-
-      - name: Build CLI (Windows)
-        if: matrix.family == 'windows'
-        shell: pwsh
-        run: |
-          cmake -B build-cli -S client -A ${{ matrix.arch }} `
-            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
-            -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }} `
-            -DCS_BUILD_GUI=OFF
-          cmake --build build-cli --config Release --parallel
-
-      - name: Package (Windows)
-        if: matrix.family == 'windows'
-        shell: pwsh
-        run: |
-          $arch = "${{ matrix.arch }}"
-          foreach ($form in @('gui', 'cli')) {
-            $stage = "stage-$form"
-            New-Item -ItemType Directory -Force -Path $stage | Out-Null
-            Copy-Item "build-$form/Release/certumsigner.exe" "$stage/certumsigner.exe"
-            Copy-Item "LICENSE" "$stage/LICENSE.txt"
-            Copy-Item "client/README.md" "$stage/README-client.md"
-            Compress-Archive -Path "$stage/*" -DestinationPath "certumsigner-windows-$arch-$form.zip" -Force
-          }
-
-      - name: Build GUI (Linux)
-        if: matrix.family == 'linux'
-        run: |
-          cmake -B build-gui -S client -DCMAKE_BUILD_TYPE=Release -DCS_BUILD_GUI=ON
-          cmake --build build-gui --parallel
-
-      - name: Build CLI (Linux)
-        if: matrix.family == 'linux'
-        run: |
-          cmake -B build-cli -S client -DCMAKE_BUILD_TYPE=Release -DCS_BUILD_GUI=OFF
-          cmake --build build-cli --parallel
-
-      - name: Package (Linux)
-        if: matrix.family == 'linux'
-        run: |
-          set -euo pipefail
-          for form in gui cli; do
-            stage="stage-$form"
-            mkdir -p "$stage"
-            cp "build-$form/certumsigner" "$stage/certumsigner"
-            strip "$stage/certumsigner" || true
-            cp LICENSE "$stage/LICENSE"
-            cp client/README.md "$stage/README-client.md"
-            tar -czf "certumsigner-linux-${{ matrix.arch }}-$form.tar.gz" -C "$stage" certumsigner LICENSE README-client.md
-          done
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.family }}-${{ matrix.arch }}
-          path: |
-            certumsigner-*.zip
-            certumsigner-*.tar.gz
-          if-no-files-found: error
+    uses: ./.github/workflows/build-clients.yml
 
   publish:
-    name: Publish latest release
+    name: Publish release
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -148,16 +40,52 @@ jobs:
       - name: List assets
         run: ls -lh dist
 
-      - name: Publish to latest
+      - name: Resolve version
+        id: version
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          if [ -n "$INPUT_TAG" ]; then
+            tag="$INPUT_TAG"
+          else
+            tag="${GITHUB_REF_NAME}"
+          fi
+          case "$tag" in
+            v*) ;;
+            *) echo "tag 必须以 v 开头：$tag" >&2; exit 1 ;;
+          esac
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      # 一次性迁移：删掉旧的 latest release 与它的 tag，之后只保留版本号 + beta
+      - name: Remove legacy latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view latest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release delete latest --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
+            echo "已删除 latest release 及其 tag"
+          else
+            echo "没有 latest release，跳过"
+          fi
+
+      - name: Publish ${{ steps.version.outputs.tag }}
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: latest
-          name: Latest client builds
-          body: |
-            Automatically built from `${{ github.sha }}` by GitHub Actions.
-
-            Windows: x64 / arm64, GUI and CLI (CLI-only build without GTK/Win32 UI).
-            Linux: x64 / arm64, GUI (GTK3) and CLI.
-          files: dist/*
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: CertumSigner ${{ steps.version.outputs.tag }}
           make_latest: true
-          overwrite_files: true
+          body: |
+            CertumSigner ${{ steps.version.outputs.tag }} — 由 GitHub Actions 从
+            `${{ github.sha }}` 构建。
+
+            | 平台 | 架构 | 形式 |
+            | --- | --- | --- |
+            | Windows | x64 / arm64 | GUI（Win32 自绘）、CLI |
+            | Linux | x64 / arm64 | GUI（GTK3）、CLI |
+
+            - Windows 产物用 vcpkg 静态链接 OpenSSL，解压即用，无需额外运行库。
+            - CLI 版不含 Win32 / GTK 界面；同一个可执行文件加 `--gui` 也能开界面（GUI 版）。
+            - 客户端用法见包内 `README-client.md` 或仓库 [client/README.md](https://github.com/${{ github.repository }}/blob/${{ steps.version.outputs.tag }}/client/README.md)。
+            - 想看每次客户端改动的最新构建：见 [`beta`](https://github.com/${{ github.repository }}/releases/tag/beta) 预发布。
+          files: dist/*
+          fail_on_unmatched_files: true

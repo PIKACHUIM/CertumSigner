@@ -1,179 +1,215 @@
-# CertumSigner
+<div align="center">
+  <img src="docs/assets/logo.svg" width="112" height="112" alt="logo" />
 
-[中文](README.md) · **English**
+  <p><em>Turn Certum SimplySign cloud signing into an HTTP API, then sign your own PE files with a C++ client</em></p>
+  <p>The private key never leaves Certum — no SimplySign Desktop and no signtool on your machine</p>
+  <p>Cloud side runs on Cloudflare Workers (Hono + KV); the client is C++17: Win32 GUI on Windows, GTK3 GUI + CLI on Linux</p>
+
+<a href="LICENSE"><img src="https://img.shields.io/github/license/PIKACHUIM/CertumSigner?color=blue" alt="License" /></a>
+<a href="https://github.com/PIKACHUIM/CertumSigner/releases"><img src="https://img.shields.io/github/v/release/PIKACHUIM/CertumSigner?include_prereleases&sort=date&label=release" alt="Release" /></a>
+<a href="https://github.com/PIKACHUIM/CertumSigner/actions/workflows/beta.yml"><img src="https://img.shields.io/github/actions/workflow/status/PIKACHUIM/CertumSigner/beta.yml?branch=main&label=client%20build" alt="Client build" /></a>
+<a href="https://github.com/PIKACHUIM/CertumSigner/stargazers"><img src="https://img.shields.io/github/stars/PIKACHUIM/CertumSigner?color=%23ED8936&logo=github" alt="Stars" /></a>
+<a href="https://github.com/PIKACHUIM/CertumSigner/forks"><img src="https://img.shields.io/github/forks/PIKACHUIM/CertumSigner?color=%239F7AEA&logo=github" alt="Forks" /></a>
+
+English | [简体中文](README.md)
+
+[Downloads](https://github.com/PIKACHUIM/CertumSigner/releases) · [Quick deploy](#deploy-in-one-click) · [API](#api) · [Client docs](client/README.md) · [License](LICENSE)
+
+</div>
+
+---
+
+## Deploy in one click
+
+<div align="center">
 
 [![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/PIKACHUIM/CertumSigner/tree/main/worker)
-[![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
-[![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-orange.svg)](https://workers.cloudflare.com/)
 
-Turn Certum SimplySign cloud signing into an HTTP API on Cloudflare Workers, and pair it with a C++
-desktop client that signs your PE files on Windows and Linux. **The private key never leaves Certum's
-cloud** — no SimplySign Desktop, no signtool.
+</div>
 
-Project home: <https://github.com/PIKACHUIM/CertumSigner>
+> [!IMPORTANT]
+> - **Fork** this repo before clicking the button: it deploys straight from `worker/wrangler.jsonc`, whose KV id and `sign.example.com` route belong to the author's instance.
+> - After forking, replace `kv_namespaces[0].id` with your own `wrangler kv namespace create CERTUM_KV` output, and point `routes` at your domain (delete the block to use `*.workers.dev`).
+> - The first visit to `/admin` opens the **setup page**: choose an admin username and password and you are signed in. Credentials are stored as PBKDF2 hashes in KV and the session key is generated during setup, so **no secret is required**.
+> - Before setup, whoever opens `/admin` first can create the admin account — finish the wizard right after deploying.
 
-```
-┌──────────────────────┐  (1) email + TOTP auto login (CAS/OAuth2)
-│ Cloudflare Worker    │───────────────► cloudsign.webnotarius.pl
-│ Hono + KV            │  (2) fetch card / certificate, cache tokens per credential (30 min)
-│                      │  (3) POST digest → cloud HSM returns an RSA signature
-└───┬───────────┬──────┘
-    │           │  Bearer csk_xxx (each key is bound to one credential)
-    │           ▼
-    │   ┌────────────────────┐  Authenticode digest → request signature → build PKCS#7 → write PE
-    │   │ C++ client         │  Windows: hand-drawn Win32 GUI / Linux: GTK3 GUI
-    │   └────────────────────┘
-    │
-    ├── /        home page: features + client downloads (sign-in defaults to /user/login)
-    ├── /admin  admin console: overview, users, credentials, keys, settings (plus a full log page)
-    └── /user   user portal: create your own keys, see quota and call history
-```
-
-## Layout
-
-```
-worker/        Cloudflare Worker (Hono + KV): admin console, user portal, signing API
-client/        C++17 client (Windows/Linux, CLI + GUI, CMake)
-docs/          Notes from reverse engineering the Certum cloud signing protocol
-```
-
-## One-click deploy
-
-Click **Deploy to Cloudflare Workers** above, authorize and create the KV namespace. Then open
-`https://<your-domain>/admin`: it goes straight to the **setup page**, where you pick the admin username and
-password. The account lives in KV with only a PBKDF2 hash; the session key is generated during setup, so no
-manual secret is needed.
-
-Set a session secret only if you want to pin it (optional; otherwise the value generated at setup is used):
-
-| Secret | Purpose |
-| --- | --- |
-| `SESSION_SECRET` | optional HMAC key for session cookies |
-
-For registration / password reset, also configure email (optional; both toggles stay unusable without it):
-
-| Name | Purpose |
-| --- | --- |
-| Resend API key | filled in under Settings → Services and addresses |
-| Sender | set under Settings → Services and addresses, e.g. `CertumSigner <noreply@example.com>` |
-
-The custom domain is configured in `routes` in `worker/wrangler.jsonc` (this repo uses
-`sign.example.com`); put the same address into Settings → Base URL so email links use it.
-
-To run a second, fully isolated instance of the same code (different worker, KV and domain), add
-another config — the repo ships `worker/wrangler.signui.jsonc` (`signui-work` / `signui-kvdb` /
-`signui.example.com`) as an example:
+Day-to-day updates (no need to redeploy from the button):
 
 ```bash
 cd worker
-npx wrangler kv namespace create signui-kvdb       # put the returned id into the new config
-npx wrangler deploy --config wrangler.signui.jsonc
+npm install
+npx wrangler deploy
 ```
 
-The two instances share nothing in KV (admin account, credentials, keys), and the new domain starts at
-`/admin/setup` like any fresh deployment.
+## What it does
 
-Then open `https://<your-domain>/`:
+Certum SimplySign only offers "sign this digest with an RSA key". Normally that means signtool on a Windows box running SimplySign Desktop, with a one-time code typed in by hand. This project moves the whole path to the cloud: the Worker signs in to Certum with email + TOTP, fetches the card and certificate, and exposes signing as an API keyed by a Bearer token; the client computes the Authenticode digest, builds PKCS#7 and writes the certificate table back into the PE itself.
 
-1. The home page links to Windows / Linux builds and to the user sign-in / admin console.
-2. In `/admin`: **Credentials → New credential**: label, Certum email, TOTP seed (`otpauth://` URI or raw
-   Base32), plus the certificate SHA-1 when you need a specific card. Use **Test login** to confirm the
-   email/password pair can obtain a token.
-3. **Users → New user**: enter the email (it *is* the login name) and a password (PBKDF2-SHA256), plus
-   an optional expiry, a user-level daily quota and the certificates this user may sign with. Emails are
-   unique globally; there is no separate username field.
-4. **Settings**: the left card (**Self-service accounts**) has a **Require a captcha at sign-in** checkbox
-   (off by default) plus the captcha type (4-digit image or Cloudflare Turnstile, which needs its site and
-   secret keys), and toggles self-registration and password reset; the right card (**Email delivery**)
-   holds the base URL used in email links, the sender, the Resend key and the email-captcha switch;
-   **Services and addresses** below has the Certum API base, TSA upstream, intermediate PEM and log
-   switch. Values live in KV and apply immediately — no redeploy needed.
-5. Users sign in at `/user/login` to create their own keys; admins can also create keys from **Keys**.
+```
+┌──────────────────────┐  1. email + TOTP sign-in (CAS/OAuth2)
+│ Cloudflare Worker    │───────────────► cloudsign.webnotarius.pl
+│ Hono + KV            │  2. card / certificate, session cached 30 min per credential
+│                      │  3. POST digest → cloud HSM returns the RSA signature
+└───┬───────────┬──────┘
+    │           │  Bearer csk_xxx (each key is bound to one credential)
+    │           ▼
+    │   ┌────────────────────┐  Authenticode digest → sign → PKCS#7 → write back to the PE
+    │   │ C++ client         │  Windows: hand-drawn Win32 GUI / Linux: GTK3 GUI
+    │   └────────────────────┘
+    │
+    ├── /        landing page: feature overview + client downloads
+    ├── /admin   admin console: overview, users, credentials, keys, logs, settings
+    └── /user    user portal: create your own keys, check usage and call history
+```
 
-## Features
+### Cloud side (Worker)
 
-- **Multiple Certum credentials**: email + TOTP seed + certificate SHA-1 stored as one record in KV.
-  Several accounts/cards can live side by side, each with its own cached login session and card info.
-- **Admin console** (`/admin`): overview metrics, 7-day chart, recent signatures with a detail dialog,
-  user/credential/key management (create, edit, enable, disable, delete), forced re-login,
-  certificate refresh, key editing (name, quota, owner, certificate — dialogs only ever show the prefix),
-  and a **Settings** page split into self-service accounts, email delivery and service addresses.
-- **Home page** (`/`): feature overview plus Windows / Linux × x64 / arm64 × GUI / CLI downloads,
-  built by GitHub Actions and published to the latest release.
-- **User portal** (`/user`): log in with email + password, create a key from the certificates the admin
-  assigned to you (the secret is shown once, for 5 minutes, and stays masked to its prefix until you
-  click "Show full key"), rename or re-limit each key, disable or delete it later, and inspect your own
-  call history.
-- **Quotas**: per-key and per-user daily limits apply together (0 = unlimited). Users can change their
-  own key limits; admins can change the account-wide limit. `/v1/sign` rejects over-quota calls with
-  `429 quota_exceeded` before contacting the cloud.
-- **Registration / password reset** (off by default): can be enabled in Settings. Registration requires
-  email verification before sign-in; reset links are sent through Resend and are valid for one hour.
-  Both flows can additionally require a captcha.
-- **Sign-in captcha**: opt in with **Require a captcha at sign-in** in Settings (off by default), then
-  pick the type — a server-rendered single-use 4-digit image captcha (5-minute TTL) or Cloudflare
-  Turnstile (falls back to the image captcha when its keys are missing). User, admin and desktop-client
-  sign-in share the switch; the image and its input sit on one line, and clicking the image (or ↻) issues
-  a new code.
-- **UI preferences**: language (中文 / English), light/dark (system/dark/light) and four accent themes,
-  picked from the browser on first visit and remembered in cookies (`cs_lang` / `cs_mode` / `cs_theme`)
-  for a year. Server rendered, native `<dialog>` modals, no frontend build step.
-- **Sign by digest**: `POST /v1/sign` accepts one or up to 16 digests per call (`algorithm`: SHA-1 /
-  SHA-256 / SHA-384 / SHA-512) and returns the matching RSA signatures — one upstream call per batch.
-- **Client**: computes the Authenticode digest, builds PKCS#7, writes the PE certificate table, adds an
-  RFC3161 timestamp, self-checks the signature with the certificate's public key before writing, and can
-  verify the result afterwards. Digests are a multi-select, so one file can carry several signatures.
+- **Multiple Certum credentials**: email + TOTP seed + certificate SHA-1 fingerprint is one credential in KV; keep as many as you need (different accounts / cards), each with its own cached sign-in session and card info.
+- **Digest signing proxy**: `POST /v1/sign` takes one digest or a batch, `algorithm` supports SHA-1 / SHA-256 / SHA-384 / SHA-512, up to 16 digests per cloud call.
+- **Admin console** (`/admin`): request volume, success/failure, algorithm mix, 7-day chart, recent signatures; create/edit/disable users, credentials and keys; a full signing log with time, key, credential, digest prefix, result, duration, IP, UA and error.
+- **User portal** (`/user`): sign in with email + password, create a key from the certificates an admin assigned, rename it or change its daily quota, and inspect your own calls. A key's plaintext is shown once; lists only ever display its prefix.
+- **Quotas**: key-level and user-level daily quotas apply together (0 = unlimited); `/v1/sign` returns `429 quota_exceeded` before touching Certum.
+- **Registration / password reset** (off by default): registration requires email verification before sign-in; reset sends a one-hour link through Resend.
+- **Sign-in captcha** (off by default): once enabled, user, admin and desktop-client sign-in all need one, either a 4-digit image captcha or Cloudflare Turnstile (falls back to the image captcha when its keys are missing).
+- **UI**: fully server-rendered, no frontend build; fixed six-item sidebar plus language (zh/en), light/dark and four themes in the top bar, stored in cookies.
+
+### Desktop client
+
+- **One command**: `certumsigner sign app.exe`, SHA-256 + RFC3161 timestamp by default.
+- **Several algorithms at once**: SHA-1 / SHA-256 / SHA-384 / SHA-512 can be combined; the first goes into the certificate table, the rest ride along as nested signatures (`SPC_NESTED_SIGNATURE`).
+- **Own PKCS#7**: no signtool involved. Everything except the RSA signature happens locally, and the returned signature is verified against the certificate public key before it is written.
+- **GUI**: hand-drawn Win32 on Windows (no console window), GTK3 on Linux; drop files in, batch sign, live status pills, optionally skip files that are already signed.
+- **Timestamp fallback**: when enterprise security software blocks the TSA, the client retries through the Worker's `/v1/timestamp` proxy.
+- **Bilingual UI with light/dark themes**, and proper support for Chinese and space-containing paths.
 
 ## Client
 
-On Windows it is a hand-drawn Win32 app with four sidebar entries:
+Grab a build if you do not want to compile: 8 artifacts, Windows / Linux × x64 / arm64 × GUI / CLI, all built by GitHub Actions.
+
+| Platform \ arch | x64 | arm64 |
+| --- | --- | --- |
+| Windows (GUI / CLI) | [GUI](https://github.com/PIKACHUIM/CertumSigner/releases/latest/download/certumsigner-windows-x64-gui.zip) · [CLI](https://github.com/PIKACHUIM/CertumSigner/releases/latest/download/certumsigner-windows-x64-cli.zip) | [GUI](https://github.com/PIKACHUIM/CertumSigner/releases/latest/download/certumsigner-windows-arm64-gui.zip) · [CLI](https://github.com/PIKACHUIM/CertumSigner/releases/latest/download/certumsigner-windows-arm64-cli.zip) |
+| Linux (GTK3 / CLI) | [GUI](https://github.com/PIKACHUIM/CertumSigner/releases/latest/download/certumsigner-linux-x64-gui.tar.gz) · [CLI](https://github.com/PIKACHUIM/CertumSigner/releases/latest/download/certumsigner-linux-x64-cli.tar.gz) | [GUI](https://github.com/PIKACHUIM/CertumSigner/releases/latest/download/certumsigner-linux-arm64-gui.tar.gz) · [CLI](https://github.com/PIKACHUIM/CertumSigner/releases/latest/download/certumsigner-linux-arm64-cli.tar.gz) |
+
+Those links follow the newest **stable** release; for the build of every client change see the [`beta` prerelease](https://github.com/PIKACHUIM/CertumSigner/releases/tag/beta). Windows builds link OpenSSL statically, so the zip runs as-is.
+
+### GUI in three steps
 
 ```
-Sign in ──► Sign ⇄ Credentials ⇄ Settings
-        (after sign-in it lands on Sign; visit Credentials to switch keys)
+Sign in ──► Sign ⇄ Keys ⇄ Settings
 ```
 
-1. **Sign in**: server URL (your Worker domain), email, password. Enter in the password box submits.
-2. **Credentials**: lists the keys of your account (with daily quota). Picking an existing key
-   **issues a new secret** and invalidates the old one (you are asked first); or type a name, pick a
-   certificate and create a new key right there. Key selection is automatic after sign-in: a saved
-   key that still exists goes straight to Sign, a single key is re-issued silently and Sign opens,
-   no key at all but an assigned certificate creates one, and only multiple unknown keys need a manual pick.
-3. **Sign**: drop files into the window or click to upload, remove/clear rows, then sign the whole batch.
-   Each row shows queued / signing / signed / failed; `Verify` runs `WinVerifyTrust` on the selected file.
-4. **Settings**:
-   - Connection: server URL, API key (show/hide), current account and key name.
-   - Signing: digest algorithms are a **multi-select** (SHA-1 / SHA-256 / SHA-384 / SHA-512, only
-     SHA-256 ticked by default; the first algorithm goes into the certificate table and the rest are
-     carried as nested signatures (`SPC_NESTED_SIGNATURE`) inside that single record), timestamp
-     on/off, built-in TSA list (DigiCert / Symantec / GeoTrust / Comodo / WoSign /
-     GlobalSign / Entrust / GoDaddy / Certum, **DigiCert** by default), keep a backup.
-   - Appearance: language (中文 / English / system) and theme (system / dark / light).
-   - About: license (AGPL-3.0 — opens an in-app license page, not a modal dialog), project URL, sign in again.
+1. **Sign in**: server URL (your Worker domain), email, password; Enter submits.
+2. **Keys**: lists the keys of the account with their daily quota. Picking one **rotates its plaintext** (the old value dies immediately, with a confirmation first); or type a name, pick a certificate and create a key. After sign-in the client picks a key automatically: a stored key that still exists goes straight through, a single key is rotated silently, no key but an available certificate creates one.
+3. **Sign**: drop files in or click upload, delete items individually or sign the batch; each row shows waiting / signing / done / failed / skipped. `Verify` calls `WinVerifyTrust` on Windows.
 
-The bottom of the sidebar holds the account block — round avatar (first letter of the email), email
-address and current key name — above three icon buttons for language, light/dark and sign-out. They stay
-pinned to the real window bottom when the window grows, and the drop-downs are custom-drawn so no white
-native list box appears in dark mode.
+Settings is split into connection, signing options (algorithms, timestamp, built-in TSA, backup), interface (language / theme) and about (in-app AGPL notice, project URL, sign out again). Settings live in `%APPDATA%\CertumSigner\config.json`, so the next launch lands on the sign page.
 
-The API key and preferences are stored in `%APPDATA%\CertumSigner\config.json`; the next launch goes
-straight to the signing screen, and an invalid key falls back to the sign-in page. Dropping files onto
-`certumsigner.exe` or choosing it from "Open with" pre-fills the queue.
-
-Build steps and CLI usage: [`client/README.md`](client/README.md).
+### Command line
 
 ```bash
+# configure once
 certumsigner config --server https://sign.example.com --api-key csk_xxx
-certumsigner sign dist/app.exe
-certumsigner sign dist/ --recursive --yes --sha256
-certumsigner --gui
+
+# sign
+certumsigner sign dist/app.exe                    # SHA-256 + timestamp
+certumsigner sign dist/ --recursive --yes         # whole directory
+certumsigner sign app.exe --sha256 --sha384       # multiple signatures in one file
+certumsigner sign legacy.dll --sha1               # old systems (EV cards reject it)
+certumsigner sign app.exe --no-timestamp --backup # no timestamp, keep the original
+
+# inspect
+certumsigner hash app.exe                         # print the Authenticode digest
+certumsigner verify app.exe                       # Windows: WinVerifyTrust
+certumsigner --gui                                # open the GUI
 ```
 
-Chinese and space-containing paths (e.g. `D:\下载\签名 副本.exe`) work in both the CLI and the GUI.
+`CERTUM_SIGNER_SERVER` / `CERTUM_SIGNER_API_KEY` override the config file, which is handy in CI. Full flags, config fields and build steps: [`client/README.md`](client/README.md).
+
+## Manual deployment
+
+<details>
+<summary>Prerequisites, local development and multiple instances</summary>
+
+### Prerequisites
+
+- Node.js 18+ (wrangler 4.x)
+- A Cloudflare account and one KV namespace
+
+### Local development
+
+```bash
+cd worker
+npm install
+npx wrangler kv namespace create CERTUM_KV   # copy the id into wrangler.jsonc
+npm run dev                                  # http://127.0.0.1:8787
+npm test                                     # TOTP / multipart / encoding / KV / admin account
+npm run typecheck
+```
+
+The first visit to `http://127.0.0.1:8787/admin` opens the setup page. Registration and password reset need Resend: fill in the API key and sender under Settings → Email delivery; no secret is involved.
+
+### Production
+
+```bash
+cd worker
+npx wrangler deploy
+# open https://<your-domain>/admin and finish the setup
+```
+
+Custom domain: edit `routes` in `worker/wrangler.jsonc`, then put the same address into Settings → Base URL so email links use it.
+
+### Multiple instances
+
+The same code can run several fully isolated instances (different Worker, KV and domain) from separate configs. The repo ships one example, `worker/wrangler.signui.jsonc` (`signui-work` / `signui-kvdb` / `signui.example.com`):
+
+```bash
+cd worker
+npx wrangler kv namespace create signui-kvdb       # put the new id in the new config
+npx wrangler deploy --config wrangler.signui.jsonc
+```
+
+KV is not shared: admin account, credentials and keys are separate, and the new domain starts at `/admin/setup` too.
+
+</details>
+
+## Configuration
+
+The Worker only takes one optional secret; everything else lives in Settings (stored in KV, applied on save):
+
+| Name | Type | Purpose |
+| --- | --- | --- |
+| `SESSION_SECRET` | secret (optional) | HMAC key for session cookies; when unset, a random value generated during setup is used |
+| `CERTUM_KV` | KV binding | Users, credentials, keys, sessions, stats, runtime config and captchas |
+
+Runtime settings exposed in the admin UI:
+
+| Group | Settings |
+| --- | --- |
+| Self-service accounts | Require a captcha at sign-in (off / 4-digit image / Cloudflare Turnstile with site and secret keys), allow self-registration, allow password reset |
+| Email delivery | Base URL used in email links, sender, Resend API key, email captcha switch, delivery status |
+| Services and addresses | Certum API base, TSA upstream, intermediate certificate PEM, signing-log switch |
+
+## Architecture
+
+| Layer | Implementation |
+| --- | --- |
+| Runtime | Cloudflare Workers (also runs locally via `wrangler dev`) |
+| Web framework | Hono 4 + TypeScript |
+| Storage | KV (`CERTUM_KV`): users, credentials, keys, sessions, stats, runtime config, captchas |
+| Pages | Server-rendered with native `<dialog>`; no frontend build step |
+| Client | C++17 / CMake, WinHTTP (Windows) and libcurl (Linux), hand-drawn Win32 GUI and GTK3 GUI |
+| Crypto | OpenSSL 3 on the client, PBKDF2-HMAC-SHA256 and WebCrypto in the Worker |
+
+```
+worker/        Cloudflare Worker: admin console + user portal + signing API
+client/        C++17 client: CLI + Win32 / GTK3 GUI
+docs/          Notes on reverse-engineering the Certum cloud signing protocol
+```
 
 ## API
 
-Auth: `Authorization: Bearer csk_…` (or `X-Api-Key`). The key's credential decides which certificate is used.
+Auth: `Authorization: Bearer csk_…` (or `X-Api-Key`). The credential bound to the key decides which certificate is used.
 
 ### `POST /v1/sign`
 
@@ -184,15 +220,13 @@ curl -X POST https://sign.example.com/v1/sign \
   -d '{"hash":"<64 hex chars, SHA-256>","algorithm":"sha256"}'
 ```
 
-Batch (one upstream call, up to 16 digests):
+Batch (one cloud call, up to 16 digests):
 
 ```json
 {"hashes": ["<hash1>", "<hash2>"], "algorithm": "sha256", "encoding": "hex"}
 ```
 
-`algorithm` is one of `sha256` (default), `sha1`, `sha384`, `sha512`; spellings such as `sha-256` or
-`SHA256` are normalised. Digests must be 64 / 40 / 96 / 128 hex chars respectively — a length mismatch
-returns `bad_hash`, an unknown name returns `bad_algorithm`.
+`algorithm` accepts `sha256` (default) / `sha1` / `sha384` / `sha512`, as well as spellings like `sha-256` or `SHA256`. Digest lengths must be exactly 64 / 40 / 96 / 128 hex characters; a wrong length returns `bad_hash`, an unknown name returns `bad_algorithm`.
 
 Success:
 
@@ -212,203 +246,94 @@ Success:
 }
 ```
 
-Errors are `{"ok":false,"error":{"code":"...","message":"..."}}` with codes such as
-`bad_hash` / `bad_algorithm` / `unauthorized` / `quota_exceeded` / `credential_missing` /
-`credential_disabled` / `digest_algorithm_unsupported` / `task_failed` / `signature_missing`.
+Failures are always `{"ok":false,"error":{"code":"...","message":"..."}}` with codes such as `bad_hash` / `bad_algorithm` / `unauthorized` / `quota_exceeded` / `credential_missing` / `credential_disabled` / `digest_algorithm_unsupported` / `task_failed` / `signature_missing`.
 
 ### Desktop client endpoints
 
 | Endpoint | Purpose |
 | --- | --- |
-| `POST /api/client/login` | email + password → session token, plus the available keys and certificates; the body also accepts the legacy `username` field; when the sign-in captcha is on, send `captchaId` + `captcha` (always the numeric image captcha) |
-| `GET /api/client/captcha` | fetch a 4-digit image captcha (`id` + `svg` + `dataUrl`); call it before signing in when the captcha is on |
-| `GET /api/client/session` | validate the token |
-| `POST /api/client/logout` | revoke the token |
-| `GET /api/client/keys` | list keys of the account |
-| `POST /api/client/keys` | create a key (returns the secret once) |
-| `POST /api/client/keys/:id/reveal` | re-issue the secret of an existing key; the old one stops working |
+| `POST /api/client/login` | email + password → session token, plus the available keys and certificates; also accepts the legacy `username` field; when the sign-in captcha is enabled it needs `captchaId` + `captcha` (numeric image captcha, never Turnstile) |
+| `GET /api/client/captcha` | issue a 4-digit image captcha (`id` + `svg` + `dataUrl`) |
+| `GET /api/client/session` | check whether the token is still valid |
+| `POST /api/client/logout` | revoke the current token |
+| `GET /api/client/keys` | list the account's keys |
+| `POST /api/client/keys` | create a key (plaintext returned once) |
+| `POST /api/client/keys/:id/reveal` | rotate an existing key's plaintext; the old value stops working |
 
-### Others
+### Miscellaneous
 
 | Endpoint | Purpose |
 | --- | --- |
-| `GET /v1/certificate` | signing certificate PEM + optional chain |
-| `GET /v1/whoami` | owning user, key/user quotas, usage today, bound credential |
-| `GET /v1/stats` | global statistics + your own and account usage |
-| `POST /v1/timestamp` | RFC3161 proxy: request body is a TSQ, response is the TSR |
-| `GET /captcha` | issue a single-use captcha (`{id, svg}`, 5-minute TTL) |
-| `GET /prefs?lang=&mode=&theme=&back=` | switch language/mode/theme, set cookies, 302 back (site-relative only) |
-| `GET /health` | liveness check (no upstream requests) |
+| `GET /v1/certificate` | signing certificate PEM of the current credential, plus optional chain |
+| `GET /v1/whoami` | owner, key quota / user quota, today's usage and bound credential |
+| `GET /v1/stats` | global stats plus your own and the account's usage |
+| `POST /v1/timestamp` | RFC3161 proxy: TSQ in, TSR out |
+| `GET /captcha` | issue a one-time image captcha (`{id, svg}`, 5-minute TTL) |
+| `GET /prefs?lang=&mode=&theme=&back=` | switch language / mode / theme, set cookies and 302 back |
+| `GET /health` | liveness probe (no cloud requests) |
 
-Admin JSON stats: `GET /admin/api/stats`.
+Admin JSON stats: `GET /admin/api/stats` (admin session required).
 
 ### When the TSA is blocked
 
-Corporate security agents (Tencent iOA in our tests) block unsigned binaries from reaching the internet,
-so a direct TSA request returns HTTP 403 with `检测到风险软件的网络连接`. The client then automatically
-retries through `POST /v1/timestamp` (same Bearer key) and the Worker forwards to `TSA_UPSTREAM`.
-Use `--tsa worker` to force the proxy.
+Enterprise security agents (Tencent iOA in our tests) block unsigned binaries from reaching the network, so a direct TSA call returns HTTP 403 with `检测到风险软件的网络连接`. The client reacts by retrying through `POST /v1/timestamp` with the same Bearer key, and the Worker forwards the request upstream. Use `--tsa worker` to force the proxy.
 
-## Local development
+## Releases
 
-```bash
-cd worker
-npm install
-cp .dev.vars.example .dev.vars   # optional: only needed for local email testing
-npx wrangler kv namespace create CERTUM_KV   # put the returned id into wrangler.jsonc
-npm run dev                      # http://127.0.0.1:8787 ; /admin opens the setup page first
-npm test                         # TOTP / multipart / encoding / KV / admin-account unit tests
-npm run typecheck
-```
-
-Manual deploy:
+| Trigger | Result |
+| --- | --- |
+| Push a `v*` tag (e.g. `v1.0`) | build 8 artifacts and publish a versioned release, marked Latest |
+| `client/` or `LICENSE` lands on `main` | build and refresh the [`beta`](https://github.com/PIKACHUIM/CertumSigner/releases/tag/beta) prerelease (never Latest) |
+| Run the `Release` workflow manually | publish a release under the tag name you enter |
 
 ```bash
-npm run deploy
-# open https://<your-domain>/admin and create the administrator account
-# For email: Settings → Services and addresses, fill the Resend API key and sender
+git tag v1.0 && git push origin v1.0        # cut a stable release
 ```
 
+The old rolling `latest` release is gone: `/releases/latest` follows the newest **stable** release, and `beta` being a prerelease never takes that spot. The build lives in `.github/workflows/build-clients.yml` (reusable); `release.yml` and `beta.yml` are the two entry points.
 
-Pushing a `v*` tag or running `.github/workflows/release.yml` manually builds eight artifacts
-(Windows / Linux × x64 / arm64 × GUI / CLI) and publishes them to the `latest` release; the home page
-links straight to those files.
+## Security notes
 
-## Environment variables
-
-Only one optional secret remains; everything else lives under **Settings → Services and addresses** (KV):
-
-| Name | Type | Purpose |
-| --- | --- | --- |
-| `SESSION_SECRET` | secret | optional cookie HMAC key; defaults to the random value generated at setup |
-| Resend API key, sender | Settings → Services and addresses | registration/reset stay disabled without them |
-
-Runtime settings editable in the console: base URL, Certum API base, TSA upstream, Resend API key and
-sender, intermediate PEM, per-request logging and the Turnstile keys. The captcha mode and the email
-captcha switch live there too. `wrangler.jsonc` has no `vars`; the Certum email and TOTP seed come
-from the KV credential records.
-
-At runtime the Certum email and TOTP seed come from the KV credential; no `CERTUM_*` env var is read.
-
-## Security
-
-- **TOTP seeds live in the KV credential records**; clients never see them and they are not used for
-  signing. KV is encrypted at rest, but an API token that can read the namespace can read them in
-  plaintext — scope the token to that single namespace in production.
-- **API keys are stored as SHA-256 hashes only**; the secret is shown once and deleted after 5 minutes.
-  Re-issuing (`/reveal`) deletes the old hash and returns a new secret. Keys are bound to `userId` +
-  `credentialId`; disabling a user or credential invalidates them immediately.
-- **Passwords** use salted PBKDF2-HMAC-SHA256 (10k iterations); the administrator account stores only a
-  PBKDF2 hash too (10+ characters). User sessions last 7 days, admin sessions 12 hours, both revocable in
-  KV. Writes check CSRF, logins are rate limited per IP (8 failures per 10 minutes; 8 per 10 minutes for
-  the client API). `/admin/setup` closes itself once the account exists — **before that, whoever opens
-  `/admin` first can create the account**, so finish setup right after deploying.
-  The iteration count is fixed at 10k: Workers caps PBKDF2 at 100,000 iterations (above that it throws
-  `iteration counts above 100000 are not supported`), and the Free plan only allows 10 ms of CPU —
-  10k iterations cost roughly 2–3 ms while 100k is closer to 23 ms. Hashes record the count but
-  verification accepts 10k only; anything else is treated as a wrong password (no legacy-format
-  fallback). Changing the constant invalidates every stored hash.
-- The signing API is strict: digest length must match the algorithm (40 / 64 / 96 / 128 hex chars), at
-  most 16 digests per call, with per-key and per-user daily quotas.
-- The client verifies the returned signature with the certificate's public key before writing the file.
+- **OTP seeds live in the KV credential record**; clients never see them and they are not part of signing. KV is encrypted at rest, but an API token that can read the namespace can read them in plaintext — scope production tokens to that single namespace.
+- **API keys are stored as SHA-256 hashes only.** Plaintext is shown once (and deleted after 5 minutes); `/reveal` deletes the old hash and issues a new value. Keys bind `userId` + `credentialId`, so disabling a user or credential invalidates them immediately.
+- **Passwords** use salted PBKDF2-HMAC-SHA256 with 10,000 iterations for both users and admins; sessions are revocable KV records, writes check CSRF, and failed sign-ins are rate limited per IP.
+  The iteration count is fixed at 10,000: Workers caps PBKDF2 at 100,000 and the free plan only allows 10 ms of CPU (10,000 iterations ≈ 2–3 ms). Changing the constant invalidates every stored password.
+- **The signing endpoint accepts no arbitrary bytes**: digest length must match the algorithm exactly, at most 16 digests per call, and the client verifies each signature with the certificate public key before writing the file.
 
 ## Known limitations
 
-- Statistics use read-modify-write on KV, so **counts can be lost under concurrency**; use a Durable
-  Object if you need exact numbers.
-- Opening the console or the credentials page may trigger a Certum login on demand (up to 3 OTP retries
-  when the session is missing), so a wrong credential produces a few failed requests.
-- SHA-1 digests are rejected by Certum EV cards (`digest.algorithm.error`), and `/v1/sign` returns
-  `digest_algorithm_unsupported`; `SHA256` / `SHA384` / `SHA512` all work in practice, so legacy SHA-1
-  signing needs a certificate that still accepts it.
-- PE files only (`.exe/.dll/.sys/.ocx`); no MSI, CAB or scripts.
-- Workers limits subrequests: one signature typically uses 3–8, so keep batches to a dozen digests.
-- Registration / password reset are off by default; without Resend only an admin can reset a password.
-- Windows arm64 and Linux client builds come from CI and have not been run locally.
+- Stats use read-modify-write on KV and **lose counts under heavy concurrency**; use a Durable Object if you need exact numbers.
+- Opening the console or credential pages may trigger a Certum sign-in (up to 3 OTP retries when not signed in); wrong credentials produce a few failed requests.
+- Certum EV cards reject `SHA1` digests: `/v1/sign` returns `digest_algorithm_unsupported`. Use a certificate that supports it if you really need SHA-1.
+- Only PE files (`.exe/.dll/.sys/.ocx`), no MSI / CAB / scripts.
+- Workers limits subrequests: a single signing call uses 3–8 of them, so keep batches to a dozen or so digests.
+- Registration and password reset are off by default; without Resend, only an admin can reset a password from the user detail page.
 
-## Verification
+## Verification status
 
-- Worker: `npx tsc --noEmit` clean; `npm test` 39 passing (TOTP against RFC 6238 vectors, multipart,
-  encoding/hashing, KV storage, password hashing including the 100k iteration cap guard and rejection of
-  other iteration counts, user email uniqueness and index rebuild on email change, admin account
-  setup/password change, runtime config defaults / save and read back).
-- New features exercised under `wrangler dev` (Nov 2026): home page downloads, two-column sign-in with
-  captcha (wrong code → 401 and a new image, refresh button issues a new id, password show/hide),
-  persisted settings toggles, registration reporting a clear error without Resend, email verification
-  tokens (unverified sign-in 401 → verified sign-in 302), reset token (old password 401 / new password
-  302), user-level quota (usage 5 / limit 1 → `/v1/sign` 429 `已超出账号今日限额`), self-service key quota
-  updates.
-- Fixes verified under `wrangler dev` (Nov 2026): every text control now shares one style
-  (`input[type=email]` and friends previously fell back to browser defaults; native date/select
-  affordances follow the theme); a newly created key shows up immediately (KV `list` is eventually
-  consistent, so the fresh record travels with `reveal` and is merged into the list); the Resend API
-  key moved into Settings → Services and addresses (blank keeps it, a checkbox clears it), so
-  `RESEND_API_KEY` is no longer an environment variable.
-- GitHub Actions run `44286722376` finished green (all four platform jobs) and published the
-  eight artifacts to the [latest release](https://github.com/PIKACHUIM/CertumSigner/releases/tag/latest):
-  `certumsigner-windows-{x64,arm64}-{gui,cli}.zip` (1.7-2.1 MB) and
-  `certumsigner-linux-{x64,arm64}-{gui,cli}.tar.gz` (110-132 KB). Windows links OpenSSL statically via
-  vcpkg `openssl:*-windows-static-md`; the Linux GTK3 GUI compiled for the first time on CI. The archives
-  were not downloaded and executed, only listed by name and size.
-- Admin setup flow (Nov 2026, fresh KV under `wrangler dev`): `/admin` and `/admin/login` both 302 to
-  `/admin/setup` while unconfigured; short password, mismatched confirmation and invalid username each
-  render their own message; creating the account 302s to `/admin?ok=…` already signed in; once configured
-  `/admin/setup` 302s back to the login page; wrong username/password 401; the settings page password
-  change was checked for wrong current password, short new password, mismatch and success, with the old
-  password then 401 and the new one 302, other browser sessions revoked (302 back to sign-in) while the
-  current browser receives a fresh cookie.
-- Runtime config (Nov 2026, `wrangler dev`): saving base URL / Certum API / TSA / sender / PEM / log
-  switch under Settings echoes back correctly (trailing slash normalised, sender escaped), `ftp://` URLs
-  and a non-PEM chain are rejected with a message on the settings page, and clearing a field falls back to
-  the default or env var.
-- Legacy compatibility removed (Nov 2026): the `ADMIN_PASSWORD` login path, env-var fallbacks for
-  runtime settings and `/admin/credentials/import-env` (now 404) are gone; `/admin/setup` is the only
-  entry before the account exists.
-- Exercised under `wrangler dev`: admin login, overview, user create/password/expiry/disable/enable,
-  credential create (with non-ASCII label)/edit/disable/enable/delete/force login/refresh certificate,
-  key create (secret shown once)/disable/delete, log page, stats JSON; user login, portal, self-service
-  key creation (assigned certificates only), `/v1/whoami` 401 after disabling, 401 after deletion,
-  logs scoped to the owner.
-- Client API exercised: login (correct/wrong password/missing fields), session check, key creation,
-  `reveal`, 401 on expired tokens.
-- Web UI: four themes × light/dark, `/prefs` cookie and 302, Chinese/English switch (including login
-  failures, CSRF and validation messages), create/edit and detail dialogs, no overflow at 900px and
-  phone widths.
-- Mobile (Nov 2026): every page checked at 390px and 563px viewports (`/`, `/user/login`,
-  `/admin/login`, `/admin`, `/admin/users`, `/admin/credentials`, `/admin/keys`, `/admin/logs`,
-  `/admin/settings`, `/user`, `/user/logs`) with `documentElement.scrollWidth == clientWidth`, so nothing
-  is cut off on the right; secondary columns (time, e-mail, notes, scripts) hide on narrow screens,
-  tables scroll only inside their own container, the nav drops its icons and wraps below 700px, and
-  dialogs shrink to the viewport.
-- C++ client: builds with MSVC 14.44 + Windows SDK 10.0.22621 + static OpenSSL 3.5.9, zero warnings
-  under `/W4 /permissive-`; both the CLI and the Win32 GUI link.
-- Win32 GUI: sign-in → key selection (re-issue dialog) → batch signing of 3 files, all `signed` →
-  `WinVerifyTrust` reports a valid signature → settings (TSA / digest / backup / language / theme) →
-  sign in again and the software-license entry in Settings; layout checked at 125% scaling, dark and
-  English screens captured screen by screen.
-- Status of the current round (mobile layout, AGPL in-app license page, multi-select digests, no console
-  window, nested signatures for multi-algorithm signing): Worker side
-  `npx tsc --noEmit`, `npm test` and the `wrangler dev` checks below are green; on the C++ side
-  `digest` / `settings` / `spc` / `signer` / `cli` / `api` / `gui_win` compile warning-free per file with
-  MSVC `/W4 /permissive-`; `pe.cpp` / `pkcs7.cpp` (no OpenSSL dev package on this machine) and
-  `gui_gtk.cpp` (no GTK3 here) were left to CI, and Actions run `44295635910` finished green on all four
-  platforms, refreshing the eight artifacts in the
-  [latest release](https://github.com/PIKACHUIM/CertumSigner/releases/tag/latest) — so both the Win32 and
-  the GTK3 GUI do build (that run also caught a `tsa.cpp` call still passing `false` where `hash_bytes`
-  now wants an algorithm name; fixed). Still to confirm by hand: the license page and digest pills at
-  runtime, and the `WinVerifyTrust` result for a file carrying several signatures.
-- **Real Certum path verified** (Nov 2026, Windows x64): email + TOTP login works; `/v1/certificate`
-  returns the EV code signing certificate with the configured fingerprint (card `7507400891785917`);
-  `/v1/sign` returns a 512-byte signature for a real SHA-256 digest, and after the client writes it into
-  the PE, `WinVerifyTrust` reports **valid**, still valid after adding a real Certum timestamp.
-- Linux (libcurl + GTK3) compiles on CI; the binary and its GUI interaction remain untested; MSI/CAB
-  unsupported.
+<details>
+<summary>What has actually been tested</summary>
+
+- Worker: `npx tsc --noEmit` passes; `npm test` passes 39 tests (TOTP against RFC 6238 vectors, multipart parsing, encoding/hashing, KV storage and password hashing, unique user emails, admin account setup and password change, runtime config round-trips).
+- Real Certum path works end to end (2026-11, Windows x64): email + TOTP sign-in, `/v1/certificate` returns the EV code-signing certificate, `/v1/sign` turns a real SHA-256 digest into a 512-byte signature, and after writing it into a PE `WinVerifyTrust` reports **valid**; still valid with a real Certum timestamp.
+- UI: four themes × light/dark, zh/en switching, dialogs, and mobile widths (390 / 563 px) checked page by page with no horizontal scrolling; captcha refresh and validation, settings persistence, user quotas and self-service key quota edits tested.
+- Client: MSVC 14.44 + Windows SDK 10.0.22621 + static OpenSSL 3.5.9 with `/W4 /permissive-` and no warnings; the Win32 GUI completed sign-in → key rotation → drag-and-drop batch signing → `WinVerifyTrust`, and layout holds at 125% scaling.
+- GitHub Actions: all four platform jobs succeed and the 8 assets match the download links on the landing page. The Linux GTK3 GUI really compiles in CI; interactive behaviour there is untested.
+
+</details>
+
+## Support
+
+- Bugs and feature requests: [Issues](https://github.com/PIKACHUIM/CertumSigner/issues)
+- Usage and deployment questions: [Discussions](https://github.com/PIKACHUIM/CertumSigner/discussions)
+- Certum protocol details: [`docs/certum-api.md`](docs/certum-api.md)
 
 ## License
 
-[AGPL-3.0-or-later](LICENSE) (© 2026 pikachuren).
+Released under [AGPL-3.0-or-later](LICENSE) (© 2026 pikachuren). Settings → License in the client opens an in-app page with the AGPL-3.0 notice plus the [official text](https://www.gnu.org/licenses/agpl-3.0.txt) and the source URL.
 
-"Settings → License" in the client opens an in-app page holding the AGPL-3.0 notice together with the
-canonical full text (<https://www.gnu.org/licenses/agpl-3.0.txt>) and the repository URL, using the same
-card style as the rest of the app instead of a system modal dialog. The `LICENSE` file carries the same
-notice and links; no MIT text is left in the tree.
+## Credits
+
+- [Certum SimplySign](https://www.certum.pl/) for the cloud signing service
+- [Hono](https://hono.dev/) and [Cloudflare Workers](https://workers.cloudflare.com/) for the runtime and framework
+- [OpenSSL](https://www.openssl.org/), [libcurl](https://curl.se/libcurl/) and [GTK](https://www.gtk.org/) for the client

@@ -4,9 +4,11 @@ C++17 写的 Certum 云签名客户端，Windows 和 Linux 都能用，CLI + GUI
 它自己算 Authenticode 摘要、自己拼 PKCS#7、自己写回 PE 的证书表——
 只把「对一段哈希做 RSA 签名」这一步交给 Worker（也就是 Certum 云端 HSM）。
 
-不想自己编译可以直接从 [latest release](https://github.com/PIKACHUIM/CertumSigner/releases/latest)
-下载：Windows / Linux × x64 / arm64 × GUI / CLI 共 8 个产物（同一个可执行文件带 `--gui` 就是图形界面；
-CLI 构建不含 Win32 / GTK 界面）。
+不想自己编译可以直接从 [Releases](https://github.com/PIKACHUIM/CertumSigner/releases)
+下载正式版（`/releases/latest` 指向最新稳定版）：Windows / Linux × x64 / arm64 × GUI / CLI 共 8 个产物
+（同一个可执行文件带 `--gui` 就是图形界面；CLI 构建不含 Win32 / GTK 界面）。
+`client/` 每次改动合进 `main` 后会刷新 [beta 预发布](https://github.com/PIKACHUIM/CertumSigner/releases/tag/beta)，
+想抢先试新功能可以用它，但不要拿去发版。
 
 ## 依赖
 

@@ -1,0 +1,65 @@
+name: Client beta
+
+# 客户端改动一合进 main 就自动构建，并把结果刷新到 tag 为 beta 的预发布。
+# beta 是 prerelease，不会被 /releases/latest 选中，正式版仍以 v* tag 为准。
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "client/**"
+      - "LICENSE"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: client-beta
+  cancel-in-progress: true
+
+jobs:
+  build:
+    uses: ./.github/workflows/build-clients.yml
+
+  publish:
+    name: Publish beta
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Collect artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: List assets
+        run: ls -lh dist
+
+      # 让 beta tag 始终跟着最新一次构建走（先删旧的 release + tag）
+      - name: Reset beta release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete beta --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag || true
+
+      - name: Publish beta
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: beta
+          name: CertumSigner beta
+          prerelease: true
+          make_latest: false
+          body: |
+            客户端 `main` 分支的最新构建，提交 `${{ github.sha }}`。
+
+            | 平台 | 架构 | 形式 |
+            | --- | --- | --- |
+            | Windows | x64 / arm64 | GUI（Win32 自绘）、CLI |
+            | Linux | x64 / arm64 | GUI（GTK3）、CLI |
+
+            - 每次 `client/` 有改动都会覆盖这里的产物，仅供试用，不稳定。
+            - 需要正式版请到 [Releases](https://github.com/${{ github.repository }}/releases)。
+          files: dist/*
+          fail_on_unmatched_files: true
