@@ -28,7 +28,7 @@ English | [简体中文](README.md)
 </div>
 
 > [!IMPORTANT]
-> - **Fork** this repo before clicking the button: it deploys straight from `worker/wrangler.jsonc`, whose KV id and `sign.example.com` route belong to the author's instance.
+> - **Fork** this repo before clicking the button: it deploys straight from `worker/wrangler.jsonc`, which is a template — the KV id and route are placeholders.
 > - After forking, replace `kv_namespaces[0].id` with your own `wrangler kv namespace create CERTUM_KV` output, and point `routes` at your domain (delete the block to use `*.workers.dev`).
 > - The first visit to `/admin` opens the **setup page**: choose an admin username and password and you are signed in. Credentials are stored as PBKDF2 hashes in KV and the session key is generated during setup, so **no secret is required**.
 > - Before setup, whoever opens `/admin` first can create the admin account — finish the wizard right after deploying.
@@ -161,7 +161,7 @@ Custom domain: edit `routes` in `worker/wrangler.jsonc`, then put the same addre
 
 ### Multiple instances
 
-The same code can run several fully isolated instances (different Worker, KV and domain) from separate configs. The repo ships one example, `worker/wrangler.signui.jsonc` (`signui-work` / `signui-kvdb` / `signui.example.com`):
+The same code can run several fully isolated instances (different Worker, KV and domain) from separate configs: copy `worker/wrangler.jsonc` to `wrangler.<name>.jsonc` and change `name`, `routes` and the KV id. `worker/.gitignore` ignores `wrangler.*.jsonc`, so configs holding real domains and KV ids are never committed by accident.
 
 ```bash
 cd worker

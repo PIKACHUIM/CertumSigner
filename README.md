@@ -28,7 +28,7 @@
 </div>
 
 > [!IMPORTANT]
-> - 先 **Fork** 本仓库再点按钮：部署按钮会直接读仓库里的 `worker/wrangler.jsonc`，其中的 KV id 与 `sign.example.com` 是作者的实例。
+> - 先 **Fork** 本仓库再点按钮：部署按钮会直接读仓库里的 `worker/wrangler.jsonc`，那只是模板，KV id 和域名都是占位符。
 > - Fork 后把 `kv_namespaces[0].id` 换成自己 `wrangler kv namespace create CERTUM_KV` 得到的 id，`routes` 改成自己的域名（整段删掉则用 `*.workers.dev`）。
 > - 首次打开 `/admin` 会进入**初始化页**：设置管理员用户名与密码，提交后自动登录控制台。账号与密码只以 PBKDF2 哈希存在 KV，会话密钥在初始化时自动生成，**不需要**手动设 secret。
 > - 未初始化之前，谁先打开 `/admin` 谁就能建管理员账号，所以部署完请立刻完成初始化。
@@ -163,7 +163,7 @@ npx wrangler deploy
 
 ### 多实例
 
-同一份代码可以开多套完全隔离的实例（不同 Worker、不同 KV、不同域名），各建一份配置即可。仓库里带了一个例子 `worker/wrangler.signui.jsonc`（`signui-work` / `signui-kvdb` / `signui.example.com`）：
+同一份代码可以开多套完全隔离的实例（不同 Worker、不同 KV、不同域名），各建一份配置即可：把 `worker/wrangler.jsonc` 复制成 `wrangler.<名字>.jsonc`，改 `name`、`routes` 和 KV id。`worker/.gitignore` 已忽略 `wrangler.*.jsonc`，这类带真实域名与 KV id 的配置不会误提交。
 
 ```bash
 cd worker

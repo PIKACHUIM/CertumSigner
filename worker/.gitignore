@@ -4,3 +4,6 @@ node_modules/
 dist/
 *.log
 .DS_Store
+
+# 本机部署配置：含真实域名与 KV id，只留在本地
+wrangler.*.jsonc

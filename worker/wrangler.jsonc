@@ -1,5 +1,8 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
+  // 这是模板，真实域名与 KV id 请换成自己的。
+  // 需要多套实例时，把本文件复制成 wrangler.<名字>.jsonc 再用 --config 指定；
+  // worker/.gitignore 已忽略 wrangler.*.jsonc，带真实值的配置不会被提交。
   "name": "certum-signer",
   "main": "src/index.ts",
   "compatibility_date": "2024-12-05",
@@ -7,16 +10,17 @@
   "observability": {
     "enabled": true
   },
-  // 自定义域名：DNS 记录由 Cloudflare 自动创建（zone 需在本账号下）
-  "routes": [
-    {
-      "pattern": "sign.example.com",
-      "custom_domain": true
-    }
-  ],
+  // 自定义域名：换成自己的域名（zone 需在本账号下），DNS 记录由 Cloudflare 自动创建。
+  // 不需要自定义域名就整段删掉，Worker 会使用 <name>.<subdomain>.workers.dev。
+  // "routes": [
+  //   {
+  //     "pattern": "sign.your-domain.com",
+  //     "custom_domain": true
+  //   }
+  // ],
   "kv_namespaces": [
     {
-      // wrangler kv namespace create CERTUM_KV
+      // 先执行 npx wrangler kv namespace create CERTUM_KV，把返回的 id 填到这里
       "binding": "CERTUM_KV",
       "id": "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
     }
