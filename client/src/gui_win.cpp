@@ -23,7 +23,9 @@
 #include "http.h"
 #include "digest.h"
 #include "json.h"
+#include "pe.h"
 #include "settings.h"
+#include "signature_info.h"
 #include "signer.h"
 #include "util.h"
 
@@ -47,11 +49,12 @@ constexpr int kSideWidth = 200;
 constexpr int kLicTextTop = 132;
 constexpr int kLicMargin = 24;
 
-enum Page { PAGE_LOGIN = 0, PAGE_KEYS = 1, PAGE_SIGN = 2, PAGE_SETTINGS = 3, PAGE_LICENSE = 4 };
+enum Page { PAGE_LOGIN = 0, PAGE_KEYS = 1, PAGE_SIGN = 2, PAGE_SETTINGS = 3, PAGE_LICENSE = 4, PAGE_LOG = 5 };
 
 constexpr int IDC_NAV_SIGN = 1001;
 constexpr int IDC_NAV_SETTINGS = 1002;
 constexpr int IDC_NAV_KEYS = 1005;
+constexpr int IDC_NAV_LOG = 1007;
 constexpr int IDC_LANG = 1003;
 constexpr int IDC_THEME = 1004;
 constexpr int IDC_LOGOUT = 1006;
@@ -104,6 +107,7 @@ constexpr UINT WM_APP_LOGIN_DONE = WM_APP + 4;
 constexpr UINT WM_APP_KEY_DONE = WM_APP + 5;
 constexpr UINT WM_APP_WHOAMI_DONE = WM_APP + 6;
 constexpr UINT_PTR TIMER_ANIM = 1;
+constexpr UINT_PTR TIMER_TOAST = 2;
 
 /* --------------------------------- 配色 ---------------------------------- */
 
@@ -157,6 +161,7 @@ const TextRow kTexts[] = {
     {"nav.sign", L"签名", L"Sign"},
     {"nav.keys", L"凭据", L"Credentials"},
     {"nav.settings", L"设置", L"Settings"},
+    {"nav.log", L"日志", L"Log"},
     {"tool.lang", L"切换语言", L"Language"},
     {"tool.theme", L"切换明暗", L"Light / dark"},
     {"tool.logout", L"退出登录", L"Sign out"},
@@ -219,6 +224,38 @@ const TextRow kTexts[] = {
     {"sign.valid", L"签名有效", L"Signature valid"},
     {"sign.invalid", L"签名无效", L"Signature invalid"},
     {"sign.noFile", L"请先在列表里选择文件", L"Select a file in the list first"},
+    {"sign.cross", L"交叉签名", L"Cross-signed"},
+
+    {"log.title", L"日志", L"Log"},
+    {"log.sub", L"签名、校验与时间戳的完整输出都记在这里", L"Everything the signer and verifier print"},
+    {"log.empty", L"还没有日志", L"Nothing logged yet"},
+
+    {"details.title", L"文件详情", L"File details"},
+    {"details.certTitle", L"签名证书", L"Signature certificate"},
+    {"details.close", L"关闭", L"Close"},
+    {"details.path", L"文件路径", L"Path"},
+    {"details.size", L"文件大小", L"Size"},
+    {"details.status", L"签名状态", L"Status"},
+    {"details.verify", L"校验结果", L"Verification"},
+    {"details.notVerified", L"尚未校验", L"Not verified"},
+    {"details.digests", L"摘要算法", L"Digest algorithms"},
+    {"details.cross", L"交叉签名", L"Cross-signed"},
+    {"details.subject", L"证书主题", L"Subject"},
+    {"details.issuer", L"颁发者", L"Issuer"},
+    {"details.serial", L"序列号", L"Serial"},
+    {"details.validity", L"有效期", L"Validity"},
+    {"details.fingerprint", L"SHA-256 指纹", L"SHA-256 fingerprint"},
+    {"details.nested", L"嵌套签名", L"Nested"},
+    {"details.timestamp", L"时间戳", L"Timestamp"},
+    {"details.hash", L"签名哈希", L"Signature hash"},
+    {"details.algorithm", L"签名算法", L"Algorithm"},
+    {"details.notSigned", L"文件里没有 Authenticode 签名", L"No Authenticode signature in this file"},
+    {"details.catalogSigned", L"校验通过，但文件没有内嵌签名（多为系统目录签名）",
+     L"Verified, but the file has no embedded signature (usually catalog-signed)"},
+    {"details.yes", L"有", L"Yes"},
+    {"details.no", L"无", L"No"},
+    {"details.hint", L"双击文件可打开系统「属性 - 数字签名」", L"Double-click a file to open Properties - Digital Signatures"},
+    {"details.scroll", L"滚轮或 ↑↓ 查看更多", L"Scroll or press ↑↓ for more"},
 
     {"set.title", L"设置", L"Settings"},
     {"set.sub", L"连接、签名选项与界面偏好都保存在本机", L"Connection, signing options and appearance are stored locally"},
@@ -300,7 +337,13 @@ const wchar_t *kLicenseNoticeText =
 
 struct FileItem {
     std::string path;
-    int state = 0; // 0 等待 / 1 进行中 / 2 成功 / 3 失败
+    int state = 0; // 0 等待 / 1 进行中 / 2 成功 / 3 失败 / 4 已跳过
+    unsigned long long size = 0;
+    siginfo::FileSignature signature;
+    bool verified = false;
+    bool verify_ok = false;
+    std::wstring verify_note;
+    std::string error;
 };
 
 struct KeyItem {
@@ -352,6 +395,7 @@ struct App {
 
     HWND navSign = nullptr;
     HWND navKeys = nullptr;
+    HWND navLog = nullptr;
     HWND navSettings = nullptr;
     HWND langBtn = nullptr;
     HWND themeBtn = nullptr;
@@ -439,6 +483,12 @@ struct App {
     std::string token;
     std::string pending_name;
     std::string pending_plaintext;
+
+    // 列表行的热区（0 无 / 1 删除 / 2 详情 / 3 证书）
+    int row_hover = -1;
+    int row_hover_part = 0;
+
+    HWND toast = nullptr;
 };
 
 App *g_app = nullptr;
@@ -801,8 +851,54 @@ void draw_file_icon(HDC dc, RECT box, COLORREF fg) {
     DeleteObject(pen);
 }
 
-/* ------------------------------- 控件创建 -------------------------------- */
+/** 行内小图标：详情（圆形 i） */
+void draw_info_icon(HDC dc, RECT box, COLORREF fg) {
+    HPEN pen = CreatePen(PS_SOLID, px(1), fg);
+    HGDIOBJ oldPen = SelectObject(dc, pen);
+    HGDIOBJ oldBrush = SelectObject(dc, GetStockObject(HOLLOW_BRUSH));
+    Ellipse(dc, box.left, box.top, box.right, box.bottom);
+    SelectObject(dc, oldBrush);
+    SelectObject(dc, oldPen);
+    DeleteObject(pen);
+    if (!g_app) return;
+    draw_text(dc, L"i", box, g_app->fontTiny, fg, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+}
 
+/** 行内小图标：签名证书（带横线的矩形） */
+void draw_cert_icon(HDC dc, RECT box, COLORREF fg) {
+    HPEN pen = CreatePen(PS_SOLID, px(1), fg);
+    HGDIOBJ oldPen = SelectObject(dc, pen);
+    HGDIOBJ oldBrush = SelectObject(dc, GetStockObject(HOLLOW_BRUSH));
+    RoundRect(dc, box.left, box.top, box.right, box.bottom, px(3), px(3));
+    const int inset = px(4);
+    MoveToEx(dc, box.left + inset, box.top + px(6), nullptr);
+    LineTo(dc, box.right - inset, box.top + px(6));
+    MoveToEx(dc, box.left + inset, box.top + px(10), nullptr);
+    LineTo(dc, box.right - inset, box.top + px(10));
+    SelectObject(dc, oldBrush);
+    SelectObject(dc, oldPen);
+    DeleteObject(pen);
+}
+
+/** 侧边栏图标：日志（三条横线） */
+void draw_log_icon(HDC dc, RECT box, COLORREF color) {
+    HPEN pen = CreatePen(PS_SOLID, px(2), color);
+    HGDIOBJ oldPen = SelectObject(dc, pen);
+    const int left = box.left;
+    const int right = box.right;
+    const int top = box.top + px(4);
+    const int gap = (box.bottom - box.top - px(8)) / 3;
+    MoveToEx(dc, left, top, nullptr);
+    LineTo(dc, right, top);
+    MoveToEx(dc, left, top + gap, nullptr);
+    LineTo(dc, right, top + gap);
+    MoveToEx(dc, left, top + gap * 2, nullptr);
+    LineTo(dc, right, top + gap * 2);
+    SelectObject(dc, oldPen);
+    DeleteObject(pen);
+}
+
+/* ------------------------------- 控件创建 -------------------------------- */
 HWND make_control(const wchar_t *klass, const wchar_t *text, DWORD style, DWORD ex_style, RECT bounds, int id,
                   HWND parent, HFONT font) {
     HWND control = CreateWindowExW(ex_style, klass, text, WS_CHILD | WS_CLIPSIBLINGS | style, bounds.left, bounds.top,
@@ -890,8 +986,12 @@ ControlSet keys_controls() {
 
 ControlSet sign_controls() {
     App *a = g_app;
-    return {{a->drop, a->list, a->addBtn, a->removeBtn, a->clearBtn, a->signBtn, a->verifyBtn, a->logBox,
-             a->logClear, a->skipBtn}};
+    return {{a->drop, a->list, a->addBtn, a->removeBtn, a->clearBtn, a->signBtn, a->verifyBtn, a->skipBtn}};
+}
+
+ControlSet log_controls() {
+    App *a = g_app;
+    return {{a->logBox, a->logClear}};
 }
 
 ControlSet settings_controls() {
@@ -911,6 +1011,15 @@ void show_controls(const ControlSet &set, bool visible) {
     }
 }
 
+/** 日志为空时把编辑框藏起来，页面自绘的「还没有日志」才露得出来 */
+void refresh_log_visibility() {
+    App *a = g_app;
+    if (!a || !a->logBox || a->page != PAGE_LOG) return;
+    const bool empty = GetWindowTextLengthW(a->logBox) == 0;
+    ShowWindow(a->logBox, empty ? SW_HIDE : SW_SHOW);
+    if (a->logClear) EnableWindow(a->logClear, empty ? FALSE : TRUE);
+}
+
 void set_page(Page page) {
     App *a = g_app;
     if (!a) return;
@@ -920,11 +1029,13 @@ void set_page(Page page) {
     show_controls(login_controls(), page == PAGE_LOGIN);
     show_controls(keys_controls(), page == PAGE_KEYS);
     show_controls(sign_controls(), page == PAGE_SIGN);
+    show_controls(log_controls(), page == PAGE_LOG);
     show_controls(settings_controls(), page == PAGE_SETTINGS);
     show_controls(license_controls(), page == PAGE_LICENSE);
 
     if (a->navSign) ShowWindow(a->navSign, logged_in ? SW_SHOW : SW_HIDE);
     if (a->navKeys) ShowWindow(a->navKeys, logged_in ? SW_SHOW : SW_HIDE);
+    if (a->navLog) ShowWindow(a->navLog, logged_in ? SW_SHOW : SW_HIDE);
     if (a->navSettings) ShowWindow(a->navSettings, logged_in ? SW_SHOW : SW_HIDE);
     if (a->logoutBtn) ShowWindow(a->logoutBtn, logged_in ? SW_SHOW : SW_HIDE);
     if (a->langBtn) ShowWindow(a->langBtn, SW_SHOW);
@@ -940,6 +1051,7 @@ void set_page(Page page) {
     if (a->page == PAGE_KEYS) {
         EnableWindow(a->keyUse, a->keys.empty() ? FALSE : TRUE);
     }
+    refresh_log_visibility();
 
     repaint_all_controls();
 }
@@ -981,6 +1093,8 @@ void append_log(const std::string &message) {
     SendMessageW(g_app->logBox, EM_SETSEL, static_cast<WPARAM>(length), static_cast<LPARAM>(length));
     SendMessageW(g_app->logBox, EM_REPLACESEL, FALSE, reinterpret_cast<LPARAM>(line.c_str()));
     SendMessageW(g_app->logBox, EM_SCROLLCARET, 0, 0);
+    refresh_log_visibility();
+    if (g_app->page == PAGE_LOG) InvalidateRect(g_app->window, nullptr, FALSE);
 }
 
 void post_log(HWND window, const std::string &message) {
@@ -1119,7 +1233,20 @@ void add_file(const std::string &path) {
     for (const auto &item : a->files) {
         if (item.path == path) return;
     }
-    a->files.push_back(FileItem{path, 0});
+    FileItem item;
+    item.path = path;
+    item.size = siginfo::file_size(path);
+    item.signature = siginfo::load(path);
+    a->files.push_back(item);
+}
+
+/** 重新解析一个文件的签名信息（签名 / 校验之后调用） */
+void reload_file_signature(size_t index) {
+    App *a = g_app;
+    if (!a || index >= a->files.size()) return;
+    FileItem &item = a->files[index];
+    if (item.size == 0) item.size = siginfo::file_size(item.path);
+    item.signature = siginfo::load(item.path);
 }
 
 void add_paths(const std::vector<std::string> &paths) {
@@ -1192,11 +1319,14 @@ void remove_file_at(size_t index) {
 
 /* --------------------------------- 签名 ---------------------------------- */
 
+void show_toast(const std::wstring &text, bool ok);
+void show_file_details(size_t index, bool cert_first);
+
 void start_batch_sign() {
     App *a = g_app;
     if (!a || a->busy) return;
     if (a->files.empty()) {
-        set_status(3, tr("sign.pickFirst"));
+        show_toast(tr("sign.pickFirst"), false);
         return;
     }
 
@@ -1313,8 +1443,9 @@ const wchar_t *verify_hint(LONG status) {
 
 void verify_selected() {
     App *a = g_app;
-    if (!a || a->files.empty()) {
-        set_status(3, tr("sign.noFile"));
+    if (!a) return;
+    if (a->files.empty()) {
+        show_toast(tr("sign.pickFirst"), false);
         return;
     }
     int index = static_cast<int>(SendMessageW(a->list, LB_GETCURSEL, 0, 0));
@@ -1322,7 +1453,8 @@ void verify_selected() {
     const LRESULT data = SendMessageW(a->list, LB_GETITEMDATA, static_cast<WPARAM>(index), 0);
     if (data < 0 || static_cast<size_t>(data) >= a->files.size()) return;
 
-    const std::string path = a->files[static_cast<size_t>(data)].path;
+    const size_t target = static_cast<size_t>(data);
+    const std::string path = a->files[target].path;
     const std::wstring wide = widen(path);
 
     WINTRUST_FILE_INFO file_info{};
@@ -1343,17 +1475,527 @@ void verify_selected() {
     info.dwStateAction = WTD_STATEACTION_CLOSE;
     WinVerifyTrust(nullptr, &policy, &info);
 
-    if (result == ERROR_SUCCESS) {
+    FileItem &file = a->files[target];
+    file.verified = true;
+    file.verify_ok = result == ERROR_SUCCESS;
+    file.verify_note.clear();
+
+    if (file.verify_ok) {
         append_log("校验通过：" + file_name(path) + " 签名有效。");
-        set_status(2, tr("sign.valid"));
+        file.state = 2;
+        show_toast(tr("sign.valid") + L" · " + widen(file_name(path)), true);
     } else {
         wchar_t code[32] = {0};
         swprintf_s(code, L"0x%08lX", static_cast<unsigned long>(result));
         std::wstring line = L"校验未通过（" + std::wstring(code) + L"）";
         if (const wchar_t *hint = verify_hint(result)) line += std::wstring(L"：") + hint;
         append_log(narrow(line) + " · " + file_name(path));
-        set_status(3, tr("sign.invalid"));
+        file.verify_note = line;
+        file.state = 3;
+        show_toast(tr("sign.invalid") + L" · " + widen(file_name(path)), false);
     }
+
+    reload_file_signature(target);
+    if (a->list) InvalidateRect(a->list, nullptr, FALSE);
+}
+
+/* -------------------------------- 提示浮层 -------------------------------- */
+
+constexpr wchar_t kToastClass[] = L"CertumSignerToast";
+
+std::wstring g_toast_text;
+bool g_toast_ok = true;
+
+LRESULT CALLBACK toast_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
+    switch (message) {
+    case WM_PAINT: {
+        PAINTSTRUCT ps{};
+        HDC dc = BeginPaint(window, &ps);
+        RECT client{};
+        GetClientRect(window, &client);
+        const Palette &p = pal();
+        const COLORREF tone = g_toast_ok ? p.ok : p.bad;
+
+        fill_round(dc, client, px(11), p.card);
+        stroke_round(dc, client, px(11), tone);
+        HBRUSH brush = CreateSolidBrush(tone);
+        HPEN pen = CreatePen(PS_SOLID, 1, tone);
+        HGDIOBJ oldBrush = SelectObject(dc, brush);
+        HGDIOBJ oldPen = SelectObject(dc, pen);
+        const int dot = px(8);
+        const int cy = (client.top + client.bottom) / 2;
+        Ellipse(dc, px(16), cy - dot / 2, px(16) + dot, cy + dot / 2);
+        SelectObject(dc, oldPen);
+        SelectObject(dc, oldBrush);
+        DeleteObject(brush);
+        DeleteObject(pen);
+
+        RECT text{px(32), 0, client.right - px(14), client.bottom};
+        if (g_app) {
+            draw_text(dc, g_toast_text, text, g_app->fontButton, p.text,
+                      DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
+        }
+        EndPaint(window, &ps);
+        return 0;
+    }
+    case WM_ERASEBKGND:
+        return 1;
+    case WM_TIMER:
+        KillTimer(window, TIMER_TOAST);
+        DestroyWindow(window);
+        return 0;
+    case WM_LBUTTONUP:
+        DestroyWindow(window);
+        return 0;
+    case WM_DESTROY:
+        if (g_app && g_app->toast == window) g_app->toast = nullptr;
+        return 0;
+    default:
+        break;
+    }
+    return DefWindowProcW(window, message, wparam, lparam);
+}
+
+void show_toast(const std::wstring &text, bool ok) {
+    App *a = g_app;
+    if (!a || !a->window || text.empty()) return;
+
+    static bool registered = false;
+    if (!registered) {
+        WNDCLASSEXW klass{};
+        klass.cbSize = sizeof(klass);
+        klass.lpfnWndProc = toast_proc;
+        klass.hInstance = GetModuleHandleW(nullptr);
+        klass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+        klass.lpszClassName = kToastClass;
+        RegisterClassExW(&klass);
+        registered = true;
+    }
+
+    if (a->toast) {
+        DestroyWindow(a->toast);
+        a->toast = nullptr;
+    }
+    g_toast_text = text;
+    g_toast_ok = ok;
+
+    SIZE extent{};
+    HDC screen = GetDC(nullptr);
+    if (screen) {
+        HGDIOBJ old = SelectObject(screen, a->fontButton);
+        GetTextExtentPoint32W(screen, text.c_str(), static_cast<int>(text.size()), &extent);
+        SelectObject(screen, old);
+        ReleaseDC(nullptr, screen);
+    }
+    const int width = std::min(px(600), std::max(px(220), static_cast<int>(extent.cx) + px(72)));
+    const int height = px(46);
+
+    RECT owner{};
+    GetWindowRect(a->window, &owner);
+    const int x = owner.left + ((owner.right - owner.left) - width) / 2;
+    // 贴在按钮上方，避免压住「开始签名 / 验证签名」
+    int bottom = owner.bottom - px(30);
+    if (a->signBtn) {
+        RECT button{};
+        if (GetWindowRect(a->signBtn, &button) && button.top > owner.top) {
+            bottom = std::min(bottom, static_cast<int>(button.top) - px(12));
+        }
+    }
+    const int y = bottom - height;
+
+    HWND toast = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TOPMOST, kToastClass, L"", WS_POPUP, x, y,
+                                 width, height, a->window, nullptr, GetModuleHandleW(nullptr), nullptr);
+    if (!toast) return;
+    a->toast = toast;
+    ShowWindow(toast, SW_SHOWNOACTIVATE);
+    SetTimer(toast, TIMER_TOAST, 3600, nullptr);
+}
+
+/* -------------------------------- 详情弹窗 -------------------------------- */
+
+constexpr wchar_t kDetailClass[] = L"CertumSignerDetails";
+
+struct DetailLine {
+    std::wstring label;
+    std::wstring value;
+    int height = 0;
+    bool heading = false;
+};
+
+std::vector<DetailLine> g_detail_lines;
+std::wstring g_detail_title;
+std::wstring g_detail_hint;
+int g_detail_scroll = 0;
+int g_detail_view_height = 0;
+int g_detail_value_width = 0;
+
+RECT detail_close_rect(HWND window) {
+    RECT client{};
+    GetClientRect(window, &client);
+    return RECT{client.right - px(120), client.bottom - px(48), client.right - px(24), client.bottom - px(16)};
+}
+
+void detail_add(const std::wstring &label, const std::wstring &value) {
+    DetailLine line;
+    line.label = label;
+    line.value = value;
+    g_detail_lines.push_back(line);
+}
+
+void detail_add_heading(const std::wstring &text) {
+    DetailLine line;
+    line.value = text;
+    line.heading = true;
+    g_detail_lines.push_back(line);
+}
+
+void detail_paint(HWND window, HDC dc) {
+    RECT client{};
+    GetClientRect(window, &client);
+    const Palette &p = pal();
+    App *a = g_app;
+    if (!a) return;
+    fill_rect(dc, client, p.bg);
+
+    draw_text(dc, g_detail_title, RECT{px(24), px(18), client.right - px(24), px(48)}, a->fontH1, p.text,
+              DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
+
+    const int content_top = px(60);
+    const int content_bottom = client.bottom - px(60);
+    g_detail_view_height = content_bottom - content_top;
+
+    int y = content_top - g_detail_scroll;
+    for (const auto &line : g_detail_lines) {
+        if (line.heading) {
+            if (y + line.height > content_top && y < content_bottom) {
+                draw_text(dc, line.value, RECT{px(24), y, client.right - px(24), y + line.height}, a->fontButton,
+                          p.accent, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
+            }
+            y += line.height;
+            continue;
+        }
+        if (y + line.height > content_top && y < content_bottom) {
+            draw_text(dc, line.label, RECT{px(24), y, px(170), y + line.height}, a->fontSmall, p.muted2,
+                      DT_LEFT | DT_TOP);
+            RECT value_rect{px(182), y, px(182) + g_detail_value_width, y + line.height};
+            draw_text(dc, line.value, value_rect, a->fontSmall, p.text, DT_LEFT | DT_TOP | DT_WORDBREAK);
+        }
+        y += line.height;
+    }
+
+    const RECT close = detail_close_rect(window);
+    fill_round(dc, close, px(9), p.hover);
+    stroke_round(dc, close, px(9), p.inputEdge);
+    draw_text(dc, tr("details.close"), close, a->fontButton, p.text, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+
+    draw_text(dc, g_detail_hint, RECT{px(24), client.bottom - px(42), px(520), client.bottom - px(20)}, a->fontTiny,
+              p.muted2, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
+}
+
+int detail_content_height() {
+    int total = 0;
+    for (const auto &line : g_detail_lines) total += line.height;
+    return total;
+}
+
+void detail_scroll_by(int delta) {
+    const int content = detail_content_height();
+    const int max_scroll = std::max(0, content - g_detail_view_height + px(16));
+    g_detail_scroll = std::max(0, std::min(max_scroll, g_detail_scroll + delta));
+}
+
+LRESULT CALLBACK detail_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
+    switch (message) {
+    case WM_PAINT: {
+        PAINTSTRUCT ps{};
+        HDC dc = BeginPaint(window, &ps);
+        detail_paint(window, dc);
+        EndPaint(window, &ps);
+        return 0;
+    }
+    case WM_ERASEBKGND:
+        return 1;
+    case WM_MOUSEWHEEL:
+        detail_scroll_by(-GET_WHEEL_DELTA_WPARAM(wparam) / 120 * px(56));
+        InvalidateRect(window, nullptr, FALSE);
+        return 0;
+    case WM_LBUTTONUP: {
+        POINT point{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+        RECT close = detail_close_rect(window);
+        if (PtInRect(&close, point)) {
+            DestroyWindow(window);
+            return 0;
+        }
+        break;
+    }
+    case WM_KEYDOWN:
+        if (wparam == VK_ESCAPE) {
+            DestroyWindow(window);
+            return 0;
+        }
+        if (wparam == VK_DOWN) detail_scroll_by(px(40));
+        else if (wparam == VK_UP) detail_scroll_by(-px(40));
+        else if (wparam == VK_NEXT) detail_scroll_by(px(240));
+        else if (wparam == VK_PRIOR) detail_scroll_by(-px(240));
+        else break;
+        InvalidateRect(window, nullptr, FALSE);
+        return 0;
+    case WM_CLOSE:
+        DestroyWindow(window);
+        return 0;
+    default:
+        break;
+    }
+    return DefWindowProcW(window, message, wparam, lparam);
+}
+
+std::wstring state_text(int state) {
+    switch (state) {
+    case 1: return tr("st.work");
+    case 2: return tr("st.ok");
+    case 3: return tr("st.fail");
+    case 4: return tr("st.skip");
+    default: return tr("st.wait");
+    }
+}
+
+std::wstring join_digests(const std::vector<std::string> &list) {
+    std::wstring text;
+    for (const auto &item : list) {
+        if (!text.empty()) text += L" / ";
+        const char *display = digest::display_name(item);
+        text += widen(display ? display : item);
+    }
+    return text;
+}
+
+/** 长十六进制串按组分隔，才能在弹窗里换行显示（否则会被整行截断） */
+std::wstring group_hex(const std::string &hex, size_t group) {
+    std::wstring out;
+    out.reserve(hex.size() + hex.size() / group);
+    for (size_t i = 0; i < hex.size(); ++i) {
+        if (i > 0 && i % group == 0) out.push_back(L' ');
+        out.push_back(static_cast<wchar_t>(hex[i]));
+    }
+    return out;
+}
+
+void show_file_details(size_t index, bool cert_first) {
+    App *a = g_app;
+    if (!a || index >= a->files.size()) return;
+    const FileItem &file = a->files[index];
+
+    static bool registered = false;
+    if (!registered) {
+        WNDCLASSEXW klass{};
+        klass.cbSize = sizeof(klass);
+        klass.lpfnWndProc = detail_proc;
+        klass.hInstance = GetModuleHandleW(nullptr);
+        klass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+        klass.lpszClassName = kDetailClass;
+        klass.hbrBackground = nullptr;
+        RegisterClassExW(&klass);
+        registered = true;
+    }
+
+    g_detail_lines.clear();
+    g_detail_title = cert_first ? tr("details.certTitle") : tr("details.title");
+    g_detail_hint = tr("details.hint");
+    g_detail_scroll = 0;
+
+    const std::wstring path = widen(file.path);
+    detail_add(tr("details.path"), path);
+    std::wstring size_text = siginfo::format_size(file.size);
+    if (file.size > 0) size_text += L"  (" + std::to_wstring(file.size) + L" B)";
+    detail_add(tr("details.size"), size_text);
+    detail_add(tr("details.status"), state_text(file.state));
+    if (file.verified) {
+        std::wstring verify = file.verify_ok ? tr("sign.valid") : tr("sign.invalid");
+        if (!file.verify_ok && !file.verify_note.empty()) verify += L" · " + file.verify_note;
+        detail_add(tr("details.verify"), verify);
+    } else {
+        detail_add(tr("details.verify"), tr("details.notVerified"));
+    }
+
+    const std::vector<std::string> algorithms = siginfo::digests(file.signature);
+    detail_add(tr("details.digests"), algorithms.empty() ? tr("details.no") : join_digests(algorithms));
+    detail_add(tr("details.cross"), file.signature.cross_signed ? tr("details.yes") : tr("details.no"));
+
+    if (file.signature.signatures.empty()) {
+        // 系统目录签名（catalog）没有内嵌证书表，但 WinVerifyTrust 仍判有效，两种说法别打架
+        detail_add_heading(file.verified && file.verify_ok ? tr("details.catalogSigned") : tr("details.notSigned"));
+    }
+
+    // 签名哈希：按文件实际带的摘要算法逐个算一次（超大文件跳过，避免卡界面）
+    std::vector<std::wstring> hashes;
+    if (!algorithms.empty() && file.size > 0 && file.size <= 64ull * 1024 * 1024) {
+        for (const auto &algorithm : algorithms) {
+            std::string digest_hex;
+            std::string digest_error;
+            if (pe::authentihash(file.path, algorithm, digest_hex, digest_error)) {
+                const char *display = digest::display_name(algorithm);
+                hashes.push_back(widen(display ? display : algorithm) + L"  " + group_hex(digest_hex, 16));
+            }
+        }
+    }
+    for (size_t i = 0; i < hashes.size(); ++i) {
+        detail_add(i == 0 ? tr("details.hash") : L"", hashes[i]);
+    }
+
+    const size_t limit = std::min<size_t>(file.signature.signatures.size(), 3);
+    for (size_t i = 0; i < limit; ++i) {
+        const auto &signature = file.signature.signatures[i];
+        const char *display = digest::display_name(signature.digest);
+        std::wstring heading = L"#" + std::to_wstring(i + 1) + L"  " + widen(display ? display : signature.digest);
+        if (signature.nested) heading += L" · " + tr("details.nested");
+        detail_add_heading(heading);
+
+        if (!signature.signature_algorithm.empty()) {
+            detail_add(tr("details.algorithm"), widen(signature.signature_algorithm));
+        }
+        detail_add(tr("details.subject"), widen(signature.signer.subject));
+        detail_add(tr("details.issuer"), widen(signature.signer.issuer));
+        detail_add(tr("details.serial"), widen(signature.signer.serial));
+        detail_add(tr("details.validity"),
+                   widen(signature.signer.not_before) + L" → " + widen(signature.signer.not_after));
+        detail_add(tr("details.fingerprint"), widen(signature.signer.fingerprint));
+        detail_add(tr("details.timestamp"), signature.timestamped ? tr("details.yes") : tr("details.no"));
+    }
+
+    // 量一遍每行高度，供滚动与换行使用（宽度与绘制时完全一致，否则会多折一行把下一行压住）
+    g_detail_value_width = px(700) - px(182) - px(24) - px(6);
+    const int text_width = g_detail_value_width;
+    HDC screen = GetDC(nullptr);
+    if (screen) {
+        HGDIOBJ old = SelectObject(screen, a->fontSmall);
+        for (auto &line : g_detail_lines) {
+            if (line.heading) {
+                line.height = px(26);
+                continue;
+            }
+            RECT measure{0, 0, text_width, 0};
+            DrawTextW(screen, line.value.c_str(), static_cast<int>(line.value.size()), &measure,
+                      DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX);
+            line.height = std::max(px(20), static_cast<int>(measure.bottom - measure.top) + px(8));
+        }
+        SelectObject(screen, old);
+        ReleaseDC(nullptr, screen);
+    }
+
+    const int content = detail_content_height();
+    int width = px(700);
+    int height = std::min(px(660), std::max(px(360), content + px(140)));
+    if (content > height - px(140)) g_detail_hint += L" · " + tr("details.scroll");
+
+    RECT owner{};
+    GetWindowRect(a->window, &owner);
+    const int x = owner.left + ((owner.right - owner.left) - width) / 2;
+    const int y = owner.top + ((owner.bottom - owner.top) - height) / 2;
+
+    EnableWindow(a->window, FALSE);
+    HWND dialog = CreateWindowExW(WS_EX_TOOLWINDOW, kDetailClass, g_detail_title.c_str(),
+                                  WS_POPUP | WS_CAPTION | WS_SYSMENU, x, y, width, height, a->window, nullptr,
+                                  GetModuleHandleW(nullptr), nullptr);
+    if (!dialog) {
+        EnableWindow(a->window, TRUE);
+        return;
+    }
+    SetWindowTheme(dialog, a->dark ? L"DarkMode_Explorer" : L"Explorer", nullptr);
+    g_detail_view_height = height - px(120);
+    ShowWindow(dialog, SW_SHOW);
+    SetFocus(dialog);
+
+    MSG message;
+    while (IsWindow(dialog) && GetMessageW(&message, nullptr, 0, 0) > 0) {
+        TranslateMessage(&message);
+        DispatchMessageW(&message);
+    }
+    EnableWindow(a->window, TRUE);
+    SetForegroundWindow(a->window);
+}
+
+/* ------------------------------ 系统属性页 ------------------------------- */
+
+BOOL CALLBACK find_tab_proc(HWND child, LPARAM param) {
+    wchar_t name[64] = {0};
+    GetClassNameW(child, name, 64);
+    if (_wcsicmp(name, L"SysTabControl32") == 0) {
+        *reinterpret_cast<HWND *>(param) = child;
+        return FALSE;
+    }
+    return TRUE;
+}
+
+/** 属性页里的「数字签名」标签（中文/英文系统都试一遍） */
+struct SheetSearch {
+    const std::wstring *name = nullptr;
+    HWND found = nullptr;
+};
+
+BOOL CALLBACK find_sheet_proc(HWND window, LPARAM param) {
+    auto *search = reinterpret_cast<SheetSearch *>(param);
+    if (!search || !search->name) return TRUE;
+    wchar_t klass[32] = {0};
+    if (!GetClassNameW(window, klass, 32) || _wcsicmp(klass, L"#32770") != 0) return TRUE;
+    wchar_t title[512] = {0};
+    if (GetWindowTextW(window, title, 512) <= 0) return TRUE;
+    // 标题是「文件名 + 属性」，用前缀匹配，别指望整串相等
+    const std::wstring text = title;
+    if (text.size() < search->name->size()) return TRUE;
+    if (_wcsnicmp(text.c_str(), search->name->c_str(), search->name->size()) != 0) return TRUE;
+    search->found = window;
+    return FALSE;
+}
+
+void select_signature_tab(const std::wstring &title) {
+    for (int attempt = 0; attempt < 60; ++attempt) {
+        Sleep(50);
+        SheetSearch search;
+        search.name = &title;
+        EnumWindows(find_sheet_proc, reinterpret_cast<LPARAM>(&search));
+        HWND sheet = search.found;
+        if (!sheet) continue;
+        HWND tab = nullptr;
+        EnumChildWindows(sheet, find_tab_proc, reinterpret_cast<LPARAM>(&tab));
+        if (!tab) continue;
+
+        const int count = static_cast<int>(SendMessageW(tab, TCM_GETITEMCOUNT, 0, 0));
+        for (int i = 0; i < count; ++i) {
+            wchar_t text[128] = {0};
+            TCITEMW item{};
+            item.mask = TCIF_TEXT;
+            item.pszText = text;
+            item.cchTextMax = 128;
+            if (!SendMessageW(tab, TCM_GETITEMW, static_cast<WPARAM>(i), reinterpret_cast<LPARAM>(&item))) continue;
+            const std::wstring label = text;
+            if (label.find(L"数字签名") != std::wstring::npos ||
+                label.find(L"Digital Signature") != std::wstring::npos) {
+                SendMessageW(tab, TCM_SETCURSEL, static_cast<WPARAM>(i), 0);
+                NMHDR header{};
+                header.hwndFrom = tab;
+                header.idFrom = static_cast<UINT_PTR>(GetDlgCtrlID(tab));
+                header.code = TCN_SELCHANGE;
+                HWND parent = GetParent(tab);
+                SendMessageW(parent ? parent : sheet, WM_NOTIFY, header.idFrom, reinterpret_cast<LPARAM>(&header));
+                SetFocus(tab);
+                return;
+            }
+        }
+        return;
+    }
+}
+
+void open_file_properties(const std::string &path) {
+    const std::wstring wide = widen(path);
+    const std::wstring title = widen(file_name(path));
+    SHELLEXECUTEINFOW execute{};
+    execute.cbSize = sizeof(execute);
+    execute.fMask = SEE_MASK_INVOKEIDLIST;
+    execute.lpVerb = L"properties";
+    execute.lpFile = wide.c_str();
+    execute.nShow = SW_SHOWNORMAL;
+    if (!ShellExecuteExW(&execute)) return;
+    std::thread([title]() { select_signature_tab(title); }).detach();
 }
 
 /* -------------------------------- 登录流程 ------------------------------- */
@@ -1728,7 +2370,8 @@ void layout_controls() {
 
     if (a->navSign) MoveWindow(a->navSign, px(12), px(100), px(176), px(44), TRUE);
     if (a->navKeys) MoveWindow(a->navKeys, px(12), px(146), px(176), px(44), TRUE);
-    if (a->navSettings) MoveWindow(a->navSettings, px(12), px(192), px(176), px(44), TRUE);
+    if (a->navLog) MoveWindow(a->navLog, px(12), px(192), px(176), px(44), TRUE);
+    if (a->navSettings) MoveWindow(a->navSettings, px(12), px(238), px(176), px(44), TRUE);
 
     // 左下角：三个图标按钮贴底，账号信息画在它们上方
     const int icon_w = px(52);
@@ -1759,15 +2402,22 @@ void layout_controls() {
     if (a->keyCreate) MoveWindow(a->keyCreate, px(812) + dx, px(530), px(200), px(38), TRUE);
 
     if (a->drop) MoveWindow(a->drop, px(224) + dx, px(78), px(812), px(132), TRUE);
-    if (a->list) MoveWindow(a->list, px(240) + dx, px(268), px(780), px(224), TRUE);
+    if (a->list) MoveWindow(a->list, px(240) + dx, px(268), px(780), px(336), TRUE);
     if (a->addBtn) MoveWindow(a->addBtn, px(858) + dx, px(232), px(54), px(26), TRUE);
     if (a->removeBtn) MoveWindow(a->removeBtn, px(916) + dx, px(232), px(54), px(26), TRUE);
     if (a->clearBtn) MoveWindow(a->clearBtn, px(974) + dx, px(232), px(54), px(26), TRUE);
-    if (a->signBtn) MoveWindow(a->signBtn, px(224) + dx, px(520), px(400), px(46), TRUE);
-    if (a->verifyBtn) MoveWindow(a->verifyBtn, px(636) + dx, px(520), px(200), px(46), TRUE);
+    // 签名 / 验签各占一半宽度
+    if (a->signBtn) MoveWindow(a->signBtn, px(224) + dx, px(634), px(400), px(46), TRUE);
+    if (a->verifyBtn) MoveWindow(a->verifyBtn, px(636) + dx, px(634), px(400), px(46), TRUE);
     if (a->skipBtn) MoveWindow(a->skipBtn, px(656) + dx, px(228), px(184), px(28), TRUE);
-    if (a->logBox) MoveWindow(a->logBox, px(240) + dx, px(620), px(780), px(84), TRUE);
-    if (a->logClear) MoveWindow(a->logClear, px(948) + dx, px(586), px(72), px(26), TRUE);
+
+    // 日志页：正文占满卡片剩余高度，清空按钮在卡片右上角
+    if (a->logBox) {
+        const int log_top = px(150);
+        const int log_h = std::max(px(120), height - px(kLicMargin) - log_top);
+        MoveWindow(a->logBox, px(244) + dx, log_top, px(772), log_h, TRUE);
+    }
+    if (a->logClear) MoveWindow(a->logClear, px(948) + dx, px(96), px(72), px(26), TRUE);
 
     place_edit(a->stServer, 244, 144, 560, 38);
     place_edit(a->stKey, 244, 212, 480, 38);
@@ -1914,38 +2564,14 @@ void paint_sign(HDC dc) {
     draw_text(dc, tr("sign.sub"), rect(224, 48, 760, 20), a->fontSmall, p.muted,
               DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
 
-    // 队列卡片
-    const RECT card = rect(224, 222, 812, 286);
+    // 队列卡片（日志独立成页后，这里占满剩余高度）
+    const RECT card = rect(224, 222, 812, 400);
     fill_round(dc, card, px(16), p.card);
     stroke_round(dc, card, px(16), p.edge);
     const std::wstring title = tr("sign.queue") + L"  " + std::to_wstring(a->files.size());
     draw_text(dc, title, rect(240, 228, 400, 26), a->fontButton, p.text);
-    fill_round(dc, rect(240, 268, 780, 224), px(10), p.input);
-    stroke_round(dc, rect(240, 268, 780, 224), px(10), p.inputEdge);
-
-    // 日志卡片
-    const RECT log_card = rect(224, 578, 812, 138);
-    fill_round(dc, log_card, px(16), p.card);
-    stroke_round(dc, log_card, px(16), p.edge);
-    draw_text(dc, tr("sign.log"), rect(240, 586, 200, 24), a->fontButton, p.text);
-    fill_round(dc, rect(240, 620, 780, 84), px(10), p.logBg);
-    stroke_round(dc, rect(240, 620, 780, 84), px(10), p.inputEdge);
-
-    // 状态点
-    const COLORREF tone = a->phase == 0 ? p.muted : a->phase == 1 ? p.accent : a->phase == 2 ? p.ok : p.bad;
-    const int dot_x = 852;
-    const int dot_y = 541;
-    HBRUSH brush = CreateSolidBrush(tone);
-    HPEN pen = CreatePen(PS_SOLID, 1, tone);
-    HGDIOBJ oldBrush = SelectObject(dc, brush);
-    HGDIOBJ oldPen = SelectObject(dc, pen);
-    Ellipse(dc, px(dot_x), px(dot_y), px(dot_x + 8), px(dot_y + 8));
-    SelectObject(dc, oldPen);
-    SelectObject(dc, oldBrush);
-    DeleteObject(brush);
-    DeleteObject(pen);
-    draw_text(dc, a->status, rect(868, 530, 168, 30), a->fontSmall, a->phase == 3 ? p.bad : p.muted,
-              DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
+    fill_round(dc, rect(240, 268, 780, 336), px(10), p.input);
+    stroke_round(dc, rect(240, 268, 780, 336), px(10), p.inputEdge);
 
     if (a->busy) {
         const int width = px(812);
@@ -1955,6 +2581,33 @@ void paint_sign(HDC dc) {
         if (bar.right > px(224)) {
             if (bar.left < px(224)) bar.left = px(224);
             fill_round(dc, bar, px(2), p.accent);
+        }
+    }
+}
+
+void paint_log(HDC dc) {
+    App *a = g_app;
+    const Palette &p = pal();
+
+    RECT client{};
+    GetClientRect(a->window, &client);
+    const int bottom = client.bottom - px(kLicMargin);
+
+    draw_text(dc, tr("log.title"), rect(224, 18, 400, 30), a->fontH1, p.text);
+    draw_text(dc, tr("log.sub"), rect(224, 48, 760, 20), a->fontSmall, p.muted,
+              DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
+
+    const RECT card = rect(224, 78, 812, bottom - 78);
+    fill_round(dc, card, px(16), p.card);
+    stroke_round(dc, card, px(16), p.edge);
+    fill_round(dc, rect(240, 144, 780, bottom - 144 - 8), px(10), p.logBg);
+    stroke_round(dc, rect(240, 144, 780, bottom - 144 - 8), px(10), p.inputEdge);
+
+    if (a->logBox) {
+        const int length = GetWindowTextLengthW(a->logBox);
+        if (length == 0) {
+            draw_text(dc, tr("log.empty"), rect(252, 152, 700, 20), a->fontSmall, p.muted2,
+                      DT_LEFT | DT_SINGLELINE | DT_VCENTER);
         }
     }
 }
@@ -2069,6 +2722,7 @@ void paint_window(HWND window, HDC target) {
     case PAGE_SIGN: paint_sign(dc); break;
     case PAGE_SETTINGS: paint_settings(dc); break;
     case PAGE_LICENSE: paint_license(dc); break;
+    case PAGE_LOG: paint_log(dc); break;
     }
     if (dx > 0) SetViewportOrgEx(dc, 0, 0, nullptr);
 
@@ -2105,6 +2759,32 @@ void draw_pill_state(HDC dc, RECT r, int state, HFONT font) {
     draw_pill(dc, r, label, fg, bg, font);
 }
 
+/* 行内几何：与 hit-test 共用，改布局只改这里 */
+RECT row_close_rect(const RECT &r) {
+    return RECT{r.right - px(34), r.top + px(8), r.right - px(12), r.top + px(30)};
+}
+
+RECT row_cert_rect(const RECT &r) {
+    return RECT{r.right - px(64), r.top + px(35), r.right - px(44), r.top + px(55)};
+}
+
+RECT row_detail_rect(const RECT &r) {
+    return RECT{r.right - px(38), r.top + px(35), r.right - px(18), r.top + px(55)};
+}
+
+void draw_algo_badge(HDC dc, RECT r, const std::string &algorithm) {
+    const Palette &p = pal();
+    const char *display = digest::display_name(algorithm);
+    const std::wstring name = widen(display ? display : algorithm);
+    fill_round(dc, r, px(5), color_mix(p.accent, p.input, 16));
+    draw_text(dc, name, r, g_app->fontTiny, p.accent, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+}
+
+void draw_tag(HDC dc, RECT r, const std::wstring &text, COLORREF fg, COLORREF bg) {
+    fill_round(dc, r, px(5), bg);
+    draw_text(dc, text, r, g_app->fontTiny, fg, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+}
+
 void draw_list_item(const DRAWITEMSTRUCT *item) {
     App *a = g_app;
     if (!a || !item) return;
@@ -2122,24 +2802,73 @@ void draw_list_item(const DRAWITEMSTRUCT *item) {
     const size_t index = static_cast<size_t>(data);
     if (index >= a->files.size()) return;
 
+    const FileItem &file = a->files[index];
     const bool selected = (item->itemState & ODS_SELECTED) != 0;
     fill_rect(dc, r, selected ? p.hover : p.input);
 
-    draw_file_icon(dc, RECT{r.left + px(12), r.top + px(14), r.left + px(30), r.top + px(38)}, p.muted);
+    draw_file_icon(dc, RECT{r.left + px(12), r.top + px(12), r.left + px(30), r.top + px(32)}, p.muted);
 
-    RECT name_rect{r.left + px(42), r.top + px(6), r.right - px(150), r.top + px(28)};
-    draw_text(dc, widen(file_name(a->files[index].path)), name_rect, a->fontBody, p.text,
+    // 右侧：状态徽章、关闭、两个图标按钮
+    const RECT close = row_close_rect(r);
+    const RECT cert = row_cert_rect(r);
+    const RECT detail = row_detail_rect(r);
+    const bool hover_this = a->row_hover == static_cast<int>(index);
+
+    RECT pill{r.right - px(152), r.top + px(8), r.right - px(44), r.top + px(30)};
+    if (file.verified) {
+        const std::wstring label = file.verify_ok ? tr("sign.valid") : tr("sign.invalid");
+        const COLORREF fg = file.verify_ok ? p.ok : p.bad;
+        draw_tag(dc, pill, label, fg, color_mix(fg, p.card));
+    } else {
+        draw_pill_state(dc, pill, file.state, a->fontTiny);
+    }
+
+    draw_text(dc, L"\u00D7", close, a->fontBody,
+              hover_this && a->row_hover_part == 1 ? p.bad : p.muted, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+
+    // 第二行右侧：大小、摘要徽章、交叉签名、证书与详情图标
+    const std::vector<std::string> algorithms = siginfo::digests(file.signature);
+    int cursor = r.right - px(72);
+    const int badge_h = px(18);
+    const int badge_y = r.top + px(36);
+    for (auto it = algorithms.rbegin(); it != algorithms.rend(); ++it) {
+        const int width = px(46);
+        RECT badge{cursor - width, badge_y, cursor, badge_y + badge_h};
+        if (badge.left < r.left + px(140)) break;
+        draw_algo_badge(dc, badge, *it);
+        cursor = badge.left - px(4);
+    }
+    if (file.signature.cross_signed) {
+        const int width = px(62);
+        RECT tag{cursor - width, badge_y, cursor, badge_y + badge_h};
+        if (tag.left >= r.left + px(140)) {
+            draw_tag(dc, tag, tr("sign.cross"), p.warn, color_mix(p.warn, p.input));
+            cursor = tag.left - px(4);
+        }
+    }
+
+    RECT size_rect{cursor - px(64), badge_y, cursor, badge_y + badge_h};
+    draw_text(dc, siginfo::format_size(file.size), size_rect, a->fontTiny, p.muted2,
+              DT_RIGHT | DT_SINGLELINE | DT_VCENTER);
+
+    const bool signed_file = !file.signature.signatures.empty();
+    if (hover_this && a->row_hover_part == 3) {
+        fill_round(dc, cert, px(4), p.hover);
+    }
+    if (signed_file) draw_cert_icon(dc, cert, (hover_this && a->row_hover_part == 3) ? p.text : p.muted);
+    if (hover_this && a->row_hover_part == 2) {
+        fill_round(dc, detail, px(4), p.hover);
+    }
+    draw_info_icon(dc, detail, (hover_this && a->row_hover_part == 2) ? p.text : p.muted);
+
+    // 左侧两行文字
+    RECT name_rect{r.left + px(42), r.top + px(6), r.right - px(160), r.top + px(28)};
+    draw_text(dc, widen(file_name(file.path)), name_rect, a->fontBody, p.text,
               DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
 
-    RECT path_rect{r.left + px(42), r.top + px(28), r.right - px(150), r.top + px(48)};
-    draw_text(dc, widen(dir_name(a->files[index].path)), path_rect, a->fontTiny, p.muted2,
+    RECT path_rect{r.left + px(42), r.top + px(32), size_rect.left - px(8), r.top + px(54)};
+    draw_text(dc, widen(dir_name(file.path)), path_rect, a->fontTiny, p.muted2,
               DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_PATH_ELLIPSIS);
-
-    RECT pill{r.right - px(146), r.top + px(14), r.right - px(48), r.top + px(36)};
-    draw_pill_state(dc, pill, a->files[index].state, a->fontTiny);
-
-    RECT close{r.right - px(38), r.top + px(14), r.right - px(16), r.top + px(36)};
-    draw_text(dc, L"\u00D7", close, a->fontBody, p.muted, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
 }
 
 void draw_key_item(const DRAWITEMSTRUCT *item) {
@@ -2210,21 +2939,24 @@ void draw_ownerdraw(const DRAWITEMSTRUCT *item) {
         return;
     }
 
-    if (id == IDC_NAV_SIGN || id == IDC_NAV_KEYS || id == IDC_NAV_SETTINGS) {
-        const bool active = (id == IDC_NAV_SIGN)   ? a->page == PAGE_SIGN
-                            : (id == IDC_NAV_KEYS) ? a->page == PAGE_KEYS
-                                                   : (a->page == PAGE_SETTINGS || a->page == PAGE_LICENSE);
+    if (id == IDC_NAV_SIGN || id == IDC_NAV_KEYS || id == IDC_NAV_LOG || id == IDC_NAV_SETTINGS) {
+        const bool active = (id == IDC_NAV_SIGN)     ? a->page == PAGE_SIGN
+                            : (id == IDC_NAV_KEYS)   ? a->page == PAGE_KEYS
+                            : (id == IDC_NAV_LOG)    ? a->page == PAGE_LOG
+                                                     : (a->page == PAGE_SETTINGS || a->page == PAGE_LICENSE);
         fill_rect(dc, r, p.side);
         fill_round(dc, r, px(10), active ? p.sideActive : (hot ? p.hover : p.side));
         RECT icon{r.left + px(14), r.top + px(12), r.left + px(32), r.top + px(32)};
         const COLORREF tone = active ? p.text : p.muted;
         if (id == IDC_NAV_SIGN) draw_pen_icon(dc, icon, tone);
         else if (id == IDC_NAV_KEYS) draw_key_icon(dc, icon, tone);
+        else if (id == IDC_NAV_LOG) draw_log_icon(dc, icon, tone);
         else draw_gear_icon(dc, icon, tone);
         RECT label{r.left + px(42), r.top, r.right - px(10), r.bottom};
         const std::wstring text = id == IDC_NAV_SIGN   ? tr("nav.sign")
                                   : id == IDC_NAV_KEYS ? tr("nav.keys")
-                                                      : tr("nav.settings");
+                                  : id == IDC_NAV_LOG  ? tr("nav.log")
+                                                       : tr("nav.settings");
         draw_text(dc, text, label, a->fontButton, active ? p.text : p.muted,
                   DT_LEFT | DT_SINGLELINE | DT_VCENTER);
         return;
@@ -2669,6 +3401,7 @@ void setup_controls(HWND window) {
 
     a->navSign = make_control(L"BUTTON", L"", button, 0, rect(0, 0, 10, 10), IDC_NAV_SIGN, window, a->fontButton);
     a->navKeys = make_control(L"BUTTON", L"", button, 0, rect(0, 0, 10, 10), IDC_NAV_KEYS, window, a->fontButton);
+    a->navLog = make_control(L"BUTTON", L"", button, 0, rect(0, 0, 10, 10), IDC_NAV_LOG, window, a->fontButton);
     a->navSettings = make_control(L"BUTTON", L"", button, 0, rect(0, 0, 10, 10), IDC_NAV_SETTINGS, window, a->fontButton);
     a->langBtn = make_control(L"BUTTON", L"", button, 0, rect(0, 0, 10, 10), IDC_LANG, window, a->fontSmall);
     a->themeBtn = make_control(L"BUTTON", L"", button, 0, rect(0, 0, 10, 10), IDC_THEME, window, a->fontSmall);
@@ -2724,7 +3457,7 @@ void setup_controls(HWND window) {
     }
 
     SendMessageW(a->keyList, LB_SETITEMHEIGHT, 0, px(56));
-    SendMessageW(a->list, LB_SETITEMHEIGHT, 0, px(56));
+    SendMessageW(a->list, LB_SETITEMHEIGHT, 0, px(66));
 
     a->tooltip = CreateWindowExW(WS_EX_TOPMOST, TOOLTIPS_CLASSW, nullptr, WS_POPUP | TTS_ALWAYSTIP | TTS_NOPREFIX,
                                  CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, window, nullptr,
@@ -2815,6 +3548,7 @@ void handle_command(int id, int code) {
         switch (id) {
         case IDC_NAV_SIGN: set_page(PAGE_SIGN); return;
         case IDC_NAV_KEYS: set_page(PAGE_KEYS); return;
+        case IDC_NAV_LOG: set_page(PAGE_LOG); return;
         case IDC_NAV_SETTINGS: set_page(PAGE_SETTINGS); return;
         case IDC_LANG: toggle_language(); return;
         case IDC_THEME: toggle_theme(); return;
@@ -2840,7 +3574,11 @@ void handle_command(int id, int code) {
             save_settings_silent();
             return;
         case IDC_S_VERIFY: verify_selected(); return;
-        case IDC_S_LOGCLEAR: SetWindowTextW(a->logBox, L""); return;
+        case IDC_S_LOGCLEAR:
+            SetWindowTextW(a->logBox, L"");
+            refresh_log_visibility();
+            InvalidateRect(a->window, nullptr, FALSE);
+            return;
         case IDC_T_ALGO256:
         case IDC_T_ALGO1:
         case IDC_T_ALGO384:
@@ -2917,20 +3655,66 @@ void handle_command(int id, int code) {
     }
 }
 
+/** 文件列表：命中哪一段（0 空白 / 1 删除 / 2 详情 / 3 证书） */
+int file_row_part(HWND list, int x, int y, size_t &index) {
+    index = static_cast<size_t>(-1);
+    const LRESULT hit = SendMessageW(list, LB_ITEMFROMPOINT, 0, MAKELPARAM(x, y));
+    if (HIWORD(hit) != 0) return 0;
+    const LRESULT data = SendMessageW(list, LB_GETITEMDATA, LOWORD(hit), 0);
+    if (data < 0) return 0;
+    index = static_cast<size_t>(data);
+
+    RECT item{};
+    item.left = LOWORD(hit); // LB_GETITEMRECT 的 left 要填项目索引
+    if (!SendMessageW(list, LB_GETITEMRECT, LOWORD(hit), reinterpret_cast<LPARAM>(&item))) return 0;
+
+    POINT point{x, y};
+    const RECT close = row_close_rect(item);
+    if (PtInRect(&close, point)) return 1;
+    const RECT detail = row_detail_rect(item);
+    if (PtInRect(&detail, point)) return 2;
+    const RECT cert = row_cert_rect(item);
+    if (PtInRect(&cert, point)) return 3;
+    return 0;
+}
+
 LRESULT CALLBACK list_subclass(HWND control, UINT message, WPARAM wparam, LPARAM lparam, UINT_PTR, DWORD_PTR) {
     App *a = g_app;
     if (!a) return DefSubclassProc(control, message, wparam, lparam);
 
-    if (message == WM_LBUTTONUP) {
+    if (message == WM_LBUTTONUP || message == WM_LBUTTONDBLCLK) {
         const int x = GET_X_LPARAM(lparam);
         const int y = GET_Y_LPARAM(lparam);
-        const LRESULT hit = SendMessageW(control, LB_ITEMFROMPOINT, 0, MAKELPARAM(x, y));
-        RECT client{};
-        GetClientRect(control, &client);
-        if (control == a->list && HIWORD(hit) == 0 && x > client.right - px(40)) {
-            const LRESULT data = SendMessageW(control, LB_GETITEMDATA, LOWORD(hit), 0);
-            if (data >= 0) remove_file_at(static_cast<size_t>(data));
+        size_t index = static_cast<size_t>(-1);
+        const int part = control == a->list ? file_row_part(control, x, y, index) : 0;
+
+        if (part == 1) {
+            if (index < a->files.size()) remove_file_at(index);
             return 0;
+        }
+        if (part == 2 || part == 3) {
+            if (index < a->files.size()) show_file_details(index, part == 3);
+            return 0;
+        }
+        if (message == WM_LBUTTONDBLCLK && control == a->list && index < a->files.size()) {
+            open_file_properties(a->files[index].path);
+            return 0;
+        }
+    } else if (message == WM_MOUSEMOVE && control == a->list) {
+        size_t index = static_cast<size_t>(-1);
+        const int part = file_row_part(control, GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam), index);
+        if (a->row_hover != static_cast<int>(index) || a->row_hover_part != part) {
+            a->row_hover = part == 0 ? -1 : static_cast<int>(index);
+            a->row_hover_part = part;
+            InvalidateRect(control, nullptr, FALSE);
+        }
+        TRACKMOUSEEVENT track{sizeof(track), TME_LEAVE, control, 0};
+        TrackMouseEvent(&track);
+    } else if (message == WM_MOUSELEAVE && control == a->list) {
+        if (a->row_hover != -1 || a->row_hover_part != 0) {
+            a->row_hover = -1;
+            a->row_hover_part = 0;
+            InvalidateRect(control, nullptr, FALSE);
         }
     } else if (message == WM_KEYDOWN && wparam == VK_DELETE) {
         if (control == a->list) {
@@ -2984,7 +3768,7 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
         apply_language_to_controls();
         refresh_theme_selectors();
 
-        SendMessageW(a->list, LB_SETITEMHEIGHT, 0, px(56));
+        SendMessageW(a->list, LB_SETITEMHEIGHT, 0, px(66));
         SendMessageW(a->keyList, LB_SETITEMHEIGHT, 0, px(56));
         SetWindowSubclass(a->list, list_subclass, 1, 0);
         SetWindowSubclass(a->keyList, list_subclass, 2, 0);
@@ -3125,6 +3909,8 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
         const size_t index = static_cast<size_t>(wparam);
         if (a && index < a->files.size()) {
             a->files[index].state = static_cast<int>(lparam);
+            // 签完（或跳过）之后重新读一遍签名，行里才能显示摘要与证书
+            if (lparam == 2 || lparam == 4) reload_file_signature(index);
             InvalidateRect(a->list, nullptr, FALSE);
         }
         return 0;
@@ -3140,6 +3926,8 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
             a->done_ok = ok_count;
             a->done_fail = fail_count;
             a->status_batch = true;
+            show_toast(buffer, fail_count == 0);
+            if (a->list) InvalidateRect(a->list, nullptr, FALSE);
         }
         append_log(narrow(buffer));
         return 0;
