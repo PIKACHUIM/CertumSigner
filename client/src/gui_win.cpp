@@ -2325,9 +2325,18 @@ void remember_local_key(const KeyItem &key, const std::string &plaintext) {
 void merge_local_flags() {
     App *a = g_app;
     if (!a) return;
+    bool dirty = false;
     for (auto &key : a->keys) {
         key.orphan = false;
-        key.local = find_local_key(a->settings.server, key.id) != nullptr;
+        LocalKey *local = find_local_key(a->settings.server, key.id);
+        // 同一把 Key 在别的设备上换发过：前缀对不上说明本机明文已作废，直接丢掉
+        if (local && !key.prefix.empty() && !local->prefix.empty() && local->prefix != key.prefix) {
+            forget_local_key(key.id);
+            local = nullptr;
+            dirty = true;
+            append_log("本机保存的 Key 已在别处换发，丢弃旧明文：" + key.name);
+        }
+        key.local = local != nullptr;
         key.credentialLabel.clear();
         for (const auto &credential : a->credentials) {
             if (credential.id == key.credentialId) key.credentialLabel = credential.label;
@@ -2353,7 +2362,7 @@ void merge_local_flags() {
             a->settings.local_keys.push_back(entry);
             key.local = true;
             if (a->settings.key_name.empty()) a->settings.key_name = key.name;
-            persist_settings();
+            dirty = true;
             append_log("已把配置里的 Key 认领回本机：" + key.name);
         }
     }
@@ -2377,6 +2386,8 @@ void merge_local_flags() {
         orphan.orphan = true;
         a->keys.push_back(orphan);
     }
+
+    if (dirty) persist_settings();
 }
 
 void refresh_keys_view() {
@@ -4588,6 +4599,7 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
                 a->account.clear();
                 set_page(PAGE_LOGIN); // 先切页，避免 save_settings_silent 把旧 Key 再写回去
                 a->settings.api_key.clear();
+                a->settings.key_name.clear();
                 save_settings_silent();
                 if (a->stKey) SetWindowTextW(a->stKey, L"");
                 SetFocus(a->lgPass);
