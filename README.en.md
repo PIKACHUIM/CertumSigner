@@ -333,10 +333,21 @@ git tag v1.0 && git push origin v1.0        # cut a stable release
 
 The old rolling `latest` release is gone: `/releases/latest` follows the newest **stable** release, and `beta` being a prerelease never takes that spot. The build lives in `.github/workflows/build-clients.yml` (reusable); `release.yml` and `beta.yml` are the two entry points.
 
+### Signing the Windows binaries
+
+Since `v1.3` the Windows `certumsigner.exe` is Authenticode-signed with the **Finnox Tech Ltd** Certum cloud certificate before it is packaged: CI runs this project's own CLI (`certumsigner sign`), which sends digests to the Worker and gets them signed by Certum's HSM — the private key never leaves the cloud. Two repository secrets are required:
+
+| Secret | Value |
+| --- | --- |
+| `CERTUM_SIGNER_SERVER` | the platform URL, e.g. `https://certum.524228.xyz` |
+| `CERTUM_SIGNER_API_KEY` | a `csk_…` key bound to the Finnox certificate |
+
+Assign the Finnox certificate to the signing account in the admin console, create a key bound to it in the client, then store both values as secrets. Without them `beta` builds only warn and ship unsigned binaries, while a `v*` tag fails on purpose. Signing runs on x64 for both architectures (an x64 CLI signs the arm64 exe), and `WinVerifyTrust` is checked right after signing.
+
 ## Security notes
 
 - **OTP seeds live in the KV credential record**; clients never see them and they are not part of signing. KV is encrypted at rest, but an API token that can read the namespace can read them in plaintext — scope production tokens to that single namespace.
-- **API keys are stored as SHA-256 hashes only.** Plaintext is shown once (and deleted after 5 minutes); `/reveal` deletes the old hash and issues a new value. Keys bind `userId` + `credentialId`, so disabling a user or credential invalidates them immediately. The new client **generates the secret locally** and uploads only the hash plus prefix, so the server never sees the plaintext even once; the secret lives in the local `config.json` so `Use` can switch keys without rotating, and after wiping that file the only way back is `Rotate` — which invalidates the value on every other device.
+- **API keys are stored as SHA-256 hashes only.** Plaintext is shown once (and deleted after 5 minutes); `/reveal` deletes the old hash and issues a new value. Keys bind `userId` + `credentialId`, so disabling a user or credential invalidates them immediately, and revoking a certificate's assignment makes every key bound to it fail with `403 credential_not_assigned` right away (the client, portal and console all flag those keys). The new client **generates the secret locally** and uploads only the hash plus prefix, so the server never sees the plaintext even once; the secret lives in the local `config.json` so `Use` can switch keys without rotating, and after wiping that file the only way back is `Rotate` — which invalidates the value on every other device.
 - **Passwords** use salted PBKDF2-HMAC-SHA256 with 10,000 iterations for both users and admins; sessions are revocable KV records, writes check CSRF, and failed sign-ins are rate limited per IP.
   The iteration count is fixed at 10,000: Workers caps PBKDF2 at 100,000 and the free plan only allows 10 ms of CPU (10,000 iterations ≈ 2–3 ms). Changing the constant invalidates every stored password.
 - **The signing endpoint accepts no arbitrary bytes**: digest length must match the algorithm exactly, at most 16 digests per call, and the client verifies each signature with the certificate public key before writing the file.
@@ -357,7 +368,7 @@ The old rolling `latest` release is gone: `/releases/latest` follows the newest 
 <details>
 <summary>What has actually been tested</summary>
 
-- Worker: `npx tsc --noEmit` passes; `npm test` passes 57 tests (TOTP against RFC 6238 vectors, multipart parsing, encoding/hashing, KV storage and password hashing, unique user emails, admin account setup and password change, runtime config round-trips, scan risk thresholds / result caching / upload SHA-256 verification / streaming large-file relay and hash cross-check / direct-upload target and analysis registration / client-generated key hash registration, rotation and deletion).
+- Worker: `npx tsc --noEmit` passes; `npm test` passes 74 tests (TOTP against RFC 6238 vectors, multipart parsing, encoding/hashing, KV storage and password hashing, unique user emails, admin account setup and password change, runtime config round-trips, scan risk thresholds / result caching / upload SHA-256 verification / streaming large-file relay and hash cross-check / direct-upload target and analysis registration / client-generated key hash registration, rotation and deletion / 403 after a certificate assignment is revoked, the unassigned markers in the console and portal, and Certum session/card cache invalidation when a credential's identity changes).
 - Real Certum path works end to end (2026-11, Windows x64): email + TOTP sign-in, `/v1/certificate` returns the EV code-signing certificate, `/v1/sign` turns a real SHA-256 digest into a 512-byte signature, and after writing it into a PE `WinVerifyTrust` reports **valid**; still valid with a real Certum timestamp.
 - UI: four themes × light/dark, zh/en switching, dialogs, and mobile widths (390 / 563 px) checked page by page with no horizontal scrolling; captcha refresh and validation, settings persistence, user quotas and self-service key quota edits tested.
 - Client: MSVC 14.44 + Windows SDK 10.0.22621 + static OpenSSL 3.5.9 with `/W4 /permissive-` and no warnings; the Win32 GUI completed sign-in → key rotation → drag-and-drop batch signing → `WinVerifyTrust`, and layout holds at 125% scaling.
