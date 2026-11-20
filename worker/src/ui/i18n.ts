@@ -440,6 +440,7 @@ const zh = {
   "keys.edit": "编辑",
   "keys.editTitle": "编辑密钥",
   "keys.editHint": "完整 Key 只在创建时显示一次，这里只能看到前缀。",
+  "keys.ownerChangeHint": "换归属用户会让旧明文立刻失效，并当场生成一份新明文（只显示一次）。",
   "keys.prefix": "Key 前缀",
   "keys.revealShow": "显示完整",
 
@@ -513,6 +514,7 @@ const zh = {
   "msg.keyDisabled": "Key 已停用",
   "msg.keyDeleted": "Key 已删除",
   "msg.keyUpdated": "Key 已更新",
+  "msg.keyOwnerRotated": "已改归属：旧明文立即失效，这是新的 Key 明文，只显示这一次",
 
   "err.otpEmpty": "OTP 种子不能为空",
   "err.otpBase32": "OTP 种子只能是 Base32 字符（A-Z、2-7）",
@@ -961,6 +963,7 @@ const en: Record<keyof Dict, string> = {
   "keys.edit": "Edit",
   "keys.editTitle": "Edit key",
   "keys.editHint": "The full key is shown once at creation; only the prefix is visible here.",
+  "keys.ownerChangeHint": "Changing the owner invalidates the old secret immediately and issues a new one, shown only once.",
   "keys.prefix": "Key prefix",
   "keys.revealShow": "Show full key",
 
@@ -1034,6 +1037,7 @@ const en: Record<keyof Dict, string> = {
   "msg.keyDisabled": "Key disabled",
   "msg.keyDeleted": "Key deleted",
   "msg.keyUpdated": "Key updated",
+  "msg.keyOwnerRotated": "Owner changed: the old secret is now invalid. This is the new key, shown once.",
 
   "err.otpEmpty": "TOTP seed is required",
   "err.otpBase32": "TOTP seed must be Base32 characters (A-Z, 2-7)",

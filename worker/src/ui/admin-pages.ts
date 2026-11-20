@@ -897,6 +897,7 @@ export function adminKeysPage(data: KeysPageData): string {
           <label class="field">${escapeHtml(t("keys.ownerField"))}
             <select name="userId">${ownerOptions}</select>
           </label>
+          <div class="field wide small muted">${escapeHtml(t("keys.ownerChangeHint"))}</div>
           <label class="field">${escapeHtml(t("keys.cert"))}
             <select name="credentialId" required>${
               certOptions || `<option value="">${escapeHtml(t("keys.noCred"))}</option>`

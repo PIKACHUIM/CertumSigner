@@ -29,6 +29,7 @@ import {
   findApiKeyById,
   listApiKeys,
   listKeysOfUser,
+  rotateApiKey,
   setApiKeyEnabled,
   updateApiKey,
 } from "../store/keys";
@@ -717,13 +718,30 @@ secure.post("/keys/:id/update", async (c) => {
     }
 
     const quota = Number(one(form, "dailyQuota") || "0");
+    // 换归属用户时旧明文必须立刻失效：否则上一个持有者还能继续签名、并把额度记到新账号头上
+    const ownerChanged = userId !== (key.userId ?? null);
     const ok = await updateApiKey(c.env, id, {
       name: one(form, "name") || key.name,
       dailyQuota: Number.isFinite(quota) ? quota : 0,
       userId,
       credentialId,
     });
-    return backWith(c, backPath, ok ? "ok" : "error", ok ? tr(c)("msg.keyUpdated") : tr(c)("msg.notFoundKey"));
+    if (!ok) return backWith(c, backPath, "error", tr(c)("msg.notFoundKey"));
+
+    if (ownerChanged) {
+      const rotated = await rotateApiKey(c.env, id);
+      if (!rotated) return backWith(c, backPath, "error", tr(c)("msg.notFoundKey"));
+      const revealId = crypto.randomUUID();
+      await c.env.CERTUM_KV.put(
+        `reveal:${revealId}`,
+        JSON.stringify({ plaintext: rotated.plaintext, key: rotated.record }),
+        { expirationTtl: 300 },
+      );
+      return c.redirect(
+        `${backPath}?reveal=${revealId}&ok=${encodeURIComponent(tr(c)("msg.keyOwnerRotated"))}`,
+      );
+    }
+    return backWith(c, backPath, "ok", tr(c)("msg.keyUpdated"));
   } catch (error) {
     return backWith(c, backPath, "error", localizeError(tr(c), error instanceof Error ? error.message : String(error)));
   }
