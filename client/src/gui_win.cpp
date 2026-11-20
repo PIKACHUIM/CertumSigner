@@ -12,6 +12,7 @@
 #include <wintrust.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <cwchar>
@@ -23,6 +24,7 @@
 #include "http.h"
 #include "digest.h"
 #include "json.h"
+#include "keygen.h"
 #include "pe.h"
 #include "settings.h"
 #include "signature_info.h"
@@ -69,6 +71,9 @@ constexpr int IDC_K_USE = 1202;
 constexpr int IDC_K_NAME = 1203;
 constexpr int IDC_K_CRED = 1204;
 constexpr int IDC_K_CREATE = 1205;
+constexpr int IDC_K_REISSUE = 1206;
+constexpr int IDC_K_DELETE = 1207;
+constexpr int IDC_K_SYNC = 1208;
 
 constexpr int IDC_S_DROP = 1301;
 constexpr int IDC_S_LIST = 1302;
@@ -107,6 +112,8 @@ constexpr UINT WM_APP_LOGIN_DONE = WM_APP + 4;
 constexpr UINT WM_APP_KEY_DONE = WM_APP + 5;
 constexpr UINT WM_APP_WHOAMI_DONE = WM_APP + 6;
 constexpr UINT WM_APP_FILE_ERROR = WM_APP + 7;
+constexpr UINT WM_APP_KEYS_DONE = WM_APP + 8;
+constexpr UINT WM_APP_KEY_DELETED = WM_APP + 9;
 constexpr UINT_PTR TIMER_ANIM = 1;
 constexpr UINT_PTR TIMER_TOAST = 2;
 
@@ -179,24 +186,50 @@ const TextRow kTexts[] = {
     {"login.hint", L"Key 会保存在本机，下次启动直接进入签名页。", L"Your key is stored locally; next launch skips this page."},
     {"login.empty", L"请填写平台地址、邮箱和密码", L"Server, email and password are required"},
 
-    {"keys.title", L"选择 API Key", L"Choose an API key"},
-    {"keys.sub", L"选择已有 Key 会换发新值（旧值立即失效），也可以新建一把",
-     L"Picking an existing key issues a new secret (the old one stops working), or create a new one"},
-    {"keys.use", L"使用选中的 Key", L"Use selected key"},
-    {"keys.empty", L"还没有 Key，先新建一把", L"No keys yet — create one below"},
+    {"keys.title", L"密钥管理", L"API keys"},
+    {"keys.sub", L"与平台实时同步；明文只存在本机，平台只存 SHA-256",
+     L"Synced with the platform; the secret lives only here, the platform keeps a SHA-256"},
+    {"keys.use", L"使用", L"Use"},
+    {"keys.empty", L"平台上还没有 Key，先在下面新建一把", L"No keys on the platform yet — create one below"},
     {"keys.newTitle", L"新建密钥", L"Create a new key"},
     {"keys.name", L"名称", L"Name"},
     {"keys.namePlaceholder", L"例如 laptop", L"e.g. laptop"},
     {"keys.cred", L"证书凭据", L"Certificate"},
-    {"keys.create", L"新建并使用", L"Create and use"},
-    {"keys.confirm", L"会为此 Key 生成新的 Key 值，旧值立即失效。继续？",
-     L"A new secret will be issued for this key; the old one stops working. Continue?"},
-    {"keys.revealed", L"新的 API Key", L"Your new API key"},
-    {"keys.revealedBody", L"旧值已经失效，请把新值更新到其他设备。", L"The old secret no longer works — update your other machines."},
-    {"keys.busy", L"正在换取新 Key…", L"Issuing a new key…"},
+    {"keys.create", L"新建并保存到本机", L"Create and keep locally"},
+    {"keys.reissue", L"换发新值", L"Rotate"},
+    {"keys.del", L"删除", L"Delete"},
+    {"keys.sync", L"同步", L"Sync"},
+    {"keys.local", L"本机已保存", L"Saved locally"},
+    {"keys.remote", L"仅平台", L"Platform only"},
+    {"keys.orphan", L"平台已删除", L"Gone on platform"},
+    {"keys.disabled", L"已停用", L"Disabled"},
+    {"keys.using", L"当前使用", L"In use"},
+    {"keys.countLocal", L"本机保存 %d 把", L"%d saved locally"},
+    {"keys.confirmUseRotate", L"本机没有这把 Key 的明文，使用会换发新值，其他设备上的旧值立即失效。继续？",
+     L"No local secret for this key. Using it rotates the secret and breaks other devices. Continue?"},
+    {"keys.confirmDelete", L"删除后这把 Key 立即失效，所有设备都无法再用它签名。继续？",
+     L"Deleting revokes the key everywhere immediately. Continue?"},
+    {"keys.confirmDeleteLocal", L"这把 Key 在平台上已经不存在，只删除本机保存的副本？",
+     L"This key is gone on the platform. Remove the local copy?"},
+    {"keys.confirmReissue", L"换发新值后，其他设备上的旧 Key 立即失效。继续？",
+     L"Rotating invalidates the old secret on every other device. Continue?"},
+    {"keys.created", L"已创建并保存到本机", L"Created and saved on this machine"},
+    {"keys.used", L"已切换到这把 Key", L"Switched to this key"},
+    {"keys.reissued", L"已换发新值并保存到本机", L"Rotated; the new secret is saved locally"},
+    {"keys.deleted", L"已删除平台上的 Key", L"Deleted on the platform"},
+    {"keys.localDeleted", L"已删除本机副本", L"Local copy removed"},
+    {"keys.synced", L"已与平台同步", L"Synced with the platform"},
+    {"keys.needLogin", L"未登录平台，点「同步」先登录", L"Not signed in — press Sync to sign in"},
+    {"keys.sessionExpired", L"会话已过期，点「同步」重新登录", L"Session expired — press Sync to sign in again"},
+    {"keys.busy", L"正在同步平台 Key…", L"Syncing keys…"},
+    {"keys.rotateBusy", L"正在换发新值…", L"Rotating the secret…"},
+    {"keys.deleteBusy", L"正在删除平台上的 Key…", L"Deleting the key…"},
     {"keys.defaultName", L"桌面端", L"desktop"},
     {"keys.noCred", L"管理员还没有给你分配证书", L"No certificate assigned yet"},
     {"keys.current", L"当前使用", L"In use"},
+    {"keys.revealed", L"新的 API Key", L"Your new API key"},
+    {"keys.revealedBody", L"已保存到本机；旧值立即失效，请在其他设备上重新换发。",
+     L"Saved on this machine. The old secret no longer works — rotate again on your other devices."},
 
     {"sign.title", L"签名", L"Sign"},
     {"sign.sub", L"拖入文件或点击上传，批量签名后写回 PE", L"Drop files or click to upload, then sign the whole batch"},
@@ -355,8 +388,14 @@ struct KeyItem {
     std::string name;
     std::string prefix;
     std::string credentialId;
+    std::string credentialLabel;
     bool enabled = true;
     int quota = 0;
+    long long created_at = 0;
+    /** 本机保存了明文，可以直接用，不必换发 */
+    bool local = false;
+    /** 本机有明文，平台上已经没了 */
+    bool orphan = false;
 };
 
 struct CredentialItem {
@@ -369,11 +408,14 @@ struct LoginResult {
     bool ok = false;
     bool revealed = false;
     bool silent = false;
+    bool unauthorized = false;
     std::string error;
     std::string token;
+    long long expires = 0;
     std::string username;
     std::string key_name;
     std::string plaintext;
+    KeyItem key;
     std::vector<KeyItem> keys;
     std::vector<CredentialItem> credentials;
 };
@@ -416,6 +458,9 @@ struct App {
     HWND keyName = nullptr;
     HWND keyCred = nullptr;
     HWND keyCreate = nullptr;
+    HWND keyReissue = nullptr;
+    HWND keyDelete = nullptr;
+    HWND keySync = nullptr;
 
     HWND drop = nullptr;
     HWND list = nullptr;
@@ -485,6 +530,8 @@ struct App {
     std::vector<CredentialItem> credentials;
     int cred_index = 0;
     std::string token;
+    bool keys_synced = false;   // 是否已经从平台拉过 Key 列表
+    std::wstring keys_note;     // 密钥页右上角的状态说明
     std::string pending_name;
     std::string pending_plaintext;
 
@@ -985,7 +1032,8 @@ ControlSet login_controls() {
 
 ControlSet keys_controls() {
     App *a = g_app;
-    return {{a->keyList, a->keyUse, a->keyName, a->keyCred, a->keyCreate}};
+    return {{a->keyList, a->keyUse, a->keyName, a->keyCred, a->keyCreate, a->keyReissue, a->keyDelete,
+             a->keySync}};
 }
 
 ControlSet sign_controls() {
@@ -1024,6 +1072,8 @@ void refresh_log_visibility() {
     if (a->logClear) EnableWindow(a->logClear, empty ? FALSE : TRUE);
 }
 
+void sync_keys(bool silent);
+
 void set_page(Page page) {
     App *a = g_app;
     if (!a) return;
@@ -1053,7 +1103,12 @@ void set_page(Page page) {
         EnableWindow(a->clearBtn, a->busy ? FALSE : TRUE);
     }
     if (a->page == PAGE_KEYS) {
-        EnableWindow(a->keyUse, a->keys.empty() ? FALSE : TRUE);
+        const BOOL has_selection = a->keys.empty() ? FALSE : TRUE;
+        EnableWindow(a->keyUse, has_selection);
+        EnableWindow(a->keyReissue, has_selection);
+        EnableWindow(a->keyDelete, has_selection);
+        // 首次进入时若本机保存过会话，顺手同步一次平台 Key
+        if (!a->keys_synced && !a->settings.session_token.empty()) sync_keys(true);
     }
     refresh_log_visibility();
 
@@ -1080,6 +1135,9 @@ void set_busy(bool busy) {
     EnableWindow(a->lgLogin, busy ? FALSE : TRUE);
     EnableWindow(a->keyUse, busy ? FALSE : TRUE);
     EnableWindow(a->keyCreate, busy ? FALSE : TRUE);
+    EnableWindow(a->keyReissue, busy ? FALSE : TRUE);
+    EnableWindow(a->keyDelete, busy ? FALSE : TRUE);
+    EnableWindow(a->keySync, busy ? FALSE : TRUE);
     if (busy) {
         SetTimer(a->window, TIMER_ANIM, 33, nullptr);
     } else {
@@ -2026,6 +2084,11 @@ void open_file_properties(const std::string &path) {
 void reveal_key(const KeyItem &key, bool silent);
 void create_key(const std::wstring &name);
 void auto_pick_key();
+void persist_settings();
+void update_account_text();
+void merge_local_flags();
+void refresh_keys_view();
+LocalKey *find_local_key(const std::string &server, const std::string &id);
 
 void apply_login_result(LoginResult *result) {
     App *a = g_app;
@@ -2044,12 +2107,18 @@ void apply_login_result(LoginResult *result) {
     a->credentials = result->credentials;
     a->pending_plaintext = result->plaintext;
     a->settings.username = result->username;
+    a->settings.session_token = result->token;
+    if (result->expires > 0) a->settings.session_expires = result->expires;
     if (!result->key_name.empty()) a->settings.key_name = result->key_name;
     if (!result->plaintext.empty()) a->settings.api_key = result->plaintext;
 
     a->account = widen(result->username);
     if (!result->key_name.empty()) a->account += std::wstring(L" · ") + widen(result->key_name);
 
+    // 登录返回的就是平台上的 Key 列表，先合并本机副本再展示
+    a->keys_synced = true;
+    a->keys_note = tr("keys.synced");
+    merge_local_flags();
     refresh_key_list();
     refresh_cred_combo();
     set_busy(false);
@@ -2156,6 +2225,349 @@ void do_login() {
     }).detach();
 }
 
+/* ---------------------- 本机 Key 存储与平台会话 ---------------------- */
+
+long long now_seconds() {
+    return static_cast<long long>(
+        std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+}
+
+void parse_key_view(const Json &node, KeyItem &out) {
+    out.id = node.get_string("id");
+    out.name = node.get_string("name");
+    out.prefix = node.get_string("prefix");
+    out.credentialId = node.get_string("credentialId");
+    out.enabled = node.get_bool("enabled", true);
+    out.quota = static_cast<int>(node.get_number("dailyQuota", 0));
+    out.created_at = static_cast<long long>(node.get_number("createdAt", 0));
+}
+
+void parse_credential_view(const Json &node, CredentialItem &out) {
+    out.id = node.get_string("id");
+    out.label = node.get_string("label");
+    out.email = node.get_string("email");
+}
+
+LocalKey *find_local_key(const std::string &server, const std::string &id) {
+    App *a = g_app;
+    if (!a) return nullptr;
+    for (auto &item : a->settings.local_keys) {
+        if (item.id == id && item.server == server) return &item;
+    }
+    return nullptr;
+}
+
+void forget_local_key(const std::string &id) {
+    App *a = g_app;
+    if (!a) return;
+    const std::string server = a->settings.server;
+    auto &list = a->settings.local_keys;
+    list.erase(std::remove_if(list.begin(), list.end(),
+                              [&](const LocalKey &item) { return item.id == id && item.server == server; }),
+               list.end());
+}
+
+void persist_settings() {
+    App *a = g_app;
+    if (!a) return;
+    std::string err;
+    if (!save_settings(a->settings, err)) append_log("配置保存失败：" + err);
+}
+
+void update_account_text() {
+    App *a = g_app;
+    if (!a) return;
+    a->account = widen(a->settings.username);
+    if (!a->settings.key_name.empty()) {
+        if (!a->account.empty()) a->account += L" · ";
+        a->account += widen(a->settings.key_name);
+    }
+    if (a->stServer) SetWindowTextW(a->stServer, widen(a->settings.server).c_str());
+    if (a->stKey) SetWindowTextW(a->stKey, widen(a->settings.api_key).c_str());
+}
+
+/** 把一把本机已有明文的 Key 设为当前 Key（不换发，其他设备不受影响） */
+void activate_local_key(const KeyItem &key, const LocalKey &local) {
+    App *a = g_app;
+    if (!a) return;
+    a->settings.api_key = local.plaintext;
+    a->settings.key_name = key.name.empty() ? local.name : key.name;
+    persist_settings();
+    update_account_text();
+    a->keys_note = tr("keys.used");
+    set_status(0, tr("keys.used"));
+    refresh_key_list();
+    InvalidateRect(a->window, nullptr, FALSE);
+    append_log("切换到本机 Key：" + a->settings.key_name);
+}
+
+/** 记住刚生成的明文，之后「使用」不必换发 */
+void remember_local_key(const KeyItem &key, const std::string &plaintext) {
+    App *a = g_app;
+    if (!a || key.id.empty() || plaintext.empty()) return;
+
+    LocalKey entry;
+    entry.id = key.id;
+    entry.name = key.name;
+    entry.prefix = key.prefix;
+    entry.credential_id = key.credentialId;
+    entry.credential_label = key.credentialLabel;
+    entry.server = a->settings.server;
+    entry.plaintext = plaintext;
+    entry.created_at = key.created_at > 0 ? key.created_at : now_seconds();
+
+    forget_local_key(key.id);
+    a->settings.local_keys.push_back(entry);
+    persist_settings();
+}
+
+/** 平台列表 + 本机副本合并：标出哪些 Key 本机有明文、哪些平台已删除 */
+void merge_local_flags() {
+    App *a = g_app;
+    if (!a) return;
+    for (auto &key : a->keys) {
+        key.orphan = false;
+        key.local = find_local_key(a->settings.server, key.id) != nullptr;
+        key.credentialLabel.clear();
+        for (const auto &credential : a->credentials) {
+            if (credential.id == key.credentialId) key.credentialLabel = credential.label;
+        }
+    }
+
+    for (const auto &item : a->settings.local_keys) {
+        if (item.server != a->settings.server) continue;
+        bool known = false;
+        for (const auto &key : a->keys) {
+            if (key.id == item.id) known = true;
+        }
+        if (known) continue;
+
+        KeyItem orphan;
+        orphan.id = item.id;
+        orphan.name = item.name;
+        orphan.prefix = item.prefix;
+        orphan.credentialId = item.credential_id;
+        orphan.credentialLabel = item.credential_label;
+        orphan.created_at = item.created_at;
+        orphan.local = true;
+        orphan.orphan = true;
+        a->keys.push_back(orphan);
+    }
+}
+
+void refresh_keys_view() {
+    App *a = g_app;
+    if (!a) return;
+    merge_local_flags();
+    refresh_key_list();
+    refresh_cred_combo();
+    InvalidateRect(a->window, nullptr, FALSE);
+}
+
+/** 与平台同步 Key 列表（会话 token 定期失效，失效后提示重新登录） */
+void sync_keys(bool silent) {
+    App *a = g_app;
+    if (!a || a->busy) return;
+
+    std::string token = !a->token.empty() ? a->token : a->settings.session_token;
+    if (token.empty() || a->settings.server.empty()) {
+        a->keys_note = tr("keys.needLogin");
+        InvalidateRect(a->window, nullptr, FALSE);
+        return;
+    }
+
+    if (!silent) {
+        set_busy(true);
+        set_status(1, tr("keys.busy"));
+    }
+    a->error.clear();
+
+    const std::string server = a->settings.server;
+    HWND window = a->window;
+
+    std::thread([server, token, window]() {
+        auto *result = new LoginResult();
+        HttpHeaders headers;
+        headers.emplace_back("Authorization", "Bearer " + token);
+        headers.emplace_back("Accept", "application/json");
+        headers.emplace_back("X-Client", "certumsigner/1.0");
+
+        HttpResponse response = http_get(join_url(server, "/api/client/session"), headers, 30);
+        Json root;
+        std::string parse_error;
+        if (!response.error.empty()) {
+            result->error = narrow(tr("err.network")) + response.error;
+        } else if (!Json::parse(response.body, root, parse_error)) {
+            result->error = response.status == 404 ? narrow(tr("err.oldServer"))
+                                                   : narrow(tr("err.server")) + response.body.substr(0, 120);
+        } else if (response.status == 401) {
+            result->unauthorized = true;
+        } else if (!response.ok() || !root.get_bool("ok", false)) {
+            result->error = narrow(localize_error(error_code(root), error_text(root, "失败")));
+        } else {
+            result->ok = true;
+            result->token = token;
+            result->expires = static_cast<long long>(root.get_number("expiresAt", 0));
+            const Json *user = root.find("user");
+            if (user && user->type == Json::Type::Object) result->username = user->get_string("username");
+            if (const Json *credentials = root.find("credentials"); credentials && credentials->type == Json::Type::Array) {
+                for (const auto &item : credentials->items) {
+                    CredentialItem credential;
+                    parse_credential_view(item, credential);
+                    if (!credential.id.empty()) result->credentials.push_back(credential);
+                }
+            }
+            if (const Json *keys = root.find("keys"); keys && keys->type == Json::Type::Array) {
+                for (const auto &item : keys->items) {
+                    KeyItem key;
+                    parse_key_view(item, key);
+                    if (!key.id.empty()) result->keys.push_back(key);
+                }
+            }
+        }
+        PostMessageW(window, WM_APP_KEYS_DONE, 0, reinterpret_cast<LPARAM>(result));
+    }).detach();
+}
+
+void apply_sync_result(LoginResult *result) {
+    App *a = g_app;
+    set_busy(false);
+    if (!a || !result) {
+        delete result;
+        return;
+    }
+
+    if (result->unauthorized) {
+        a->settings.session_token.clear();
+        a->settings.session_expires = 0;
+        a->token.clear();
+        a->keys_synced = false;
+        persist_settings();
+        a->keys_note = tr("keys.sessionExpired");
+        set_status(3, tr("keys.sessionExpired"));
+        refresh_keys_view();
+        delete result;
+        return;
+    }
+
+    if (!result->ok) {
+        a->keys_note = widen(result->error);
+        a->error = widen(result->error);
+        set_status(3, widen(result->error));
+        InvalidateRect(a->window, nullptr, FALSE);
+        delete result;
+        return;
+    }
+
+    a->error.clear();
+    a->token = result->token;
+    a->settings.session_token = result->token;
+    if (result->expires > 0) a->settings.session_expires = result->expires;
+    if (!result->username.empty()) a->settings.username = result->username;
+    a->keys = result->keys;
+    a->credentials = result->credentials;
+    a->keys_synced = true;
+    persist_settings();
+
+    a->keys_note = tr("keys.synced");
+    set_status(0, tr("keys.synced"));
+    update_account_text();
+    refresh_keys_view();
+    delete result;
+}
+
+/** 删除平台上的 Key；本机只剩副本的条目只清本地 */
+void delete_key(size_t index) {
+    App *a = g_app;
+    if (!a || a->busy || index >= a->keys.size()) return;
+    const KeyItem key = a->keys[index];
+
+    if (key.orphan) {
+        if (MessageBoxW(a->window, tr("keys.confirmDeleteLocal").c_str(), L"CertumSigner",
+                        MB_ICONQUESTION | MB_YESNO) != IDYES) {
+            return;
+        }
+        forget_local_key(key.id);
+        if (a->settings.api_key == key.prefix) a->settings.api_key.clear();
+        a->keys.erase(a->keys.begin() + static_cast<long>(index));
+        persist_settings();
+        a->keys_note = tr("keys.localDeleted");
+        set_status(0, tr("keys.localDeleted"));
+        refresh_keys_view();
+        return;
+    }
+
+    if (MessageBoxW(a->window, tr("keys.confirmDelete").c_str(), L"CertumSigner",
+                    MB_ICONWARNING | MB_YESNO) != IDYES) {
+        return;
+    }
+
+    set_busy(true);
+    set_status(1, tr("keys.deleteBusy"));
+    const std::string server = a->settings.server;
+    const std::string token = !a->token.empty() ? a->token : a->settings.session_token;
+    HWND window = a->window;
+
+    std::thread([server, token, key, window]() {
+        auto *result = new LoginResult();
+        result->key = key;
+        HttpHeaders headers;
+        headers.emplace_back("Authorization", "Bearer " + token);
+        headers.emplace_back("Accept", "application/json");
+        headers.emplace_back("X-Client", "certumsigner/1.0");
+
+        HttpResponse response = http_delete(join_url(server, "/api/client/keys/" + key.id), headers, 30);
+        Json root;
+        std::string parse_error;
+        if (!response.error.empty()) {
+            result->error = narrow(tr("err.network")) + response.error;
+        } else if (!Json::parse(response.body, root, parse_error)) {
+            result->error = narrow(tr("err.server")) + response.body.substr(0, 120);
+        } else if (!response.ok() || !root.get_bool("ok", false)) {
+            result->error = narrow(localize_error(error_code(root), error_text(root, "失败")));
+        } else {
+            result->ok = true;
+        }
+        PostMessageW(window, WM_APP_KEY_DELETED, 0, reinterpret_cast<LPARAM>(result));
+    }).detach();
+}
+
+void apply_delete_result(LoginResult *result) {
+    App *a = g_app;
+    set_busy(false);
+    if (!a || !result) {
+        delete result;
+        return;
+    }
+    if (!result->ok) {
+        a->error = widen(result->error);
+        a->keys_note = widen(result->error);
+        set_status(3, widen(result->error));
+        InvalidateRect(a->window, nullptr, FALSE);
+        delete result;
+        return;
+    }
+
+    const std::string id = result->key.id;
+    a->error.clear();
+    a->keys.erase(std::remove_if(a->keys.begin(), a->keys.end(), [&](const KeyItem &item) { return item.id == id; }),
+                  a->keys.end());
+    LocalKey *local = find_local_key(a->settings.server, id);
+    if (local && local->plaintext == a->settings.api_key) {
+        a->settings.api_key.clear();
+        a->settings.key_name.clear();
+        persist_settings();
+        update_account_text();
+    }
+    forget_local_key(id);
+    persist_settings();
+    a->keys_note = tr("keys.deleted");
+    set_status(0, tr("keys.deleted"));
+    append_log("已删除平台 Key：" + result->key.name);
+    refresh_keys_view();
+    delete result;
+}
+
 void use_selected_key() {
     App *a = g_app;
     if (!a || a->busy) return;
@@ -2165,29 +2577,58 @@ void use_selected_key() {
     if (data < 0 || static_cast<size_t>(data) >= a->keys.size()) return;
 
     const KeyItem key = a->keys[static_cast<size_t>(data)];
-    const std::wstring question = tr("keys.confirm");
-    if (MessageBoxW(a->window, question.c_str(), L"CertumSigner", MB_ICONQUESTION | MB_YESNO) != IDYES) return;
+    if (key.orphan) {
+        a->keys_note = tr("keys.orphan");
+        InvalidateRect(a->window, nullptr, FALSE);
+        return;
+    }
 
+    LocalKey *local = find_local_key(a->settings.server, key.id);
+    if (local && !local->plaintext.empty()) {
+        activate_local_key(key, *local);
+        return;
+    }
+
+    if (MessageBoxW(a->window, tr("keys.confirmUseRotate").c_str(), L"CertumSigner",
+                    MB_ICONQUESTION | MB_YESNO) != IDYES) {
+        return;
+    }
     reveal_key(key, false);
 }
 
 void reveal_key(const KeyItem &key, bool silent) {
     App *a = g_app;
     if (!a || a->busy) return;
+
+    std::string plaintext;
+    std::string hash;
+    std::string prefix;
+    std::string key_error;
+    if (!keygen::generate(plaintext, hash, prefix, key_error)) {
+        a->error = widen(key_error);
+        InvalidateRect(a->window, nullptr, FALSE);
+        return;
+    }
+
     set_busy(true);
-    set_status(1, tr("keys.busy"));
+    set_status(1, tr("keys.rotateBusy"));
     const std::string server = a->settings.server;
-    const std::string token = a->token;
+    const std::string token = !a->token.empty() ? a->token : a->settings.session_token;
+    const KeyItem target = key;
     HWND window = a->window;
 
-    std::thread([server, token, key, silent, window]() {
+    std::string body = "{\"hash\":\"" + hash + "\",\"prefix\":\"" + json_escape(prefix) + "\"}";
+
+    std::thread([server, token, target, plaintext, prefix, body, silent, window]() {
         auto *result = new LoginResult();
         HttpHeaders headers;
         headers.emplace_back("Authorization", "Bearer " + token);
+        headers.emplace_back("Content-Type", "application/json");
         headers.emplace_back("Accept", "application/json");
         headers.emplace_back("X-Client", "certumsigner/1.0");
 
-        HttpResponse response = http_post(join_url(server, "/api/client/keys/" + key.id + "/reveal"), headers, "", 30);
+        HttpResponse response =
+            http_post(join_url(server, "/api/client/keys/" + target.id + "/reveal"), headers, body, 30);
         Json root;
         std::string parse_error;
         if (!response.error.empty()) {
@@ -2200,8 +2641,12 @@ void reveal_key(const KeyItem &key, bool silent) {
             result->ok = true;
             result->revealed = true;
             result->silent = silent;
-            result->plaintext = root.get_string("plaintext");
-            result->key_name = key.name;
+            result->plaintext = plaintext;
+            result->key = target;
+            result->key.prefix = prefix;
+            const Json *node = root.find("key");
+            if (node && node->type == Json::Type::Object) parse_key_view(*node, result->key);
+            result->key_name = result->key.name;
         }
         PostMessageW(window, WM_APP_KEY_DONE, 0, reinterpret_cast<LPARAM>(result));
     }).detach();
@@ -2219,21 +2664,33 @@ void create_key(const std::wstring &name) {
     if (index < 0) index = 0;
     if (static_cast<size_t>(index) >= a->credentials.size()) return;
 
-    const std::string credential_id = a->credentials[static_cast<size_t>(index)].id;
+    const CredentialItem credential = a->credentials[static_cast<size_t>(index)];
     std::string key_name = narrow(name);
     if (key_name.empty()) key_name = control_text(a->keyName);
     if (key_name.empty()) key_name = narrow(tr("keys.defaultName"));
 
+    // 明文在本机生成，平台只收到哈希
+    std::string plaintext;
+    std::string hash;
+    std::string prefix;
+    std::string key_error;
+    if (!keygen::generate(plaintext, hash, prefix, key_error)) {
+        a->error = widen(key_error);
+        InvalidateRect(a->window, nullptr, FALSE);
+        return;
+    }
+
     set_busy(true);
     set_status(1, tr("keys.busy"));
     const std::string server = a->settings.server;
-    const std::string token = a->token;
+    const std::string token = !a->token.empty() ? a->token : a->settings.session_token;
     HWND window = a->window;
 
-    std::string body = "{\"name\":\"" + json_escape(key_name) + "\",\"credentialId\":\"" + json_escape(credential_id) +
-                       "\",\"dailyQuota\":0}";
+    std::string body = "{\"name\":\"" + json_escape(key_name) + "\",\"credentialId\":\"" +
+                       json_escape(credential.id) + "\",\"hash\":\"" + hash + "\",\"prefix\":\"" +
+                       json_escape(prefix) + "\",\"dailyQuota\":0}";
 
-    std::thread([server, token, body, key_name, window]() {
+    std::thread([server, token, body, key_name, plaintext, credential, window]() {
         auto *result = new LoginResult();
         HttpHeaders headers;
         headers.emplace_back("Authorization", "Bearer " + token);
@@ -2252,8 +2709,14 @@ void create_key(const std::wstring &name) {
             result->error = narrow(localize_error(error_code(root), error_text(root, "失败")));
         } else {
             result->ok = true;
-            result->plaintext = root.get_string("plaintext");
+            result->plaintext = plaintext;
             result->key_name = key_name;
+            result->key.id = "pending";
+            const Json *node = root.find("key");
+            if (node && node->type == Json::Type::Object) parse_key_view(*node, result->key);
+            result->key.name = key_name;
+            result->key.credentialId = credential.id;
+            result->key.credentialLabel = credential.label;
         }
         PostMessageW(window, WM_APP_KEY_DONE, 0, reinterpret_cast<LPARAM>(result));
     }).detach();
@@ -2263,6 +2726,10 @@ void apply_key_result(LoginResult *result) {
     App *a = g_app;
     if (!result) return;
     set_busy(false);
+    if (!a) {
+        delete result;
+        return;
+    }
     if (!result->ok) {
         a->error = widen(result->error);
         InvalidateRect(a->window, nullptr, FALSE);
@@ -2271,18 +2738,13 @@ void apply_key_result(LoginResult *result) {
     }
 
     a->error.clear();
+    if (!result->key.id.empty() && result->key.id != "pending") remember_local_key(result->key, result->plaintext);
     a->settings.api_key = result->plaintext;
     a->settings.key_name = result->key_name;
-    if (!result->username.empty()) a->settings.username = result->username;
-    std::string err;
-    save_settings(a->settings, err);
+    persist_settings();
+    update_account_text();
 
-    a->account = widen(a->settings.username);
-    if (!a->settings.key_name.empty()) a->account += std::wstring(L" · ") + widen(a->settings.key_name);
-    if (a->stServer) SetWindowTextW(a->stServer, widen(a->settings.server).c_str());
-    if (a->stKey) SetWindowTextW(a->stKey, widen(a->settings.api_key).c_str());
-
-    append_log("已保存 Key：" + result->key_name);
+    append_log(std::string(result->revealed ? "已换发 Key：" : "已创建 Key：") + result->key_name + "（明文只在本机）");
 
     if (!result->silent) {
         const std::wstring title = result->revealed ? tr("keys.revealed") : tr("keys.create");
@@ -2292,9 +2754,21 @@ void apply_key_result(LoginResult *result) {
         MessageBoxW(a->window, message.c_str(), L"CertumSigner", MB_ICONINFORMATION | MB_OK);
     }
 
+    a->keys_note = result->revealed ? tr("keys.reissued") : tr("keys.created");
+    set_status(0, a->keys_note);
+    if (result->key.id != "pending") {
+        // 把新 Key 合并进列表；同步过的话下一次同步会拿到平台权威数据
+        bool known = false;
+        for (auto &key : a->keys) {
+            if (key.id == result->key.id) {
+                key = result->key;
+                known = true;
+            }
+        }
+        if (!known) a->keys.push_back(result->key);
+    }
+    refresh_keys_view();
     delete result;
-    set_status(0, tr("sign.ready"));
-    set_page(PAGE_SIGN);
 }
 
 void refresh_whoami() {
@@ -2333,37 +2807,22 @@ void refresh_whoami() {
     }).detach();
 }
 
-/* 登录后自动挑选 Key：沿用本机 Key → 唯一 Key → 自动新建 → 才让用户手选 */
+/* 登录/同步后：本机当前 Key 仍属于这个账号就直接进签名页，否则停在密钥管理页 */
 void auto_pick_key() {
     App *a = g_app;
     if (!a) return;
     a->cred_index = 0;
+    merge_local_flags();
 
     for (const auto &key : a->keys) {
-        if (a->settings.api_key.empty() || key.prefix.empty()) continue;
-        if (!starts_with(a->settings.api_key, key.prefix)) continue;
-        append_log("已登录：" + a->settings.username + "，沿用本机保存的 Key " + key.name);
-        set_page(PAGE_SIGN);
-        refresh_whoami();
-        return;
-    }
-
-    if (a->keys.size() == 1) {
-        const KeyItem only = a->keys.front();
-        append_log("已自动选择登录账号下的唯一 Key：" + only.name);
-        reveal_key(only, true);
-        return;
-    }
-
-    if (a->keys.empty()) {
-        if (a->credentials.empty()) {
-            a->error = tr("keys.noCred");
-            set_page(PAGE_KEYS);
+        if (key.orphan) continue;
+        LocalKey *local = find_local_key(a->settings.server, key.id);
+        if (local && !local->plaintext.empty() && local->plaintext == a->settings.api_key) {
+            append_log("已登录：" + a->settings.username + "，沿用本机 Key " + key.name);
+            set_page(PAGE_SIGN);
+            refresh_whoami();
             return;
         }
-        append_log("账号下暂无 Key，正在使用第一套凭据自动创建 …");
-        create_key(tr("keys.defaultName"));
-        return;
     }
 
     set_page(PAGE_KEYS);
@@ -2418,11 +2877,14 @@ void layout_controls() {
     place_edit(a->lgPass, 640, 366, 190, 36);
     if (a->lgLogin) MoveWindow(a->lgLogin, px(430) + dx, px(440), px(400), px(44), TRUE);
 
-    if (a->keyList) MoveWindow(a->keyList, px(248) + dx, px(170), px(764), px(216), TRUE);
-    if (a->keyUse) MoveWindow(a->keyUse, px(248) + dx, px(398), px(220), px(40), TRUE);
-    place_edit(a->keyName, 248, 530, 240, 38);
-    if (a->keyCred) MoveWindow(a->keyCred, px(500) + dx, px(530), px(300), px(38), TRUE);
-    if (a->keyCreate) MoveWindow(a->keyCreate, px(812) + dx, px(530), px(200), px(38), TRUE);
+    if (a->keyList) MoveWindow(a->keyList, px(240) + dx, px(128), px(780), px(300), TRUE);
+    if (a->keyUse) MoveWindow(a->keyUse, px(240) + dx, px(440), px(180), px(38), TRUE);
+    if (a->keyReissue) MoveWindow(a->keyReissue, px(432) + dx, px(440), px(180), px(38), TRUE);
+    if (a->keyDelete) MoveWindow(a->keyDelete, px(624) + dx, px(440), px(180), px(38), TRUE);
+    if (a->keySync) MoveWindow(a->keySync, px(816) + dx, px(440), px(180), px(38), TRUE);
+    place_edit(a->keyName, 248, 546, 240, 38);
+    if (a->keyCred) MoveWindow(a->keyCred, px(500) + dx, px(546), px(300), px(38), TRUE);
+    if (a->keyCreate) MoveWindow(a->keyCreate, px(812) + dx, px(546), px(200), px(38), TRUE);
 
     if (a->drop) MoveWindow(a->drop, px(224) + dx, px(78), px(812), px(132), TRUE);
     if (a->list) MoveWindow(a->list, px(240) + dx, px(268), px(780), px(336), TRUE);
@@ -2544,37 +3006,53 @@ void paint_login(HDC dc) {
 void paint_keys(HDC dc) {
     App *a = g_app;
     const Palette &p = pal();
-    const RECT card = rect(224, 78, 812, 522);
+
+    draw_text(dc, tr("keys.title"), rect(224, 18, 400, 30), a->fontH1, p.text);
+    draw_text(dc, tr("keys.sub"), rect(224, 48, 780, 20), a->fontSmall, p.muted,
+              DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
+
+    // 平台 Key 卡片：账号、同步状态、列表
+    const RECT card = rect(224, 78, 812, 392);
     fill_round(dc, card, px(16), p.card);
     stroke_round(dc, card, px(16), p.edge);
 
-    draw_text(dc, tr("keys.title"), rect(248, 100, 400, 26), a->fontH1, p.text);
-    draw_text(dc, tr("keys.sub"), rect(248, 132, 740, 20), a->fontSmall, p.muted,
+    const std::wstring account =
+        tr("set.account") + L"：" + (a->settings.username.empty() ? std::wstring(L"—") : widen(a->settings.username));
+    draw_text(dc, account, rect(244, 92, 400, 20), a->fontSmall, p.muted,
               DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
 
-    fill_round(dc, rect(248, 170, 764, 216), px(12), p.input);
-    stroke_round(dc, rect(248, 170, 764, 216), px(12), p.inputEdge);
+    int local_count = 0;
+    for (const auto &item : a->settings.local_keys) {
+        if (item.server == a->settings.server) ++local_count;
+    }
+    std::wstring note = a->keys_note;
+    if (note.empty()) note = a->settings.session_token.empty() ? tr("keys.needLogin") : tr("keys.synced");
+    wchar_t count_text[64] = {0};
+    swprintf_s(count_text, tr("keys.countLocal").c_str(), local_count);
+    draw_text(dc, note + L"  ·  " + count_text, rect(620, 92, 396, 20), a->fontTiny, p.muted2,
+              DT_RIGHT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
 
-    if (!a->error.empty()) {
-        draw_text(dc, a->error, rect(248, 450, 764, 20), a->fontSmall, p.bad,
-                  DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
-    } else {
-        const std::wstring current =
-            tr("keys.current") + L"：" + (a->settings.key_name.empty() ? L"—" : widen(a->settings.key_name));
-        draw_text(dc, current, rect(248, 450, 764, 20), a->fontTiny, p.muted2,
+    fill_round(dc, rect(240, 128, 780, 300), px(12), p.input);
+    stroke_round(dc, rect(240, 128, 780, 300), px(12), p.inputEdge);
+
+    // 新建卡片：名称 + 证书凭据 + 新建
+    const RECT create_card = rect(224, 492, 812, 190);
+    fill_round(dc, create_card, px(16), p.card);
+    stroke_round(dc, create_card, px(16), p.edge);
+
+    draw_text(dc, tr("keys.newTitle"), rect(248, 506, 300, 24), a->fontButton, p.text);
+    draw_text(dc, tr("keys.name"), rect(248, 528, 200, 16), a->fontTiny, p.muted2);
+    draw_text(dc, tr("keys.cred"), rect(500, 528, 280, 16), a->fontTiny, p.muted2);
+    fill_round(dc, rect(248, 546, 240, 38), px(9), p.input);
+    stroke_round(dc, rect(248, 546, 240, 38), px(9), GetFocus() == a->keyName ? p.accent : p.inputEdge);
+
+    if (a->credentials.empty()) {
+        draw_text(dc, tr("keys.noCred"), rect(500, 546, 300, 38), a->fontSmall, p.muted2,
                   DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
     }
 
-    hline(dc, 248, 1012, 478, p.edge);
-    draw_text(dc, tr("keys.newTitle"), rect(248, 490, 300, 24), a->fontButton, p.text);
-    draw_text(dc, tr("keys.name"), rect(248, 512, 200, 16), a->fontTiny, p.muted2);
-    draw_text(dc, tr("keys.cred"), rect(500, 512, 280, 16), a->fontTiny, p.muted2);
-
-    fill_round(dc, rect(248, 530, 240, 38), px(9), p.input);
-    stroke_round(dc, rect(248, 530, 240, 38), px(9), GetFocus() == a->keyName ? p.accent : p.inputEdge);
-
-    if (a->credentials.empty()) {
-        draw_text(dc, tr("keys.noCred"), rect(500, 530, 300, 38), a->fontSmall, p.muted2,
+    if (!a->error.empty()) {
+        draw_text(dc, a->error, rect(248, 636, 764, 20), a->fontSmall, p.bad,
                   DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
     }
 }
@@ -2925,14 +3403,41 @@ void draw_key_item(const DRAWITEMSTRUCT *item) {
     fill_rect(dc, r, selected ? p.hover : p.input);
 
     const KeyItem &key = a->keys[index];
-    draw_text(dc, widen(key.name), RECT{r.left + px(16), r.top + px(6), r.right - px(200), r.top + px(28)},
-              a->fontButton, p.text, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
-    draw_text(dc, widen(key.prefix) + L"…", RECT{r.left + px(16), r.top + px(28), r.right - px(200), r.top + px(48)},
-              a->fontMono, p.muted2, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
-    const std::wstring quota = key.quota > 0 ? widen(std::to_string(key.quota)) + tr("keys.perDay")
-                                             : tr("common.unlimited");
-    draw_text(dc, quota, RECT{r.right - px(190), r.top + px(16), r.right - px(16), r.top + px(40)}, a->fontTiny,
-              p.muted, DT_RIGHT | DT_SINGLELINE | DT_VCENTER);
+    LocalKey *local = find_local_key(a->settings.server, key.id);
+    const bool active = local && !a->settings.api_key.empty() && local->plaintext == a->settings.api_key;
+
+    // 第一行：名称
+    const int left = r.left + px(16);
+    draw_text(dc, widen(key.name), RECT{left, r.top + px(8), r.right - px(330), r.top + px(32)}, a->fontButton, p.text,
+              DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
+
+    // 右上角：本机 / 仅平台 / 平台已删除，正在用的再标一下
+    int tag_right = r.right - px(16);
+    const int tag_w = px(78);
+    const int tag_h = px(20);
+    const int tag_y = r.top + px(10);
+    if (active) {
+        RECT current{tag_right - tag_w, tag_y, tag_right, tag_y + tag_h};
+        draw_tag(dc, current, tr("keys.current"), p.accent, color_mix(p.accent, p.card));
+        tag_right = current.left - px(6);
+    }
+    RECT tag{tag_right - tag_w, tag_y, tag_right, tag_y + tag_h};
+    if (key.orphan) {
+        draw_tag(dc, tag, tr("keys.orphan"), p.bad, color_mix(p.bad, p.card));
+    } else if (key.local) {
+        draw_tag(dc, tag, tr("keys.local"), p.ok, color_mix(p.ok, p.card));
+    } else {
+        draw_tag(dc, tag, tr("keys.remote"), p.muted2, p.hover);
+    }
+
+    // 第二行：绑定的证书凭据 · 前缀 · 每日限额
+    std::wstring line = widen(key.credentialLabel);
+    if (line.empty()) line = tr("keys.cred") + L" —";
+    if (!key.enabled) line += L"  ·  " + tr("keys.disabled");
+    if (!key.prefix.empty()) line += L"  ·  " + widen(key.prefix) + L"…";
+    if (key.quota > 0) line += L"  ·  " + widen(std::to_string(key.quota)) + tr("keys.perDay");
+    draw_text(dc, line, RECT{left, r.top + px(40), r.right - px(16), r.top + px(64)}, a->fontTiny,
+              key.enabled ? p.muted2 : p.bad, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
 }
 
 /** 摘要算法是否被勾选（至少保留一项，空列表按 sha256 处理） */
@@ -3034,14 +3539,17 @@ void draw_ownerdraw(const DRAWITEMSTRUCT *item) {
         return;
     }
 
-    if (id == IDC_S_VERIFY || id == IDC_K_USE || id == IDC_K_CREATE || id == IDC_T_RELOGIN || id == IDC_T_LICENSE ||
-        id == IDC_T_PROJECT || id == IDC_L_LOGIN) {
+    if (id == IDC_S_VERIFY || id == IDC_K_USE || id == IDC_K_CREATE || id == IDC_K_REISSUE || id == IDC_K_DELETE ||
+        id == IDC_K_SYNC || id == IDC_T_RELOGIN || id == IDC_T_LICENSE || id == IDC_T_PROJECT || id == IDC_L_LOGIN) {
         const bool primary = id == IDC_L_LOGIN || id == IDC_K_CREATE || id == IDC_K_USE;
         std::wstring label;
         switch (id) {
         case IDC_S_VERIFY: label = tr("sign.verify"); break;
         case IDC_K_USE: label = tr("keys.use"); break;
         case IDC_K_CREATE: label = tr("keys.create"); break;
+        case IDC_K_REISSUE: label = tr("keys.reissue"); break;
+        case IDC_K_DELETE: label = tr("keys.del"); break;
+        case IDC_K_SYNC: label = tr("keys.sync"); break;
         case IDC_L_LOGIN: label = tr("login.submit"); break;
         case IDC_T_RELOGIN: label = tr("set.relogin"); break;
         case IDC_T_LICENSE: label = tr("set.license"); break;
@@ -3451,6 +3959,9 @@ void setup_controls(HWND window) {
     a->keyName = make_control(L"EDIT", L"", edit_style, 0, rect(0, 0, 10, 10), IDC_K_NAME, window, a->fontBody);
     a->keyCred = make_control(L"BUTTON", L"", button, 0, rect(0, 0, 10, 10), IDC_K_CRED, window, a->fontSmall);
     a->keyCreate = make_control(L"BUTTON", L"", button, 0, rect(0, 0, 10, 10), IDC_K_CREATE, window, a->fontButton);
+    a->keyReissue = make_control(L"BUTTON", L"", button, 0, rect(0, 0, 10, 10), IDC_K_REISSUE, window, a->fontButton);
+    a->keyDelete = make_control(L"BUTTON", L"", button, 0, rect(0, 0, 10, 10), IDC_K_DELETE, window, a->fontButton);
+    a->keySync = make_control(L"BUTTON", L"", button, 0, rect(0, 0, 10, 10), IDC_K_SYNC, window, a->fontButton);
 
     a->drop = make_control(L"BUTTON", L"", button, 0, rect(0, 0, 10, 10), IDC_S_DROP, window, a->fontBody);
     a->list = make_control(L"LISTBOX", L"", list_style, 0, rect(0, 0, 10, 10), IDC_S_LIST, window, a->fontBody);
@@ -3489,7 +4000,7 @@ void setup_controls(HWND window) {
         SendMessageW(a->licText, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(px(10), px(10)));
     }
 
-    SendMessageW(a->keyList, LB_SETITEMHEIGHT, 0, px(56));
+    SendMessageW(a->keyList, LB_SETITEMHEIGHT, 0, px(72));
     SendMessageW(a->list, LB_SETITEMHEIGHT, 0, px(66));
 
     a->tooltip = CreateWindowExW(WS_EX_TOPMOST, TOOLTIPS_CLASSW, nullptr, WS_POPUP | TTS_ALWAYSTIP | TTS_NOPREFIX,
@@ -3549,11 +4060,16 @@ void relogin() {
     if (!a) return;
     sync_settings_from_ui();
     a->settings.api_key.clear();
+    a->settings.key_name.clear();
+    a->settings.session_token.clear();
+    a->settings.session_expires = 0;
     a->token.clear();
     a->keys.clear();
     a->credentials.clear();
     a->account.clear();
     a->error.clear();
+    a->keys_synced = false;
+    a->keys_note.clear();
     if (a->stKey) SetWindowTextW(a->stKey, L"");
     std::string err;
     save_settings(a->settings, err);
@@ -3589,6 +4105,31 @@ void handle_command(int id, int code) {
         case IDC_L_LOGIN: do_login(); return;
         case IDC_K_USE: use_selected_key(); return;
         case IDC_K_CREATE: create_key(L""); return;
+        case IDC_K_REISSUE:
+        case IDC_K_DELETE: {
+            const int picked = static_cast<int>(SendMessageW(a->keyList, LB_GETCURSEL, 0, 0));
+            if (picked < 0) return;
+            const LRESULT data = SendMessageW(a->keyList, LB_GETITEMDATA, static_cast<WPARAM>(picked), 0);
+            if (data < 0 || static_cast<size_t>(data) >= a->keys.size()) return;
+            const size_t target = static_cast<size_t>(data);
+            if (id == IDC_K_DELETE) {
+                delete_key(target);
+            } else {
+                if (MessageBoxW(a->window, tr("keys.confirmReissue").c_str(), L"CertumSigner",
+                                MB_ICONQUESTION | MB_YESNO) != IDYES) {
+                    return;
+                }
+                reveal_key(a->keys[target], false);
+            }
+            return;
+        }
+        case IDC_K_SYNC:
+            if (a->settings.session_token.empty()) {
+                set_page(PAGE_LOGIN);
+                return;
+            }
+            sync_keys(false);
+            return;
         case IDC_T_TSA:
         case IDC_T_LANG:
         case IDC_T_THEME:
@@ -3802,7 +4343,7 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
         refresh_theme_selectors();
 
         SendMessageW(a->list, LB_SETITEMHEIGHT, 0, px(66));
-        SendMessageW(a->keyList, LB_SETITEMHEIGHT, 0, px(56));
+        SendMessageW(a->keyList, LB_SETITEMHEIGHT, 0, px(72));
         SetWindowSubclass(a->list, list_subclass, 1, 0);
         SetWindowSubclass(a->keyList, list_subclass, 2, 0);
 
@@ -3812,6 +4353,8 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
             set_page(PAGE_SIGN);
             append_log("就绪：已载入本机保存的 Key。");
             refresh_whoami();
+            // 有会话就顺手同步一次平台 Key，避免密钥页空空如也
+            if (!a->settings.session_token.empty()) sync_keys(true);
         } else {
             set_page(PAGE_LOGIN);
             SetFocus(a->lgServer);
@@ -3995,6 +4538,14 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
     }
     case WM_APP_KEY_DONE: {
         apply_key_result(reinterpret_cast<LoginResult *>(lparam));
+        return 0;
+    }
+    case WM_APP_KEYS_DONE: {
+        apply_sync_result(reinterpret_cast<LoginResult *>(lparam));
+        return 0;
+    }
+    case WM_APP_KEY_DELETED: {
+        apply_delete_result(reinterpret_cast<LoginResult *>(lparam));
         return 0;
     }
     case WM_APP_WHOAMI_DONE: {

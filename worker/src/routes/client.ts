@@ -9,7 +9,15 @@ import type { Context } from "hono";
 import type { ApiKeyRecord, Env, UserRecord, UserSessionRecord } from "../types";
 import { authenticateUser, getUser, userExpired } from "../store/users";
 import { listCredentials } from "../store/credentials";
-import { createApiKey, findApiKeyById, listKeysOfUser, rotateApiKey } from "../store/keys";
+import {
+  createApiKey,
+  createApiKeyFromHash,
+  deleteApiKey,
+  findApiKeyById,
+  listKeysOfUser,
+  rotateApiKey,
+  rotateApiKeyToHash,
+} from "../store/keys";
 import { createUserSession, readUserSession, revokeUserSession } from "../store/user-sessions";
 import { captchaAllowed, createCaptcha, verifyCaptcha } from "../lib/captcha";
 import { readSettings } from "../store/settings";
@@ -258,8 +266,24 @@ secure.post("/keys", async (c) => {
 
   const name = body.name || "我的 Key";
   const quota = Number(body.dailyQuota ?? "0");
+  const localHash = body.hash ?? "";
+  const localPrefix = body.prefix ?? "";
 
   try {
+    // 新版客户端自己生成明文，只上传哈希：服务端连“看到一次”的机会都没有
+    if (localHash) {
+      const record = await createApiKeyFromHash(c.env, {
+        name,
+        dailyQuota: Number.isFinite(quota) ? Math.max(0, Math.floor(quota)) : 0,
+        createdBy: account.id,
+        userId: account.id,
+        credentialId,
+        hash: localHash,
+        prefix: localPrefix,
+      });
+      return c.json({ ok: true, key: keyView(record) });
+    }
+
     const created = await createApiKey(c.env, {
       name,
       dailyQuota: Number.isFinite(quota) ? Math.max(0, Math.floor(quota)) : 0,
@@ -288,9 +312,36 @@ secure.post("/keys/:id/reveal", async (c) => {
   }
   if (!record.enabled) return fail(c, 403, "key_disabled", "该 Key 已停用");
 
-  const rotated = await rotateApiKey(c.env, id);
-  if (!rotated) return fail(c, 404, "key_not_found", "找不到该 Key");
-  return c.json({ ok: true, plaintext: rotated.plaintext, key: keyView(rotated.record) });
+  const body = await readBody(c);
+  const localHash = body.hash ?? "";
+  const localPrefix = body.prefix ?? "";
+
+  try {
+    // 新版客户端：新明文也在本地生成，服务端只接收哈希
+    if (localHash) {
+      const rotated = await rotateApiKeyToHash(c.env, id, localHash, localPrefix);
+      if (!rotated) return fail(c, 404, "key_not_found", "找不到该 Key");
+      return c.json({ ok: true, key: keyView(rotated) });
+    }
+
+    const rotated = await rotateApiKey(c.env, id);
+    if (!rotated) return fail(c, 404, "key_not_found", "找不到该 Key");
+    return c.json({ ok: true, plaintext: rotated.plaintext, key: keyView(rotated.record) });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return fail(c, 400, "rotate_failed", message);
+  }
+});
+
+/** 删除平台上的 Key（只允许删自己的）；本机副本由客户端自己清掉 */
+secure.delete("/keys/:id", async (c) => {
+  const account = c.get("clientUser");
+  const record = await findApiKeyById(c.env, c.req.param("id"));
+  if (!record || record.userId !== account.id) {
+    return fail(c, 404, "key_not_found", "找不到该 Key");
+  }
+  await deleteApiKey(c.env, record.id);
+  return c.json({ ok: true });
 });
 
 clientApi.route("/", secure);

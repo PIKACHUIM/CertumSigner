@@ -31,6 +31,11 @@ inline HttpResponse http_post(const std::string &url, const HttpHeaders &headers
     return http_request("POST", url, headers, body, timeout_seconds);
 }
 
+inline HttpResponse http_delete(const std::string &url, const HttpHeaders &headers = {},
+                                int timeout_seconds = 60) {
+    return http_request("DELETE", url, headers, std::string(), timeout_seconds);
+}
+
 /**
  * 以 multipart/form-data 流式上传磁盘文件：边读边发，不把整份文件读进内存。
  * 用于客户端直传 VirusTotal 大文件通道（最大 650 MB）。

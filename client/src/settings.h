@@ -15,6 +15,21 @@ const std::vector<BuiltinTsa> &builtin_tsa();
 /** 按名字找内置服务；找不到返回 nullptr */
 const BuiltinTsa *find_builtin_tsa(const std::string &name);
 
+/** 本机保存的 Key：平台只存哈希，换发前拿不回明文，所以本地必须留一份 */
+struct LocalKey {
+    /** 平台上的 Key id */
+    std::string id;
+    std::string name;
+    /** csk_ 开头的前 12 位，用来核对本地明文与平台记录 */
+    std::string prefix;
+    std::string credential_id;
+    std::string credential_label;
+    /** 属于哪个平台，切换服务器时不会串 */
+    std::string server;
+    std::string plaintext;
+    long long created_at = 0;
+};
+
 struct Settings {
     /** 平台地址；首次使用由用户在登录页填写 */
     std::string server;
@@ -37,6 +52,11 @@ struct Settings {
     std::string username;
     /** 上次使用的 Key 名称（只用于显示） */
     std::string key_name;
+    /** /api/client 会话，用来实时拉取平台上的 Key；过期后需要重新登录 */
+    std::string session_token;
+    long long session_expires = 0;
+    /** 本机保存的明文 Key（可能跨多个平台，按 server + id 区分） */
+    std::vector<LocalKey> local_keys;
 };
 
 /** 真正要请求的时间戳地址：tsa_url > 内置 tsa_name > DigiCert */

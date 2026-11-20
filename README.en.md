@@ -102,8 +102,8 @@ Sign in ──► Sign ⇄ Keys ⇄ Settings
 ```
 
 1. **Sign in**: server URL (your Worker domain), email, password; Enter submits.
-2. **Keys**: lists the keys of the account with their daily quota. Picking one **rotates its plaintext** (the old value dies immediately, with a confirmation first); or type a name, pick a certificate and create a key. After sign-in the client picks a key automatically: a stored key that still exists goes straight through, a single key is rotated silently, no key but an available certificate creates one.
-3. **Sign**: drop files in or click upload, delete items individually or sign the batch; each row shows waiting / signing / done / failed / skipped. `Verify` calls `WinVerifyTrust` on Windows.
+2. **Keys**: synced live with the platform. Each row shows the bound certificate, key prefix, daily quota and whether this machine holds the secret (`Saved locally` / `Platform only` / `Gone on platform`). `Use` switches to a locally stored secret without touching other devices; only when there is no local copy does it offer to rotate. `Rotate` and `Delete` act on the platform and revoke the key everywhere. When creating a key the **secret is generated locally** and only its SHA-256 plus prefix are sent to the platform. After sign-in the client reuses the current key when it still belongs to the account, otherwise it stays on the keys page.
+3. **Sign**: drop files in or click upload, delete items individually or sign the batch; each row shows queued / scanning / signing / signed / failed (the failure reason sits on the row's second line) / skipped. `Verify` calls `WinVerifyTrust` on Windows.
 
 Settings is split into connection, signing options (algorithms, timestamp, built-in TSA, backup), interface (language / theme) and about (in-app AGPL notice, project URL, sign out again). Settings live in `%APPDATA%\CertumSigner\config.json`, so the next launch lands on the sign page.
 
@@ -261,11 +261,12 @@ Failures are always `{"ok":false,"error":{"code":"...","message":"..."}}` with c
 | --- | --- |
 | `POST /api/client/login` | email + password → session token, plus the available keys and certificates; also accepts the legacy `username` field; when the sign-in captcha is enabled it needs `captchaId` + `captcha` (numeric image captcha, never Turnstile) |
 | `GET /api/client/captcha` | issue a 4-digit image captcha (`id` + `svg` + `dataUrl`) |
-| `GET /api/client/session` | check whether the token is still valid |
+| `GET /api/client/session` | validate the token and return the account's keys and certificates (used to sync the keys page) |
 | `POST /api/client/logout` | revoke the current token |
 | `GET /api/client/keys` | list the account's keys |
-| `POST /api/client/keys` | create a key (plaintext returned once) |
-| `POST /api/client/keys/:id/reveal` | rotate an existing key's plaintext; the old value stops working |
+| `POST /api/client/keys` | create a key: the new client generates the secret locally and uploads only `hash` + `prefix`; without `hash` the server still generates one and returns it once |
+| `POST /api/client/keys/:id/reveal` | rotate a key; also accepts a locally generated `hash` + `prefix`, the old value stops working |
+| `DELETE /api/client/keys/:id` | delete one of your keys; it stops working everywhere immediately |
 
 ### Miscellaneous
 
@@ -335,7 +336,7 @@ The old rolling `latest` release is gone: `/releases/latest` follows the newest 
 ## Security notes
 
 - **OTP seeds live in the KV credential record**; clients never see them and they are not part of signing. KV is encrypted at rest, but an API token that can read the namespace can read them in plaintext — scope production tokens to that single namespace.
-- **API keys are stored as SHA-256 hashes only.** Plaintext is shown once (and deleted after 5 minutes); `/reveal` deletes the old hash and issues a new value. Keys bind `userId` + `credentialId`, so disabling a user or credential invalidates them immediately.
+- **API keys are stored as SHA-256 hashes only.** Plaintext is shown once (and deleted after 5 minutes); `/reveal` deletes the old hash and issues a new value. Keys bind `userId` + `credentialId`, so disabling a user or credential invalidates them immediately. The new client **generates the secret locally** and uploads only the hash plus prefix, so the server never sees the plaintext even once; the secret lives in the local `config.json` so `Use` can switch keys without rotating, and after wiping that file the only way back is `Rotate` — which invalidates the value on every other device.
 - **Passwords** use salted PBKDF2-HMAC-SHA256 with 10,000 iterations for both users and admins; sessions are revocable KV records, writes check CSRF, and failed sign-ins are rate limited per IP.
   The iteration count is fixed at 10,000: Workers caps PBKDF2 at 100,000 and the free plan only allows 10 ms of CPU (10,000 iterations ≈ 2–3 ms). Changing the constant invalidates every stored password.
 - **The signing endpoint accepts no arbitrary bytes**: digest length must match the algorithm exactly, at most 16 digests per call, and the client verifies each signature with the certificate public key before writing the file.
@@ -356,7 +357,7 @@ The old rolling `latest` release is gone: `/releases/latest` follows the newest 
 <details>
 <summary>What has actually been tested</summary>
 
-- Worker: `npx tsc --noEmit` passes; `npm test` passes 51 tests (TOTP against RFC 6238 vectors, multipart parsing, encoding/hashing, KV storage and password hashing, unique user emails, admin account setup and password change, runtime config round-trips, scan risk thresholds / result caching / upload SHA-256 verification / streaming large-file relay and hash cross-check / direct-upload target and analysis registration).
+- Worker: `npx tsc --noEmit` passes; `npm test` passes 57 tests (TOTP against RFC 6238 vectors, multipart parsing, encoding/hashing, KV storage and password hashing, unique user emails, admin account setup and password change, runtime config round-trips, scan risk thresholds / result caching / upload SHA-256 verification / streaming large-file relay and hash cross-check / direct-upload target and analysis registration / client-generated key hash registration, rotation and deletion).
 - Real Certum path works end to end (2026-11, Windows x64): email + TOTP sign-in, `/v1/certificate` returns the EV code-signing certificate, `/v1/sign` turns a real SHA-256 digest into a 512-byte signature, and after writing it into a PE `WinVerifyTrust` reports **valid**; still valid with a real Certum timestamp.
 - UI: four themes × light/dark, zh/en switching, dialogs, and mobile widths (390 / 563 px) checked page by page with no horizontal scrolling; captcha refresh and validation, settings persistence, user quotas and self-service key quota edits tested.
 - Client: MSVC 14.44 + Windows SDK 10.0.22621 + static OpenSSL 3.5.9 with `/W4 /permissive-` and no warnings; the Win32 GUI completed sign-in → key rotation → drag-and-drop batch signing → `WinVerifyTrust`, and layout holds at 125% scaling.

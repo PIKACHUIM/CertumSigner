@@ -34,6 +34,13 @@ Json json_bool(bool value) {
     return node;
 }
 
+Json json_number(double value) {
+    Json node;
+    node.type = Json::Type::Number;
+    node.number = value;
+    return node;
+}
+
 } // namespace
 
 const std::vector<BuiltinTsa> &builtin_tsa() {
@@ -77,11 +84,32 @@ bool load_settings(Settings &out, std::string &err) {
             const std::string theme = root.get_string("theme");
             const std::string username = root.get_string("username");
             const std::string key_name = root.get_string("key_name");
+            const std::string session_token = root.get_string("session_token");
+            const double session_expires = root.get_number("session_expires", 0);
 
             if (!server.empty()) out.server = server;
             if (!key.empty()) out.api_key = key;
             if (!tsa_url.empty()) out.tsa_url = tsa_url;
             if (!tsa_name.empty()) out.tsa_name = tsa_name;
+            if (!session_token.empty()) out.session_token = session_token;
+            if (session_expires > 0) out.session_expires = static_cast<long long>(session_expires);
+
+            // 本机保存的 Key 明文：平台侧只有哈希，丢了就得换发，所以原样落盘
+            if (const Json *locals = root.find("local_keys"); locals && locals->type == Json::Type::Array) {
+                out.local_keys.clear();
+                for (const auto &item : locals->items) {
+                    LocalKey entry;
+                    entry.id = item.get_string("id");
+                    entry.name = item.get_string("name");
+                    entry.prefix = item.get_string("prefix");
+                    entry.credential_id = item.get_string("credential_id");
+                    entry.credential_label = item.get_string("credential_label");
+                    entry.server = item.get_string("server");
+                    entry.plaintext = item.get_string("plaintext");
+                    entry.created_at = static_cast<long long>(item.get_number("created_at", 0));
+                    if (!entry.id.empty() && !entry.plaintext.empty()) out.local_keys.push_back(entry);
+                }
+            }
             // 新版写 algorithms 数组；旧配置只有单个 algorithm 字符串
             std::vector<std::string> picked;
             for (const auto &item : algorithms) {
@@ -144,6 +172,26 @@ bool save_settings(const Settings &settings, std::string &err) {
     root.members.emplace_back("theme", json_string(settings.theme));
     root.members.emplace_back("username", json_string(settings.username));
     root.members.emplace_back("key_name", json_string(settings.key_name));
+    root.members.emplace_back("session_token", json_string(settings.session_token));
+    root.members.emplace_back("session_expires", json_number(static_cast<double>(settings.session_expires)));
+
+    Json locals;
+    locals.type = Json::Type::Array;
+    for (const auto &key : settings.local_keys) {
+        if (key.id.empty() || key.plaintext.empty()) continue;
+        Json node;
+        node.type = Json::Type::Object;
+        node.members.emplace_back("id", json_string(key.id));
+        node.members.emplace_back("name", json_string(key.name));
+        node.members.emplace_back("prefix", json_string(key.prefix));
+        node.members.emplace_back("credential_id", json_string(key.credential_id));
+        node.members.emplace_back("credential_label", json_string(key.credential_label));
+        node.members.emplace_back("server", json_string(key.server));
+        node.members.emplace_back("plaintext", json_string(key.plaintext));
+        node.members.emplace_back("created_at", json_number(static_cast<double>(key.created_at)));
+        locals.items.push_back(node);
+    }
+    root.members.emplace_back("local_keys", locals);
     return write_file(config_file(), root.dump() + "\n", err);
 }
 

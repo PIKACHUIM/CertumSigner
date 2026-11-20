@@ -2,8 +2,8 @@
  * API Key：明文只在创建时返回一次，KV 里只存 SHA-256，泄库也拿不回可用 key。
  */
 import type { ApiKeyRecord, Env } from "../types";
-import { randomId, randomToken, sha256Hex, toHex, randomBytes } from "../lib/encoding";
-import { getUser, userExpired } from "./users";
+import { randomId, randomToken, sha256Hex, toHex, randomBytes } from "../lib/encoding.ts";
+import { getUser, userExpired } from "./users.ts";
 
 const PREFIX = "key:";
 
@@ -28,18 +28,32 @@ function storageKey(hash: string): string {
   return `${PREFIX}${hash}`;
 }
 
-export async function createApiKey(env: Env, input: CreateKeyInput): Promise<CreatedKey> {
-  const name = input.name.trim();
+function normalizeKeyName(value: string): string {
+  const name = value.trim();
   if (!name) throw new Error("Key 名称不能为空");
   if (name.length > 64) throw new Error("Key 名称过长（最多 64 字符）");
+  return name;
+}
 
-  const plaintext = `csk_${randomToken(24)}`;
-  const hash = await sha256Hex(plaintext);
-  const record: ApiKeyRecord = {
+/** 客户端本地生成 Key 时只上传哈希与前缀，服务端永远拿不到明文 */
+function clientHash(value: string): string {
+  const hash = value.trim().toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(hash)) throw new Error("Key 哈希格式不正确（需要 64 位十六进制）");
+  return hash;
+}
+
+function clientPrefix(value: string): string {
+  const prefix = value.trim();
+  if (!/^csk_[A-Za-z0-9_-]{6,32}$/.test(prefix)) throw new Error("Key 前缀格式不正确");
+  return prefix;
+}
+
+function buildRecord(input: CreateKeyInput, hash: string, prefix: string): ApiKeyRecord {
+  return {
     id: randomId(),
-    name,
+    name: normalizeKeyName(input.name),
     hash,
-    prefix: plaintext.slice(0, 12),
+    prefix,
     createdAt: Date.now(),
     createdBy: input.createdBy,
     enabled: true,
@@ -49,9 +63,32 @@ export async function createApiKey(env: Env, input: CreateKeyInput): Promise<Cre
     userId: input.userId,
     credentialId: input.credentialId,
   };
+}
+
+export async function createApiKey(env: Env, input: CreateKeyInput): Promise<CreatedKey> {
+  const plaintext = `csk_${randomToken(24)}`;
+  const hash = await sha256Hex(plaintext);
+  const record = buildRecord(input, hash, plaintext.slice(0, 12));
 
   await env.CERTUM_KV.put(storageKey(hash), JSON.stringify(record));
   return { plaintext, record };
+}
+
+/**
+ * 注册客户端自己生成的 Key：只收 SHA-256 与前缀。
+ * 明文从未离开客户端，平台侧即使读库也只能拿到哈希。
+ */
+export async function createApiKeyFromHash(
+  env: Env,
+  input: CreateKeyInput & { hash: string; prefix: string },
+): Promise<ApiKeyRecord> {
+  const hash = clientHash(input.hash);
+  const prefix = clientPrefix(input.prefix);
+  if (await env.CERTUM_KV.get(storageKey(hash))) throw new Error("这把 Key 已经注册过了");
+
+  const record = buildRecord(input, hash, prefix);
+  await env.CERTUM_KV.put(storageKey(hash), JSON.stringify(record));
+  return record;
 }
 
 export async function listApiKeys(env: Env): Promise<ApiKeyRecord[]> {
@@ -169,6 +206,30 @@ export async function rotateApiKey(env: Env, id: string): Promise<CreatedKey | n
 
 export function newKeyId(): string {
   return toHex(randomBytes(6));
+}
+
+/** 客户端换发：新明文同样在客户端生成，服务端只接收新哈希 */
+export async function rotateApiKeyToHash(
+  env: Env,
+  id: string,
+  rawHash: string,
+  rawPrefix: string,
+): Promise<ApiKeyRecord | null> {
+  const record = await findApiKeyById(env, id);
+  if (!record) return null;
+
+  const hash = clientHash(rawHash);
+  const prefix = clientPrefix(rawPrefix);
+  if (hash !== record.hash && (await env.CERTUM_KV.get(storageKey(hash)))) {
+    throw new Error("这把 Key 已经注册过了");
+  }
+
+  await env.CERTUM_KV.delete(storageKey(record.hash));
+  record.hash = hash;
+  record.prefix = prefix;
+  record.lastUsedAt = undefined;
+  await saveApiKey(env, record);
+  return record;
 }
 
 /** 删除用户时顺手吊销他的所有 Key */
