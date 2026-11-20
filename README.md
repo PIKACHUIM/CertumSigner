@@ -255,7 +255,9 @@ curl -X POST https://sign.example.com/v1/sign \
 }
 ```
 
-失败响应统一为 `{"ok":false,"error":{"code":"...","message":"..."}}`：`bad_hash` / `bad_algorithm` / `unauthorized` / `quota_exceeded` / `credential_missing` / `credential_disabled` / `digest_algorithm_unsupported` / `task_failed` / `signature_missing` / `scan_proof_required` / `scan_required` / `scan_risk_too_high` / `scan_not_configured` 等。
+失败响应统一为 `{"ok":false,"error":{"code":"...","message":"..."}}`：`bad_hash` / `bad_algorithm` / `unauthorized` / `quota_exceeded` / `credential_missing` / `credential_disabled` / `credential_not_assigned` / `digest_algorithm_unsupported` / `task_failed` / `signature_missing` / `scan_proof_required` / `scan_required` / `scan_risk_too_high` / `scan_not_configured` 等。
+
+Key 绑定的证书必须仍分配给该 Key 的账号：后台把证书换成另一张、或从账号上撤掉之后，绑在旧证书上的 Key 立刻失去签名能力（`/v1/*` 统一返回 403 `credential_not_assigned`），要换证书得在客户端重新建一把 Key。
 
 ### 桌面客户端接口
 

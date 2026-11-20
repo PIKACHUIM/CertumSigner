@@ -229,6 +229,9 @@ const TextRow kTexts[] = {
     {"keys.noCred", L"暂无可用证书", L"No certificate"},
     {"keys.refreshCreds", L"刷新证书", L"Reload"},
     {"keys.credCount", L"可用 %d 张", L"%d available"},
+    {"keys.credRevoked", L"证书未分配", L"Cert unassigned"},
+    {"keys.credRevokedHint", L"这把 Key 绑定的证书已不再分配给你，请让管理员重新分配或删除后重建",
+     L"This key's certificate is no longer assigned to you — ask the admin to reassign or recreate it"},
     {"keys.current", L"当前使用", L"In use"},
     {"keys.revealed", L"新的 API Key", L"Your new API key"},
     {"keys.revealedBody", L"已保存到本机；旧值立即失效，请在其他设备上重新换发。",
@@ -399,6 +402,8 @@ struct KeyItem {
     bool local = false;
     /** 本机有明文，平台上已经没了 */
     bool orphan = false;
+    /** 平台是否仍把这套证书分配给当前账号（false = 这把 Key 已经签不了） */
+    bool credentialAssigned = true;
 };
 
 struct CredentialItem {
@@ -433,6 +438,9 @@ struct KeyResult {
 struct WhoamiResult {
     bool ok = false;
     bool unauthorized = false;
+    /** 403 之类：证书被撤销分配时服务端会带 credential_not_assigned */
+    std::string error_code;
+    std::string error_text;
     std::string username;
     std::string key_name;
     std::string summary;
@@ -2272,6 +2280,7 @@ void parse_key_view(const Json &node, KeyItem &out) {
     out.credentialId = node.get_string("credentialId");
     const std::string label = node.get_string("credentialLabel");
     if (!label.empty()) out.credentialLabel = label;
+    out.credentialAssigned = node.get_bool("credentialAssigned", true);
     out.enabled = node.get_bool("enabled", true);
     out.quota = static_cast<int>(node.get_number("dailyQuota", 0));
     out.created_at = static_cast<long long>(node.get_number("createdAt", 0));
@@ -2375,9 +2384,15 @@ void merge_local_flags() {
         // 证书名：平台随 Key 一起下发的最权威，其次查本地证书列表，最后用本机副本记的名字
         const std::string known_label = key.credentialLabel;
         key.credentialLabel.clear();
+        bool assigned = false;
         for (const auto &credential : a->credentials) {
             if (credential.id != key.credentialId) continue;
             key.credentialLabel = credential.label.empty() ? credential.email : credential.label;
+            assigned = true;
+        }
+        // 证书列表里没有 = 平台已经不给这个账号用了（老服务端没有 credentialAssigned 字段也能判出来）
+        if (!assigned && key.credentialAssigned && !key.orphan && !key.credentialId.empty() && !a->credentials.empty()) {
+            key.credentialAssigned = false;
         }
         if (key.credentialLabel.empty()) key.credentialLabel = known_label;
         if (key.credentialLabel.empty() && local) key.credentialLabel = local->credential_label;
@@ -2564,6 +2579,21 @@ void apply_sync_result(LoginResult *result) {
     set_status(0, tr("keys.synced"));
     update_account_text();
     refresh_keys_view();
+
+    // 同步回来说当前这把 Key 的证书被撤销了：别让它继续停在签名页
+    if (a->page == PAGE_SIGN && !a->settings.api_key.empty()) {
+        for (const auto &key : a->keys) {
+            if (key.orphan) continue;
+            LocalKey *local = find_local_key(a->settings.server, key.id);
+            if (!local || local->plaintext != a->settings.api_key) continue;
+            if (!key.credentialAssigned) {
+                a->keys_note = tr("keys.credRevokedHint");
+                set_status(3, tr("keys.credRevokedHint"));
+                set_page(PAGE_KEYS);
+            }
+            break;
+        }
+    }
     delete result;
 }
 
@@ -2679,6 +2709,12 @@ void use_selected_key() {
         InvalidateRect(a->window, nullptr, FALSE);
         return;
     }
+    if (!key.credentialAssigned) {
+        a->keys_note = tr("keys.credRevokedHint");
+        set_status(3, tr("keys.credRevokedHint"));
+        InvalidateRect(a->window, nullptr, FALSE);
+        return;
+    }
 
     LocalKey *local = find_local_key(a->settings.server, key.id);
     if (local && !local->plaintext.empty()) {
@@ -2696,6 +2732,13 @@ void use_selected_key() {
 void reveal_key(const KeyItem &key, bool silent) {
     App *a = g_app;
     if (!a || a->busy) return;
+    if (!key.credentialAssigned) {
+        a->error = tr("keys.credRevokedHint");
+        a->keys_note = tr("keys.credRevokedHint");
+        set_status(3, tr("keys.credRevokedHint"));
+        InvalidateRect(a->window, nullptr, FALSE);
+        return;
+    }
 
     std::string plaintext;
     std::string hash;
@@ -2898,6 +2941,9 @@ void refresh_whoami() {
                 }
             } else if (response.status == 401) {
                 result->unauthorized = true;
+            } else {
+                result->error_code = error_code(root);
+                result->error_text = error_text(root, "");
             }
         }
         PostMessageW(window, WM_APP_WHOAMI_DONE, 0, reinterpret_cast<LPARAM>(result));
@@ -2913,6 +2959,11 @@ void auto_pick_key() {
 
     for (const auto &key : a->keys) {
         if (key.orphan) continue;
+        // 证书被撤销的 Key 不能沿用，否则会停在签名页却一直签失败
+        if (!key.credentialAssigned) {
+            a->keys_note = tr("keys.credRevokedHint");
+            continue;
+        }
         LocalKey *local = find_local_key(a->settings.server, key.id);
         if (local && !local->plaintext.empty() && local->plaintext == a->settings.api_key) {
             append_log("已登录：" + a->settings.username + "，沿用本机 Key " + key.name);
@@ -3523,6 +3574,11 @@ void draw_key_item(const DRAWITEMSTRUCT *item) {
     const int tag_w = px(78);
     const int tag_h = px(20);
     const int tag_y = r.top + px(10);
+    if (!key.credentialAssigned && !key.orphan) {
+        RECT revoked{tag_right - tag_w, tag_y, tag_right, tag_y + tag_h};
+        draw_tag(dc, revoked, tr("keys.credRevoked"), p.bad, color_mix(p.bad, p.card));
+        tag_right = revoked.left - px(6);
+    }
     if (active) {
         RECT current{tag_right - tag_w, tag_y, tag_right, tag_y + tag_h};
         draw_tag(dc, current, tr("keys.current"), p.accent, color_mix(p.accent, p.card));
@@ -4696,6 +4752,16 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
                 }
                 if (!text.empty()) a->account = text;
                 InvalidateRect(window, nullptr, FALSE);
+            } else if (result->error_code == "credential_not_assigned" ||
+                       result->error_code == "credential_disabled" ||
+                       result->error_code == "credential_missing") {
+                // Key 本身还在，但绑定的证书已经不归这个账号：不要停在签名页
+                std::wstring notice =
+                    result->error_text.empty() ? tr("keys.credRevokedHint") : widen(result->error_text);
+                a->keys_note = notice;
+                a->error = notice;
+                set_status(3, notice);
+                set_page(PAGE_KEYS);
             }
             delete result;
         }

@@ -38,6 +38,8 @@ interface KeyView {
   credentialId: string;
   /** 绑定的证书名字，客户端直接显示在 Key 卡片上 */
   credentialLabel: string;
+  /** 这套证书是否仍分配给当前账号；false 时这把 Key 已经签不了 */
+  credentialAssigned: boolean;
   enabled: boolean;
   dailyQuota: number;
   createdAt: number;
@@ -54,26 +56,30 @@ function userView(record: UserRecord) {
   return { id: record.id, email: record.email, username: record.email, expiresAt: record.expiresAt ?? 0 };
 }
 
-function keyView(record: ApiKeyRecord, credentialLabel = ""): KeyView {
+function keyView(record: ApiKeyRecord, credentialLabel = "", credentialAssigned = true): KeyView {
   return {
     id: record.id,
     name: record.name,
     prefix: record.prefix,
     credentialId: record.credentialId,
     credentialLabel,
+    credentialAssigned,
     enabled: record.enabled,
     dailyQuota: record.dailyQuota,
     createdAt: record.createdAt,
   };
 }
 
-/** 列表里的 Key 带上证书名：即使证书没分配给这个人，也能说清这把 Key 用哪张证书 */
+/** 列表里的 Key 带上证书名与分配状态：证书被撤销后，客户端能直接标出来 */
 function keyViews(
   keys: ApiKeyRecord[],
   credentials: { id: string; label: string; email: string }[],
+  assignedIds: string[],
 ): KeyView[] {
   const labels = new Map(credentials.map((cred) => [cred.id, cred.label || cred.email]));
-  return keys.map((key) => keyView(key, labels.get(key.credentialId) ?? ""));
+  return keys.map((key) =>
+    keyView(key, labels.get(key.credentialId) ?? "", assignedIds.includes(key.credentialId)),
+  );
 }
 
 function fail(c: Context<ClientEnv>, status: 400 | 401 | 403 | 404 | 429 | 500, code: string, message: string, extra?: Record<string, unknown>): Response {
@@ -211,7 +217,7 @@ clientApi.post("/login", async (c) => {
     credentials: credentials
       .filter((cred) => account.credentialIds.includes(cred.id))
       .map((cred): CredentialView => ({ id: cred.id, label: cred.label, email: cred.email })),
-    keys: keyViews(keys, credentials),
+    keys: keyViews(keys, credentials, account.credentialIds),
   });
 });
 
@@ -250,7 +256,7 @@ secure.get("/session", async (c) => {
     credentials: credentials
       .filter((cred) => account.credentialIds.includes(cred.id))
       .map((cred): CredentialView => ({ id: cred.id, label: cred.label, email: cred.email })),
-    keys: keyViews(keys, credentials),
+    keys: keyViews(keys, credentials, account.credentialIds),
   });
 });
 
@@ -267,7 +273,7 @@ secure.get("/keys", async (c) => {
     listKeysOfUser(c.env, account.id),
     listCredentials(c.env),
   ]);
-  return c.json({ ok: true, keys: keyViews(keys, credentials) });
+  return c.json({ ok: true, keys: keyViews(keys, credentials, account.credentialIds) });
 });
 
 secure.post("/keys", async (c) => {
@@ -328,6 +334,16 @@ secure.post("/keys/:id/reveal", async (c) => {
     return fail(c, 404, "key_not_found", "找不到该 Key");
   }
   if (!record.enabled) return fail(c, 403, "key_disabled", "该 Key 已停用");
+  // 换发也是一次重新绑定：证书不归这个人了就不允许再换发
+  if (!account.credentialIds.includes(record.credentialId)) {
+    const credential = await getCredential(c.env, record.credentialId);
+    return fail(
+      c,
+      403,
+      "credential_not_assigned",
+      `这把 Key 绑定的证书${credential ? `「${credential.label}」` : ""}已不再分配给你，请联系管理员重新分配`,
+    );
+  }
 
   const body = await readBody(c);
   const localHash = body.hash ?? "";

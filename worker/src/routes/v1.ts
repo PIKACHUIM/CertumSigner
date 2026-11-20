@@ -22,6 +22,7 @@ import { base64Decode } from "../lib/pem";
 import { normalizeHex, randomId, toHex } from "../lib/encoding";
 import { bumpDailyUsage, bumpUserDailyUsage, getDailyUsage, getUserDailyUsage, touchApiKey, verifyApiKey } from "../store/keys";
 import { getCredential } from "../store/credentials";
+import { assignmentIssue } from "../lib/assignment";
 import { getUser } from "../store/users";
 import { readStats, recordSign } from "../store/stats";
 import { readConfig } from "../store/config.ts";
@@ -102,6 +103,13 @@ v1.use("*", async (c, next) => {
       { ok: false, error: { code: "credential_disabled", message: `凭据「${credential.label}」已停用` } },
       403,
     );
+  }
+
+  // Key 绑的证书必须仍分配给 Key 的主人：后台撤销分配后，旧 Key 不能继续用这套证书签名
+  if (record.userId) {
+    const owner = await getUser(c.env, record.userId);
+    const issue = assignmentIssue(owner, record.credentialId, credential.label);
+    if (issue) return c.json({ ok: false, error: issue }, 403);
   }
 
   c.set("apiKey", record);
