@@ -2174,6 +2174,9 @@ void apply_login_result(LoginResult *result) {
     delete result;
 }
 
+void parse_key_view(const Json &node, KeyItem &out);
+void parse_credential_view(const Json &node, CredentialItem &out);
+
 void do_login() {
     App *a = g_app;
     if (!a || a->busy) return;
@@ -2234,21 +2237,14 @@ void do_login() {
         if (const Json *credentials = root.find("credentials"); credentials && credentials->type == Json::Type::Array) {
             for (const auto &item : credentials->items) {
                 CredentialItem credential;
-                credential.id = item.get_string("id");
-                credential.label = item.get_string("label");
-                credential.email = item.get_string("email");
+                parse_credential_view(item, credential);
                 if (!credential.id.empty()) result->credentials.push_back(credential);
             }
         }
         if (const Json *keys = root.find("keys"); keys && keys->type == Json::Type::Array) {
             for (const auto &item : keys->items) {
                 KeyItem key;
-                key.id = item.get_string("id");
-                key.name = item.get_string("name");
-                key.prefix = item.get_string("prefix");
-                key.credentialId = item.get_string("credentialId");
-                key.enabled = item.get_bool("enabled", true);
-                key.quota = static_cast<int>(item.get_number("dailyQuota", 0));
+                parse_key_view(item, key);
                 if (!key.id.empty()) result->keys.push_back(key);
             }
         }
