@@ -25,6 +25,8 @@ concurrency:
 jobs:
   build:
     uses: ./.github/workflows/build-clients.yml
+    # Windows 产物要用 Certum/Finnox 证书签名，把签名相关 Secret 传下去
+    secrets: inherit
 
   publish:
     name: Publish release
@@ -84,6 +86,7 @@ jobs:
             | Linux | x64 / arm64 | GUI（GTK3）、CLI |
 
             - Windows 产物用 vcpkg 静态链接 OpenSSL，解压即用，无需额外运行库。
+            - Windows 的 `certumsigner.exe` 由本项目自己调用 Certum 云签名，证书为 **Finnox Tech Ltd**（v1.3 起）；Linux 产物未签名。
             - CLI 版不含 Win32 / GTK 界面；同一个可执行文件加 `--gui` 也能开界面（GUI 版）。
             - 客户端用法见包内 `README-client.md` 或仓库 [client/README.md](https://github.com/${{ github.repository }}/blob/${{ steps.version.outputs.tag }}/client/README.md)。
             - 想看每次客户端改动的最新构建：见 [`beta`](https://github.com/${{ github.repository }}/releases/tag/beta) 预发布。

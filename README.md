@@ -340,6 +340,19 @@ git tag v1.0 && git push origin v1.0        # 发正式版
 
 早期的滚动 `latest` release 已下线：主页与 README 里的 `/releases/latest` 会自动跟随最新**正式版**，`beta` 是预发布，不会顶掉它。构建流程在 `.github/workflows/build-clients.yml`（可复用），发布入口分别是 `release.yml` 与 `beta.yml`。
 
+### Windows 产物签名
+
+`v1.3` 起，Windows 的 `certumsigner.exe` 在发布前会用 **Finnox Tech Ltd** 的 Certum 云签名证书签一遍：CI 里跑本项目自己的 CLI（`certumsigner sign`），把摘要发给平台、再由 Certum 云端 HSM 返回签名，私钥不落地。这需要两个仓库 Secret：
+
+| Secret | 内容 |
+| --- | --- |
+| `CERTUM_SIGNER_SERVER` | 平台地址，例如 `https://certum.524228.xyz` |
+| `CERTUM_SIGNER_API_KEY` | 绑定 Finnox 证书的 `csk_…` Key |
+
+配置顺序：后台「用户 → 分配证书」把 Finnox 证书分给签名账号 → 用客户端新建一把绑定该证书的 Key → 把地址与 Key 存进 Secrets。缺 Secret 时 beta 只告警不签名，打 `v*` tag 发正式版会直接失败（避免发出未签名产物）。
+
+签名由 x64 的 CLI 统一完成，arm64 的 exe 也不需要跑起来；签完立刻用 `WinVerifyTrust` 校验，不通过就中断发布。
+
 ## 安全设计
 
 - **OTP 种子存在 KV 的凭据记录里**，客户端拿不到，也不参与签名；KV 是静态加密的，但能读这个 namespace 的 API Token 就能读到明文，生产环境请把 Token 权限收紧到单个 namespace。

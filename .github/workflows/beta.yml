@@ -11,6 +11,7 @@ on:
       - "client/src/**"
       - "client/CMakeLists.txt"
       - "LICENSE"
+      - ".github/workflows/**"
   workflow_dispatch:
 
 permissions:
@@ -23,6 +24,8 @@ concurrency:
 jobs:
   build:
     uses: ./.github/workflows/build-clients.yml
+    # Windows 产物要用 Certum/Finnox 证书签名，把签名相关 Secret 传下去
+    secrets: inherit
 
   publish:
     name: Publish beta

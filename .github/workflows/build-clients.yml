@@ -83,19 +83,23 @@ jobs:
             -DCS_BUILD_GUI=OFF
           cmake --build build-cli --config Release --parallel
 
-      - name: Package (Windows)
+      # Windows 先在矩阵里只产出裸 exe，签名与打包留给 sign-windows 任务：
+      # arm64 的 exe 在 x64 runner 上跑不起来，必须用 x64 的 CLI 去签它。
+      - name: Stage executables (Windows)
         if: matrix.family == 'windows'
         shell: pwsh
         run: |
-          $arch = "${{ matrix.arch }}"
-          foreach ($form in @('gui', 'cli')) {
-            $stage = "stage-$form"
-            New-Item -ItemType Directory -Force -Path $stage | Out-Null
-            Copy-Item "build-$form/Release/certumsigner.exe" "$stage/certumsigner.exe"
-            Copy-Item "LICENSE" "$stage/LICENSE.txt"
-            Copy-Item "client/README.md" "$stage/README-client.md"
-            Compress-Archive -Path "$stage/*" -DestinationPath "certumsigner-windows-$arch-$form.zip" -Force
-          }
+          Copy-Item "build-gui/Release/certumsigner.exe" "certumsigner-gui.exe"
+          Copy-Item "build-cli/Release/certumsigner.exe" "certumsigner-cli.exe"
+      - name: Upload raw executables (Windows)
+        if: matrix.family == 'windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: win-exe-${{ matrix.arch }}
+          path: |
+            certumsigner-gui.exe
+            certumsigner-cli.exe
+          if-no-files-found: error
 
       - name: Build GUI (Linux)
         if: matrix.family == 'linux'
@@ -123,11 +127,91 @@ jobs:
             tar -czf "certumsigner-linux-${{ matrix.arch }}-$form.tar.gz" -C "$stage" certumsigner LICENSE README-client.md
           done
 
-      - name: Upload artifacts
+      - name: Upload artifacts (Linux)
+        if: matrix.family == 'linux'
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.family }}-${{ matrix.arch }}
           path: |
-            certumsigner-*.zip
             certumsigner-*.tar.gz
           if-no-files-found: error
+
+  # Windows 的签名与打包：用 x64 的 CLI（本项目自己）给两个架构的 exe 加 Certum 云签名。
+  # 需要仓库 Secret：CERTUM_SIGNER_SERVER、CERTUM_SIGNER_API_KEY（绑定 Finnox 证书的 Key）。
+  sign-windows:
+    name: sign-windows
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Windows executables
+        uses: actions/download-artifact@v4
+        with:
+          pattern: win-exe-*
+          path: raw
+
+      - name: Sign with Certum certificate
+        shell: pwsh
+        env:
+          CERTUM_SIGNER_SERVER: ${{ secrets.CERTUM_SIGNER_SERVER }}
+          CERTUM_SIGNER_API_KEY: ${{ secrets.CERTUM_SIGNER_API_KEY }}
+        run: |
+          $server = $env:CERTUM_SIGNER_SERVER
+          $key = $env:CERTUM_SIGNER_API_KEY
+          $exes = @(Get-ChildItem -Path raw -Recurse -Filter *.exe | Sort-Object FullName)
+          if ($exes.Count -eq 0) { throw "没有找到待签名的可执行文件" }
+
+          if (-not $server -or -not $key) {
+            $isRelease = "${{ github.event_name }}" -eq "push" -and "${{ github.ref }}".StartsWith("refs/tags/")
+            if ($isRelease) {
+              throw "缺少 CERTUM_SIGNER_SERVER / CERTUM_SIGNER_API_KEY 仓库 Secret：正式版必须用 Finnox 证书签名"
+            }
+            Write-Warning "未配置签名 Secret，本次 Windows 产物未签名（仅允许 beta 这样）"
+            exit 0
+          }
+
+          # 用 x64 的 CLI 签所有架构；先复制到临时目录，避免改正在运行的 exe
+          $host_cli = (Get-ChildItem -Path raw -Recurse -Filter certumsigner-cli.exe |
+            Where-Object { $_.FullName -match 'win-exe-x64' } | Select-Object -First 1).FullName
+          if (-not $host_cli) { throw "找不到 x64 的 certumsigner-cli.exe，无法签名" }
+          $signer = Join-Path $env:RUNNER_TEMP "certumsigner-signer.exe"
+          Copy-Item $host_cli $signer -Force
+
+          foreach ($exe in $exes) {
+            Write-Host "== 签名 $($exe.FullName)"
+            & $signer sign $exe.FullName --yes
+            if ($LASTEXITCODE -ne 0) { throw "签名失败：$($exe.FullName)" }
+            & $signer verify $exe.FullName
+            if ($LASTEXITCODE -ne 0) { throw "签名校验失败：$($exe.FullName)" }
+          }
+
+      - name: Package (Windows)
+        shell: pwsh
+        run: |
+          foreach ($arch in @('x64', 'arm64')) {
+            foreach ($form in @('gui', 'cli')) {
+              $stage = "stage-$arch-$form"
+              New-Item -ItemType Directory -Force -Path $stage | Out-Null
+              Copy-Item "raw/win-exe-$arch/certumsigner-$form.exe" "$stage/certumsigner.exe"
+              Copy-Item "LICENSE" "$stage/LICENSE.txt"
+              Copy-Item "client/README.md" "$stage/README-client.md"
+              Compress-Archive -Path "$stage/*" -DestinationPath "certumsigner-windows-$arch-$form.zip" -Force
+            }
+          }
+
+      - name: Upload artifacts (Windows x64)
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64
+          path: certumsigner-windows-x64-*.zip
+          if-no-files-found: error
+
+      - name: Upload artifacts (Windows arm64)
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-arm64
+          path: certumsigner-windows-arm64-*.zip
+          if-no-files-found: error
+
