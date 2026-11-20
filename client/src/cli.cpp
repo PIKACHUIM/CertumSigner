@@ -25,7 +25,7 @@ namespace cs {
 
 namespace {
 
-const char *kVersion = "1.2.0";
+const char *kVersion = "1.3.0";
 
 #if defined(_WIN32)
 std::wstring widen_utf8(const std::string &text) {

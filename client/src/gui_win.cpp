@@ -327,8 +327,8 @@ const TextRow kTexts[] = {
     {"set.saved", L"已保存", L"Saved"},
     {"common.unlimited", L"不限", L"Unlimited"},
     {"keys.perDay", L" 次/天", L" / day"},
-    {"set.version", L"v1.2.0 · 私钥始终在 Certum 云端，本机只发送摘要",
-     L"v1.2.0 · the private key stays in Certum's cloud; only digests leave this machine"},
+    {"set.version", L"v1.3.0 · 私钥始终在 Certum 云端，本机只发送摘要",
+     L"v1.3.0 · the private key stays in Certum's cloud; only digests leave this machine"},
 
     {"lic.title", L"软件许可", L"License"},
     {"lic.sub", L"本程序以 AGPL-3.0 许可发布，许可全文与源码地址见下方",
