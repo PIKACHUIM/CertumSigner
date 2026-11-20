@@ -74,6 +74,7 @@ constexpr int IDC_K_CREATE = 1205;
 constexpr int IDC_K_REISSUE = 1206;
 constexpr int IDC_K_DELETE = 1207;
 constexpr int IDC_K_SYNC = 1208;
+constexpr int IDC_K_CREDS = 1209;
 
 constexpr int IDC_S_DROP = 1301;
 constexpr int IDC_S_LIST = 1302;
@@ -225,7 +226,9 @@ const TextRow kTexts[] = {
     {"keys.rotateBusy", L"正在换发新值…", L"Rotating the secret…"},
     {"keys.deleteBusy", L"正在删除平台上的 Key…", L"Deleting the key…"},
     {"keys.defaultName", L"桌面端", L"desktop"},
-    {"keys.noCred", L"管理员还没有给你分配证书", L"No certificate assigned yet"},
+    {"keys.noCred", L"暂无可用证书", L"No certificate"},
+    {"keys.refreshCreds", L"刷新证书", L"Reload"},
+    {"keys.credCount", L"可用 %d 张", L"%d available"},
     {"keys.current", L"当前使用", L"In use"},
     {"keys.revealed", L"新的 API Key", L"Your new API key"},
     {"keys.revealedBody", L"已保存到本机；旧值立即失效，请在其他设备上重新换发。",
@@ -461,6 +464,7 @@ struct App {
     HWND keyReissue = nullptr;
     HWND keyDelete = nullptr;
     HWND keySync = nullptr;
+    HWND keyCreds = nullptr;
 
     HWND drop = nullptr;
     HWND list = nullptr;
@@ -633,6 +637,23 @@ HFONT make_font(int size_px, int weight, const wchar_t *face) {
 
 RECT rect(int x, int y, int w, int h) {
     return RECT{px(x), px(y), px(x + w), px(y + h)};
+}
+
+/** 正文一行字实际占的高度：输入框按它定高，文字才会在圆角框里居中 */
+int body_text_height() {
+    static int cached = 0;
+    if (cached > 0) return cached;
+    App *a = g_app;
+    if (!a || !a->fontBody) return px(16);
+    HDC dc = GetDC(a->window);
+    if (!dc) return px(16);
+    HGDIOBJ old = SelectObject(dc, a->fontBody);
+    TEXTMETRICW metrics{};
+    GetTextMetricsW(dc, &metrics);
+    SelectObject(dc, old);
+    ReleaseDC(a->window, dc);
+    cached = metrics.tmHeight > 0 ? metrics.tmHeight : px(16);
+    return cached;
 }
 
 void fill_rect(HDC dc, const RECT &r, COLORREF color) {
@@ -1033,7 +1054,7 @@ ControlSet login_controls() {
 ControlSet keys_controls() {
     App *a = g_app;
     return {{a->keyList, a->keyUse, a->keyName, a->keyCred, a->keyCreate, a->keyReissue, a->keyDelete,
-             a->keySync}};
+             a->keySync, a->keyCreds}};
 }
 
 ControlSet sign_controls() {
@@ -1138,6 +1159,7 @@ void set_busy(bool busy) {
     EnableWindow(a->keyReissue, busy ? FALSE : TRUE);
     EnableWindow(a->keyDelete, busy ? FALSE : TRUE);
     EnableWindow(a->keySync, busy ? FALSE : TRUE);
+    EnableWindow(a->keyCreds, busy ? FALSE : TRUE);
     if (busy) {
         SetTimer(a->window, TIMER_ANIM, 33, nullptr);
     } else {
@@ -2088,6 +2110,7 @@ void persist_settings();
 void update_account_text();
 void merge_local_flags();
 void refresh_keys_view();
+void refresh_credentials();
 LocalKey *find_local_key(const std::string &server, const std::string &id);
 
 void apply_login_result(LoginResult *result) {
@@ -2227,6 +2250,16 @@ void do_login() {
 
 /* ---------------------- 本机 Key 存储与平台会话 ---------------------- */
 
+/** 登录页的输入框：回车等于点「登录」，不依赖消息循环里的取巧判断 */
+LRESULT CALLBACK login_edit_proc(HWND control, UINT message, WPARAM wparam, LPARAM lparam, UINT_PTR, DWORD_PTR) {
+    if (message == WM_KEYDOWN && wparam == VK_RETURN && g_app && g_app->page == PAGE_LOGIN) {
+        do_login();
+        return 0;
+    }
+    if (message == WM_CHAR && wparam == L'\r') return 0;
+    return DefSubclassProc(control, message, wparam, lparam);
+}
+
 long long now_seconds() {
     return static_cast<long long>(
         std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count());
@@ -2237,6 +2270,8 @@ void parse_key_view(const Json &node, KeyItem &out) {
     out.name = node.get_string("name");
     out.prefix = node.get_string("prefix");
     out.credentialId = node.get_string("credentialId");
+    const std::string label = node.get_string("credentialLabel");
+    if (!label.empty()) out.credentialLabel = label;
     out.enabled = node.get_bool("enabled", true);
     out.quota = static_cast<int>(node.get_number("dailyQuota", 0));
     out.created_at = static_cast<long long>(node.get_number("createdAt", 0));
@@ -2337,10 +2372,15 @@ void merge_local_flags() {
             append_log("本机保存的 Key 已在别处换发，丢弃旧明文：" + key.name);
         }
         key.local = local != nullptr;
+        // 证书名：平台随 Key 一起下发的最权威，其次查本地证书列表，最后用本机副本记的名字
+        const std::string known_label = key.credentialLabel;
         key.credentialLabel.clear();
         for (const auto &credential : a->credentials) {
-            if (credential.id == key.credentialId) key.credentialLabel = credential.label;
+            if (credential.id != key.credentialId) continue;
+            key.credentialLabel = credential.label.empty() ? credential.email : credential.label;
         }
+        if (key.credentialLabel.empty()) key.credentialLabel = known_label;
+        if (key.credentialLabel.empty() && local) key.credentialLabel = local->credential_label;
     }
 
     // 旧配置迁移：老版本只在 config 里存了 api_key，没有 local_keys。
@@ -2462,6 +2502,22 @@ void sync_keys(bool silent) {
         }
         PostMessageW(window, WM_APP_KEYS_DONE, 0, reinterpret_cast<LPARAM>(result));
     }).detach();
+}
+
+/** 「刷新证书」：重新拉一次会话，证书和 Key 列表一起更新 */
+void refresh_credentials() {
+    App *a = g_app;
+    if (!a || a->busy) return;
+    if (a->settings.session_token.empty() && a->token.empty()) {
+        a->keys_note = tr("keys.needLogin");
+        set_status(3, tr("keys.needLogin"));
+        InvalidateRect(a->window, nullptr, FALSE);
+        set_page(PAGE_LOGIN);
+        return;
+    }
+    a->keys_note = tr("keys.busy");
+    InvalidateRect(a->window, nullptr, FALSE);
+    sync_keys(false);
 }
 
 void apply_sync_result(LoginResult *result) {
@@ -2906,7 +2962,7 @@ void layout_controls() {
     if (a->logoutBtn) MoveWindow(a->logoutBtn, px(16) + (icon_w + icon_gap) * 2, icons_y, icon_w, icon_h, TRUE);
 
     // 输入框只占一行文字的高度，在绘制出来的圆角框里垂直居中
-    const int edit_h = px(26);
+    const int edit_h = body_text_height() + px(4);
     auto place_edit = [&](HWND control, int x, int y, int w, int box_h, int pad = 12) {
         if (!control) return;
         MoveWindow(control, px(x) + dx + px(pad), px(y) + (px(box_h) - edit_h) / 2, px(w) - px(pad * 2), edit_h,
@@ -2925,7 +2981,8 @@ void layout_controls() {
     if (a->keyDelete) MoveWindow(a->keyDelete, px(640) + dx, px(440), px(180), px(38), TRUE);
     if (a->keySync) MoveWindow(a->keySync, px(840) + dx, px(440), px(180), px(38), TRUE);
     place_edit(a->keyName, 248, 556, 240, 38);
-    if (a->keyCred) MoveWindow(a->keyCred, px(500) + dx, px(556), px(300), px(38), TRUE);
+    if (a->keyCred) MoveWindow(a->keyCred, px(500) + dx, px(556), px(242), px(38), TRUE);
+    if (a->keyCreds) MoveWindow(a->keyCreds, px(748) + dx, px(556), px(62), px(38), TRUE);
     if (a->keyCreate) MoveWindow(a->keyCreate, px(812) + dx, px(556), px(200), px(38), TRUE);
 
     if (a->drop) MoveWindow(a->drop, px(224) + dx, px(78), px(812), px(132), TRUE);
@@ -3084,12 +3141,20 @@ void paint_keys(HDC dc) {
 
     draw_text(dc, tr("keys.newTitle"), rect(248, 516, 300, 24), a->fontButton, p.text);
     draw_text(dc, tr("keys.name"), rect(248, 538, 200, 16), a->fontTiny, p.muted2);
-    draw_text(dc, tr("keys.cred"), rect(500, 538, 280, 16), a->fontTiny, p.muted2);
+    std::wstring cred_head = tr("keys.cred");
+    if (!a->credentials.empty()) {
+        wchar_t buf[64] = {0};
+        swprintf_s(buf, tr("keys.credCount").c_str(), static_cast<int>(a->credentials.size()));
+        cred_head += L"  ·  ";
+        cred_head += buf;
+    }
+    draw_text(dc, cred_head, rect(500, 538, 242, 16), a->fontTiny, p.muted2,
+              DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
     fill_round(dc, rect(248, 556, 240, 38), px(9), p.input);
     stroke_round(dc, rect(248, 556, 240, 38), px(9), GetFocus() == a->keyName ? p.accent : p.inputEdge);
 
     if (a->credentials.empty()) {
-        draw_text(dc, tr("keys.noCred"), rect(500, 556, 300, 38), a->fontSmall, p.muted2,
+        draw_text(dc, tr("keys.noCred"), rect(500, 556, 242, 38), a->fontSmall, p.muted2,
                   DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
     }
 
@@ -3474,7 +3539,15 @@ void draw_key_item(const DRAWITEMSTRUCT *item) {
 
     // 第二行：绑定的证书凭据 · 前缀 · 每日限额
     std::wstring line = widen(key.credentialLabel);
-    if (line.empty()) line = tr("keys.cred") + L" —";
+    if (line.empty()) {
+        if (key.credentialId.empty()) {
+            line = tr("keys.cred") + L" —";
+        } else {
+            const std::string &id = key.credentialId;
+            const std::string tail = id.size() > 8 ? id.substr(id.size() - 8) : id;
+            line = tr("keys.cred") + L" " + widen(tail);
+        }
+    }
     if (!key.enabled) line += L"  ·  " + tr("keys.disabled");
     if (!key.prefix.empty()) line += L"  ·  " + widen(key.prefix) + L"…";
     if (key.quota > 0) line += L"  ·  " + widen(std::to_string(key.quota)) + tr("keys.perDay");
@@ -3582,7 +3655,8 @@ void draw_ownerdraw(const DRAWITEMSTRUCT *item) {
     }
 
     if (id == IDC_S_VERIFY || id == IDC_K_USE || id == IDC_K_CREATE || id == IDC_K_REISSUE || id == IDC_K_DELETE ||
-        id == IDC_K_SYNC || id == IDC_T_RELOGIN || id == IDC_T_LICENSE || id == IDC_T_PROJECT || id == IDC_L_LOGIN) {
+        id == IDC_K_SYNC || id == IDC_K_CREDS || id == IDC_T_RELOGIN || id == IDC_T_LICENSE || id == IDC_T_PROJECT ||
+        id == IDC_L_LOGIN) {
         const bool primary = id == IDC_L_LOGIN || id == IDC_K_CREATE || id == IDC_K_USE;
         std::wstring label;
         switch (id) {
@@ -3592,6 +3666,7 @@ void draw_ownerdraw(const DRAWITEMSTRUCT *item) {
         case IDC_K_REISSUE: label = tr("keys.reissue"); break;
         case IDC_K_DELETE: label = tr("keys.del"); break;
         case IDC_K_SYNC: label = tr("keys.sync"); break;
+        case IDC_K_CREDS: label = tr("keys.refreshCreds"); break;
         case IDC_L_LOGIN: label = tr("login.submit"); break;
         case IDC_T_RELOGIN: label = tr("set.relogin"); break;
         case IDC_T_LICENSE: label = tr("set.license"); break;
@@ -3951,7 +4026,9 @@ void dropdown_open(int id) {
 
     RECT anchor{};
     GetWindowRect(button, &anchor);
-    const int width = anchor.right - anchor.left;
+    // 证书下拉比按钮宽一点，长名字不至于一进弹层就被截掉
+    int width = anchor.right - anchor.left;
+    if (id == IDC_K_CRED && width < px(340)) width = px(340);
     const int item_height = px(30);
     int height = static_cast<int>(items.size()) * item_height + px(8);
     const int max_height = px(324);
@@ -3995,6 +4072,10 @@ void setup_controls(HWND window) {
     a->lgPass = make_control(L"EDIT", L"", edit_style | ES_PASSWORD, 0, rect(0, 0, 10, 10), IDC_L_PASS, window,
                              a->fontBody);
     a->lgLogin = make_control(L"BUTTON", L"", button, 0, rect(0, 0, 10, 10), IDC_L_LOGIN, window, a->fontButton);
+    // 三个输入框都接管回车，回车即登录
+    if (a->lgServer) SetWindowSubclass(a->lgServer, login_edit_proc, 4, 0);
+    if (a->lgUser) SetWindowSubclass(a->lgUser, login_edit_proc, 5, 0);
+    if (a->lgPass) SetWindowSubclass(a->lgPass, login_edit_proc, 6, 0);
 
     a->keyList = make_control(L"LISTBOX", L"", list_style, 0, rect(0, 0, 10, 10), IDC_K_LIST, window, a->fontBody);
     a->keyUse = make_control(L"BUTTON", L"", button, 0, rect(0, 0, 10, 10), IDC_K_USE, window, a->fontButton);
@@ -4004,6 +4085,7 @@ void setup_controls(HWND window) {
     a->keyReissue = make_control(L"BUTTON", L"", button, 0, rect(0, 0, 10, 10), IDC_K_REISSUE, window, a->fontButton);
     a->keyDelete = make_control(L"BUTTON", L"", button, 0, rect(0, 0, 10, 10), IDC_K_DELETE, window, a->fontButton);
     a->keySync = make_control(L"BUTTON", L"", button, 0, rect(0, 0, 10, 10), IDC_K_SYNC, window, a->fontButton);
+    a->keyCreds = make_control(L"BUTTON", L"", button, 0, rect(0, 0, 10, 10), IDC_K_CREDS, window, a->fontTiny);
 
     a->drop = make_control(L"BUTTON", L"", button, 0, rect(0, 0, 10, 10), IDC_S_DROP, window, a->fontBody);
     a->list = make_control(L"LISTBOX", L"", list_style, 0, rect(0, 0, 10, 10), IDC_S_LIST, window, a->fontBody);
@@ -4172,6 +4254,7 @@ void handle_command(int id, int code) {
             }
             sync_keys(false);
             return;
+        case IDC_K_CREDS: refresh_credentials(); return;
         case IDC_T_TSA:
         case IDC_T_LANG:
         case IDC_T_THEME:

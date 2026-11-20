@@ -8,7 +8,7 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import type { ApiKeyRecord, Env, UserRecord, UserSessionRecord } from "../types";
 import { authenticateUser, getUser, userExpired } from "../store/users";
-import { listCredentials } from "../store/credentials";
+import { getCredential, listCredentials } from "../store/credentials";
 import {
   createApiKey,
   createApiKeyFromHash,
@@ -36,6 +36,8 @@ interface KeyView {
   name: string;
   prefix: string;
   credentialId: string;
+  /** 绑定的证书名字，客户端直接显示在 Key 卡片上 */
+  credentialLabel: string;
   enabled: boolean;
   dailyQuota: number;
   createdAt: number;
@@ -52,16 +54,26 @@ function userView(record: UserRecord) {
   return { id: record.id, email: record.email, username: record.email, expiresAt: record.expiresAt ?? 0 };
 }
 
-function keyView(record: ApiKeyRecord): KeyView {
+function keyView(record: ApiKeyRecord, credentialLabel = ""): KeyView {
   return {
     id: record.id,
     name: record.name,
     prefix: record.prefix,
     credentialId: record.credentialId,
+    credentialLabel,
     enabled: record.enabled,
     dailyQuota: record.dailyQuota,
     createdAt: record.createdAt,
   };
+}
+
+/** 列表里的 Key 带上证书名：即使证书没分配给这个人，也能说清这把 Key 用哪张证书 */
+function keyViews(
+  keys: ApiKeyRecord[],
+  credentials: { id: string; label: string; email: string }[],
+): KeyView[] {
+  const labels = new Map(credentials.map((cred) => [cred.id, cred.label || cred.email]));
+  return keys.map((key) => keyView(key, labels.get(key.credentialId) ?? ""));
 }
 
 function fail(c: Context<ClientEnv>, status: 400 | 401 | 403 | 404 | 429 | 500, code: string, message: string, extra?: Record<string, unknown>): Response {
@@ -199,7 +211,7 @@ clientApi.post("/login", async (c) => {
     credentials: credentials
       .filter((cred) => account.credentialIds.includes(cred.id))
       .map((cred): CredentialView => ({ id: cred.id, label: cred.label, email: cred.email })),
-    keys: keys.map(keyView),
+    keys: keyViews(keys, credentials),
   });
 });
 
@@ -238,7 +250,7 @@ secure.get("/session", async (c) => {
     credentials: credentials
       .filter((cred) => account.credentialIds.includes(cred.id))
       .map((cred): CredentialView => ({ id: cred.id, label: cred.label, email: cred.email })),
-    keys: keys.map(keyView),
+    keys: keyViews(keys, credentials),
   });
 });
 
@@ -250,8 +262,12 @@ secure.post("/logout", async (c) => {
 /* --------------------------------- Key ---------------------------------- */
 
 secure.get("/keys", async (c) => {
-  const keys = await listKeysOfUser(c.env, c.get("clientUser").id);
-  return c.json({ ok: true, keys: keys.map(keyView) });
+  const account = c.get("clientUser");
+  const [keys, credentials] = await Promise.all([
+    listKeysOfUser(c.env, account.id),
+    listCredentials(c.env),
+  ]);
+  return c.json({ ok: true, keys: keyViews(keys, credentials) });
 });
 
 secure.post("/keys", async (c) => {
@@ -270,6 +286,7 @@ secure.post("/keys", async (c) => {
   const localPrefix = body.prefix ?? "";
 
   try {
+    const label = (await getCredential(c.env, credentialId))?.label ?? "";
     // 新版客户端自己生成明文，只上传哈希：服务端连“看到一次”的机会都没有
     if (localHash) {
       const record = await createApiKeyFromHash(c.env, {
@@ -281,7 +298,7 @@ secure.post("/keys", async (c) => {
         hash: localHash,
         prefix: localPrefix,
       });
-      return c.json({ ok: true, key: keyView(record) });
+      return c.json({ ok: true, key: keyView(record, label) });
     }
 
     const created = await createApiKey(c.env, {
@@ -294,7 +311,7 @@ secure.post("/keys", async (c) => {
     return c.json({
       ok: true,
       plaintext: created.plaintext,
-      key: keyView(created.record),
+      key: keyView(created.record, label),
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -317,16 +334,17 @@ secure.post("/keys/:id/reveal", async (c) => {
   const localPrefix = body.prefix ?? "";
 
   try {
+    const label = (await getCredential(c.env, record.credentialId))?.label ?? "";
     // 新版客户端：新明文也在本地生成，服务端只接收哈希
     if (localHash) {
       const rotated = await rotateApiKeyToHash(c.env, id, localHash, localPrefix);
       if (!rotated) return fail(c, 404, "key_not_found", "找不到该 Key");
-      return c.json({ ok: true, key: keyView(rotated) });
+      return c.json({ ok: true, key: keyView(rotated, label) });
     }
 
     const rotated = await rotateApiKey(c.env, id);
     if (!rotated) return fail(c, 404, "key_not_found", "找不到该 Key");
-    return c.json({ ok: true, plaintext: rotated.plaintext, key: keyView(rotated.record) });
+    return c.json({ ok: true, plaintext: rotated.plaintext, key: keyView(rotated.record, label) });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return fail(c, 400, "rotate_failed", message);
