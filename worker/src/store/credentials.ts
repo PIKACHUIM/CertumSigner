@@ -101,6 +101,33 @@ function normalizeSha1(raw: string | undefined): string | undefined {
   return clean;
 }
 
+/**
+ * 这次修改要不要扔掉已缓存的 Certum 会话 / 证书卡片。
+ *
+ * 改了登录邮箱或 TOTP 种子 = 换了另一个 Certum 账号，旧会话仍会以老账号身份签名；
+ * 换了证书指纹 = 旧卡片缓存指向另一张证书。两种情况都必须让缓存立刻失效，
+ * 否则管理员改完设置后签名结果还是旧的。
+ */
+export function credentialCacheImpact(
+  existing: Pick<CredentialRecord, "email" | "certificateSha1">,
+  patch: { email?: string; otp?: string; certificateSha1?: string },
+): { session: boolean; card: boolean } {
+  const emailChanged =
+    patch.email !== undefined && !!patch.email.trim() && patch.email.trim().toLowerCase() !== existing.email.toLowerCase();
+  const session = emailChanged || !!patch.otp?.trim();
+
+  let certChanged = false;
+  if (patch.certificateSha1 !== undefined) {
+    try {
+      certChanged = normalizeSha1(patch.certificateSha1) !== existing.certificateSha1;
+    } catch {
+      // 非法指纹会在 updateCredential 里报错，这里不必重复处理
+      certChanged = false;
+    }
+  }
+  return { session, card: session || certChanged };
+}
+
 export async function listCredentials(env: Env): Promise<CredentialRecord[]> {
   const list = await env.CERTUM_KV.list({ prefix: PREFIX, limit: 1000 });
   const records: CredentialRecord[] = [];

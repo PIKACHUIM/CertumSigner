@@ -7,7 +7,7 @@ import type { Context } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import type { AdminSessionRecord, ApiKeyRecord, CredentialRecord, Env, UserRecord } from "../types";
 import { CertumError } from "../certum/errors";
-import { getCardFor, getSessionFor, peekCard, peekSession, refreshCardFor } from "../certum/session";
+import { getCardFor, getSessionFor, invalidateSessionFor, peekCard, peekSession, refreshCardFor } from "../certum/session";
 import { constantTimeEqual } from "../lib/encoding";
 import { issueCaptcha, verifyCaptchaFor } from "../lib/captcha";
 import { mailConfigured } from "../lib/mail";
@@ -35,6 +35,8 @@ import {
 import {
   clampScanRisk,
   createCredential,
+  CRED_CARD_PREFIX,
+  credentialCacheImpact,
   deleteCredential,
   getCredential,
   listCredentials,
@@ -548,7 +550,7 @@ secure.post("/credentials/:id/update", async (c) => {
   if (!existing) return backWith(c, "/admin/credentials", "error", tr(c)("msg.notFoundCred"));
 
   try {
-    const ok = await updateCredential(c.env, id, {
+    const patch = {
       label: one(form, "label") || undefined,
       email: one(form, "email") || undefined,
       otp: one(form, "otp") || undefined,
@@ -557,7 +559,14 @@ secure.post("/credentials/:id/update", async (c) => {
       // 老页面没有这两个字段时保持原值，避免保存一次就把查杀关掉
       scanMode: form["scanMode"] !== undefined ? normalizeScanMode(one(form, "scanMode")) : undefined,
       scanMaxRisk: form["scanMaxRisk"] !== undefined ? clampScanRisk(one(form, "scanMaxRisk")) : undefined,
-    });
+    };
+    const ok = await updateCredential(c.env, id, patch);
+    if (ok) {
+      // 换账号或换证书后，旧的 Certum 会话/卡片缓存必须立刻作废
+      const impact = credentialCacheImpact(existing, patch);
+      if (impact.session) await invalidateSessionFor(c.env, existing);
+      if (impact.card) await c.env.CERTUM_KV.delete(`${CRED_CARD_PREFIX}${id}`);
+    }
     return backWith(c, "/admin/credentials", ok ? "ok" : "error", ok ? tr(c)("msg.credUpdated", { name: existing.label }) : tr(c)("msg.notFoundCred"));
   } catch (error) {
     return backWith(c, "/admin/credentials", "error", localizeError(tr(c), error instanceof Error ? error.message : String(error)));
