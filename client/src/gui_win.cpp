@@ -2334,6 +2334,30 @@ void merge_local_flags() {
         }
     }
 
+    // 旧配置迁移：老版本只在 config 里存了 api_key，没有 local_keys。
+    // 平台和客户端的前缀都取明文前 12 位，能对上就把这把 Key 认领回本机。
+    if (!a->settings.api_key.empty()) {
+        for (auto &key : a->keys) {
+            if (key.local || key.orphan || key.prefix.empty()) continue;
+            if (a->settings.api_key.size() <= key.prefix.size()) continue;
+            if (a->settings.api_key.compare(0, key.prefix.size(), key.prefix) != 0) continue;
+            LocalKey entry;
+            entry.id = key.id;
+            entry.name = key.name;
+            entry.prefix = key.prefix;
+            entry.credential_id = key.credentialId;
+            entry.credential_label = key.credentialLabel;
+            entry.server = a->settings.server;
+            entry.plaintext = a->settings.api_key;
+            entry.created_at = key.created_at > 0 ? key.created_at : now_seconds();
+            a->settings.local_keys.push_back(entry);
+            key.local = true;
+            if (a->settings.key_name.empty()) a->settings.key_name = key.name;
+            persist_settings();
+            append_log("已把配置里的 Key 认领回本机：" + key.name);
+        }
+    }
+
     for (const auto &item : a->settings.local_keys) {
         if (item.server != a->settings.server) continue;
         bool known = false;
@@ -2487,8 +2511,14 @@ void delete_key(size_t index) {
                         MB_ICONQUESTION | MB_YESNO) != IDYES) {
             return;
         }
+        const LocalKey *victim = find_local_key(a->settings.server, key.id);
+        const bool was_current = victim && victim->plaintext == a->settings.api_key;
         forget_local_key(key.id);
-        if (a->settings.api_key == key.prefix) a->settings.api_key.clear();
+        if (was_current) {
+            a->settings.api_key.clear();
+            a->settings.key_name.clear();
+            update_account_text();
+        }
         a->keys.erase(a->keys.begin() + static_cast<long>(index));
         persist_settings();
         a->keys_note = tr("keys.localDeleted");
@@ -2878,13 +2908,14 @@ void layout_controls() {
     if (a->lgLogin) MoveWindow(a->lgLogin, px(430) + dx, px(440), px(400), px(44), TRUE);
 
     if (a->keyList) MoveWindow(a->keyList, px(240) + dx, px(128), px(780), px(300), TRUE);
+    // 四个按钮等宽排开，右边缘和列表对齐（240 … 1020）
     if (a->keyUse) MoveWindow(a->keyUse, px(240) + dx, px(440), px(180), px(38), TRUE);
-    if (a->keyReissue) MoveWindow(a->keyReissue, px(432) + dx, px(440), px(180), px(38), TRUE);
-    if (a->keyDelete) MoveWindow(a->keyDelete, px(624) + dx, px(440), px(180), px(38), TRUE);
-    if (a->keySync) MoveWindow(a->keySync, px(816) + dx, px(440), px(180), px(38), TRUE);
-    place_edit(a->keyName, 248, 546, 240, 38);
-    if (a->keyCred) MoveWindow(a->keyCred, px(500) + dx, px(546), px(300), px(38), TRUE);
-    if (a->keyCreate) MoveWindow(a->keyCreate, px(812) + dx, px(546), px(200), px(38), TRUE);
+    if (a->keyReissue) MoveWindow(a->keyReissue, px(440) + dx, px(440), px(180), px(38), TRUE);
+    if (a->keyDelete) MoveWindow(a->keyDelete, px(640) + dx, px(440), px(180), px(38), TRUE);
+    if (a->keySync) MoveWindow(a->keySync, px(840) + dx, px(440), px(180), px(38), TRUE);
+    place_edit(a->keyName, 248, 556, 240, 38);
+    if (a->keyCred) MoveWindow(a->keyCred, px(500) + dx, px(556), px(300), px(38), TRUE);
+    if (a->keyCreate) MoveWindow(a->keyCreate, px(812) + dx, px(556), px(200), px(38), TRUE);
 
     if (a->drop) MoveWindow(a->drop, px(224) + dx, px(78), px(812), px(132), TRUE);
     if (a->list) MoveWindow(a->list, px(240) + dx, px(268), px(780), px(336), TRUE);
@@ -3012,7 +3043,7 @@ void paint_keys(HDC dc) {
               DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
 
     // 平台 Key 卡片：账号、同步状态、列表
-    const RECT card = rect(224, 78, 812, 392);
+    const RECT card = rect(224, 78, 812, 408);
     fill_round(dc, card, px(16), p.card);
     stroke_round(dc, card, px(16), p.edge);
 
@@ -3036,23 +3067,23 @@ void paint_keys(HDC dc) {
     stroke_round(dc, rect(240, 128, 780, 300), px(12), p.inputEdge);
 
     // 新建卡片：名称 + 证书凭据 + 新建
-    const RECT create_card = rect(224, 492, 812, 190);
+    const RECT create_card = rect(224, 502, 812, 190);
     fill_round(dc, create_card, px(16), p.card);
     stroke_round(dc, create_card, px(16), p.edge);
 
-    draw_text(dc, tr("keys.newTitle"), rect(248, 506, 300, 24), a->fontButton, p.text);
-    draw_text(dc, tr("keys.name"), rect(248, 528, 200, 16), a->fontTiny, p.muted2);
-    draw_text(dc, tr("keys.cred"), rect(500, 528, 280, 16), a->fontTiny, p.muted2);
-    fill_round(dc, rect(248, 546, 240, 38), px(9), p.input);
-    stroke_round(dc, rect(248, 546, 240, 38), px(9), GetFocus() == a->keyName ? p.accent : p.inputEdge);
+    draw_text(dc, tr("keys.newTitle"), rect(248, 516, 300, 24), a->fontButton, p.text);
+    draw_text(dc, tr("keys.name"), rect(248, 538, 200, 16), a->fontTiny, p.muted2);
+    draw_text(dc, tr("keys.cred"), rect(500, 538, 280, 16), a->fontTiny, p.muted2);
+    fill_round(dc, rect(248, 556, 240, 38), px(9), p.input);
+    stroke_round(dc, rect(248, 556, 240, 38), px(9), GetFocus() == a->keyName ? p.accent : p.inputEdge);
 
     if (a->credentials.empty()) {
-        draw_text(dc, tr("keys.noCred"), rect(500, 546, 300, 38), a->fontSmall, p.muted2,
+        draw_text(dc, tr("keys.noCred"), rect(500, 556, 300, 38), a->fontSmall, p.muted2,
                   DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
     }
 
     if (!a->error.empty()) {
-        draw_text(dc, a->error, rect(248, 636, 764, 20), a->fontSmall, p.bad,
+        draw_text(dc, a->error, rect(248, 646, 764, 20), a->fontSmall, p.bad,
                   DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
     }
 }
