@@ -17,7 +17,7 @@ import {
   statCard,
   type CaptchaView,
   type NavItem,
-} from "./layout";
+} from "./layout.ts";
 
 export interface UserPageData {
   user: UserRecord;
@@ -395,11 +395,17 @@ export function userDashboardPage(data: UserPageData): string {
 
   const rows = data.keys
     .map(
-      (key) => `<tr>
+      (key) => {
+        // 证书被后台撤销分配后这把 Key 已经签不了，列表里必须标出来
+        const revoked = !!key.userId && !data.user.credentialIds.includes(key.credentialId);
+        const revokedPill = revoked
+          ? ` <span title="${escapeHtml(t("keys.credRevokedHint"))}">${pill(t("keys.credRevoked"), "warn")}</span>`
+          : "";
+        return `<tr>
         <td><strong>${escapeHtml(key.name)}</strong><div class="small muted mono">${escapeHtml(key.prefix)}…</div></td>
         <td class="small hide-xs">${escapeHtml(
           key.credentialId ? credName.get(key.credentialId) ?? t("keys.deletedCred") : t("keys.defaultCred"),
-        )}</td>
+        )}${revokedPill}</td>
         <td>${key.enabled ? pill(t("common.enabled"), "ok") : pill(t("common.disabled"), "bad")}</td>
         <td class="small">${
           key.dailyQuota
@@ -425,7 +431,8 @@ export function userDashboardPage(data: UserPageData): string {
             <button class="btn btn--sm btn--danger" type="submit">${escapeHtml(t("common.delete"))}</button>
           </form>
         </div></td>
-      </tr>`,
+      </tr>`;
+      },
     )
     .join("");
 

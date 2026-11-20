@@ -472,16 +472,24 @@ secure.post("/users/:id/update", async (c) => {
   if (expiresAt === null) return backWith(c, `/admin/users/${c.req.param("id")}`, "error", tr(c)("msg.badExpiry"));
 
   try {
+    const credentialIds = many(form, "credentialIds");
     const ok = await updateUser(c.env, c.req.param("id"), {
       expiresAt: expiresAt === undefined ? null : expiresAt,
-      credentialIds: many(form, "credentialIds"),
+      credentialIds,
       password: one(form, "password") || undefined,
       email: one(form, "email"),
       // 管理员改邮箱视为已核验，避免把用户锁在验证邮件之外
       emailVerified: true,
       dailyQuota: Number(one(form, "dailyQuota") || "0") || 0,
     });
-    return backWith(c, `/admin/users/${c.req.param("id")}`, ok ? "ok" : "error", ok ? tr(c)("msg.saved") : tr(c)("msg.notFoundUser"));
+    // 撤掉证书后这些 Key 立刻签不了，保存时就把受影响的把数报出来，别等用户来问
+    let message = ok ? tr(c)("msg.saved") : tr(c)("msg.notFoundUser");
+    if (ok) {
+      const keys = await listKeysOfUser(c.env, c.req.param("id"));
+      const orphaned = keys.filter((key) => !credentialIds.includes(key.credentialId)).length;
+      if (orphaned) message = tr(c)("users.savedWithRevoked", { n: orphaned });
+    }
+    return backWith(c, `/admin/users/${c.req.param("id")}`, ok ? "ok" : "error", message);
   } catch (error) {
     return backWith(c, `/admin/users/${c.req.param("id")}`, "error", localizeError(tr(c), error instanceof Error ? error.message : String(error)));
   }

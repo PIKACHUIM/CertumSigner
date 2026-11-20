@@ -1,7 +1,7 @@
 /** 服务端渲染的公共外壳：主题变量、明暗模式、多语言、弹窗组件（无前端构建） */
 import type { Translate } from "./i18n";
 import type { CaptchaView } from "../lib/captcha";
-import { MODES, THEMES, prefsHref, type Mode, type Prefs, type ThemeId } from "./prefs";
+import { MODES, THEMES, prefsHref, type Mode, type Prefs, type ThemeId } from "./prefs.ts";
 
 export type { CaptchaView };
 

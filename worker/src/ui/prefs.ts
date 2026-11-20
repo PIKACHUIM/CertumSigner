@@ -1,7 +1,7 @@
 /** 外观偏好（语言 / 主题 / 明暗）：全部落 cookie，服务端渲染时直接生效，无闪烁 */
 import type { Context } from "hono";
 import { getCookie, setCookie } from "hono/cookie";
-import { detectLang, normalizeLang, type Lang } from "./i18n";
+import { detectLang, normalizeLang, type Lang } from "./i18n.ts";
 
 export type ThemeId = "aurora" | "nebula" | "jade" | "graphite";
 export type Mode = "auto" | "dark" | "light";

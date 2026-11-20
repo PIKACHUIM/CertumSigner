@@ -18,7 +18,7 @@ import {
   statCard,
   type CaptchaView,
   type NavItem,
-} from "./layout";
+} from "./layout.ts";
 import type { SystemSettings } from "../store/settings";
 import type { RuntimeConfig } from "../store/config";
 
@@ -389,9 +389,14 @@ export function adminUserPage(data: UserDetailData): string {
 
   const keyRows = data.keys
     .map(
-      (key) => `<tr>
+      (key) => {
+        const revoked = !user.credentialIds.includes(key.credentialId);
+        const revokedPill = revoked
+          ? ` <span title="${escapeHtml(t("keys.credRevokedHint"))}">${pill(t("keys.credRevoked"), "warn")}</span>`
+          : "";
+        return `<tr>
         <td><strong>${escapeHtml(key.name)}</strong><div class="small muted mono">${escapeHtml(key.prefix)}…</div></td>
-        <td>${key.enabled ? pill(t("common.enabled"), "ok") : pill(t("common.disabled"), "bad")}</td>
+        <td>${key.enabled ? pill(t("common.enabled"), "ok") : pill(t("common.disabled"), "bad")}${revokedPill}</td>
         <td class="small">${key.dailyQuota ? escapeHtml(t("common.perDay", { n: key.dailyQuota })) : escapeHtml(t("common.unlimited"))}</td>
         <td class="small">${key.totalSigns}</td>
         <td class="small muted">${key.lastUsedAt ? fmtTime(key.lastUsedAt) : escapeHtml(t("common.never"))}</td>
@@ -412,7 +417,8 @@ export function adminUserPage(data: UserDetailData): string {
             <button class="btn btn--sm btn--danger" type="submit">${escapeHtml(t("common.delete"))}</button>
           </form>
         </div></td>
-      </tr>`,
+      </tr>`;
+      },
     )
     .join("");
 
@@ -483,7 +489,10 @@ export function adminUserPage(data: UserDetailData): string {
       return formModal({
         id: `keyedit-${key.id}`,
         title: t("keys.editTitle"),
-        hint: t("keys.editHint"),
+        // 证书已撤销时，下拉里只剩还分配着的证书，先提醒一句，别让人以为保存一下就能恢复
+        hint: user.credentialIds.includes(key.credentialId)
+          ? t("keys.editHint")
+          : `${t("keys.editHint")} ${t("keys.credRevokedHint")}`,
         action: `/admin/keys/${key.id}/update`,
         csrf: data.csrf,
         submit: t("common.save"),
@@ -772,10 +781,18 @@ export function adminKeysPage(data: KeysPageData): string {
   const { t } = data;
   const userName = new Map(data.users.map((user) => [user.id, user.email]));
   const credName = new Map(data.credentials.map((cred) => [cred.id, cred.label]));
+  const owners = new Map(data.users.map((user) => [user.id, user]));
 
   const rows = data.keys
     .map(
-      (key) => `<tr>
+      (key) => {
+        // 平台密钥不校验分配；用户密钥一旦证书被撤销，签名会被 /v1 直接拒绝
+        const owner = key.userId ? owners.get(key.userId) : undefined;
+        const revoked = !!key.userId && !!owner && !owner.credentialIds.includes(key.credentialId);
+        const revokedPill = revoked
+          ? `<div><span title="${escapeHtml(t("keys.credRevokedHint"))}">${pill(t("keys.credRevoked"), "warn")}</span></div>`
+          : "";
+        return `<tr>
         <td><strong>${escapeHtml(key.name)}</strong><div class="small muted mono">${escapeHtml(key.prefix)}…</div></td>
         <td class="small">${
           key.userId
@@ -784,7 +801,7 @@ export function adminKeysPage(data: KeysPageData): string {
         }</td>
         <td class="small hide-xs">${escapeHtml(
           key.credentialId ? credName.get(key.credentialId) ?? t("keys.deletedCred") : t("keys.defaultCred"),
-        )}</td>
+        )}${revokedPill}</td>
         <td>${key.enabled ? pill(t("common.enabled"), "ok") : pill(t("common.disabled"), "bad")}</td>
         <td class="small">${key.dailyQuota ? escapeHtml(t("common.perDay", { n: key.dailyQuota })) : escapeHtml(t("common.unlimited"))}</td>
         <td class="small hide-xs">${key.totalSigns}</td>
@@ -806,7 +823,8 @@ export function adminKeysPage(data: KeysPageData): string {
             <button class="btn btn--sm btn--danger" type="submit">${escapeHtml(t("common.delete"))}</button>
           </form>
         </div></td>
-      </tr>`,
+      </tr>`;
+      },
     )
     .join("");
 

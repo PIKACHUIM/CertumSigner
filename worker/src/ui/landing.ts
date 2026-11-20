@@ -1,5 +1,5 @@
 /** 站点主页：产品介绍 + 客户端下载（GitHub latest release） */
-import { PAGE_CSS, escapeHtml, toolbar } from "./layout";
+import { PAGE_CSS, escapeHtml, toolbar } from "./layout.ts";
 import type { Translate } from "./i18n";
 import type { Prefs } from "./prefs";
 
