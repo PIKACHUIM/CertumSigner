@@ -164,7 +164,8 @@ jobs:
           if ($exes.Count -eq 0) { throw "没有找到待签名的可执行文件" }
 
           if (-not $server -or -not $key) {
-            $isRelease = "${{ github.event_name }}" -eq "push" -and "${{ github.ref }}".StartsWith("refs/tags/")
+            # beta 是分支 push，允许先出未签名产物；正式版（tag push / 手动 dispatch）必须签名
+            $isRelease = "${{ github.event_name }}" -ne "push" -or "${{ github.ref }}".StartsWith("refs/tags/")
             if ($isRelease) {
               throw "缺少 CERTUM_SIGNER_SERVER / CERTUM_SIGNER_API_KEY 仓库 Secret：正式版必须用 Finnox 证书签名"
             }
