@@ -270,6 +270,9 @@ curl -X POST https://sign.example.com/v1/sign \
 | `POST /api/client/keys/:id/reveal` | 换发新值：同样支持客户端本地生成（`hash` + `prefix`），旧值立即失效 |
 | `DELETE /api/client/keys/:id` | 删除自己的 Key，所有设备立即失效 |
 
+登录 / 会话 / 列表接口返回的每把 Key 都带 `credentialId` 与 `credentialLabel`（证书名字），
+客户端直接把证书名画在 Key 卡片上，不依赖证书是否分配给了这个人。
+
 ### 其它
 
 | 接口 | 说明 |
