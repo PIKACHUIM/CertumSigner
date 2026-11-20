@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(CertumSigner
-    VERSION 1.0.0
+    VERSION 1.2.0
     DESCRIPTION "Cloud code signing client for Certum SimplySign via Cloudflare Workers"
     HOMEPAGE_URL "https://github.com/PIKACHUIM/CertumSigner"
     LANGUAGES CXX
@@ -37,7 +37,7 @@ target_include_directories(certumsigner PRIVATE src)
 target_link_libraries(certumsigner PRIVATE OpenSSL::Crypto Threads::Threads)
 
 if(WIN32)
-    target_sources(certumsigner PRIVATE src/http_win.cpp src/signature_info.cpp)
+    target_sources(certumsigner PRIVATE src/http_win.cpp src/signature_info.cpp res/app.rc)
     target_link_libraries(certumsigner PRIVATE winhttp wintrust crypt32)
     target_compile_definitions(certumsigner PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
     if(CS_BUILD_GUI)

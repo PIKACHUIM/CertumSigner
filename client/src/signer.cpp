@@ -135,8 +135,10 @@ bool Signer::sign_file(const std::string &path, std::string &err, bool *skipped)
     ApiClient api(options.server, options.api_key);
     std::string file_sha256;
     if (scan_policy_.required) {
+        if (stage) stage(SignStage::Scan);
         auto scan_log = [this](const std::string &message) { write(message); };
         if (!scan::ensure_clear(api, scan_policy_, path, scan_log, file_sha256, err)) return false;
+        if (stage) stage(SignStage::Sign);
     }
 
     // 时间戳代理与鉴权头：每种算法各要一次时间戳，提前算好

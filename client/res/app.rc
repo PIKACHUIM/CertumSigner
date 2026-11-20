@@ -1,0 +1,5 @@
+// Windows 资源：可执行文件图标（资源管理器、任务栏、窗口都读这里）
+// 图标由 docs/assets/logo.svg 渲染成多尺寸 PNG 后打包成 ICO（16/24/32/48/64/128/256）
+#define IDI_APP 101
+
+IDI_APP ICON "app.ico"

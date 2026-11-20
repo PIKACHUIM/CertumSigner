@@ -106,6 +106,7 @@ constexpr UINT WM_APP_BATCH_DONE = WM_APP + 3;
 constexpr UINT WM_APP_LOGIN_DONE = WM_APP + 4;
 constexpr UINT WM_APP_KEY_DONE = WM_APP + 5;
 constexpr UINT WM_APP_WHOAMI_DONE = WM_APP + 6;
+constexpr UINT WM_APP_FILE_ERROR = WM_APP + 7;
 constexpr UINT_PTR TIMER_ANIM = 1;
 constexpr UINT_PTR TIMER_TOAST = 2;
 
@@ -211,11 +212,13 @@ const TextRow kTexts[] = {
     {"sign.empty", L"还没有文件", L"No files yet"},
     {"st.wait", L"等待", L"Queued"},
     {"st.work", L"签名中", L"Signing"},
+    {"st.scan", L"查杀中", L"Scanning"},
     {"st.ok", L"成功", L"Signed"},
     {"st.fail", L"失败", L"Failed"},
     {"st.skip", L"已跳过", L"Skipped"},
     {"sign.done", L"完成：%d 成功，%d 失败", L"Done: %d signed, %d failed"},
     {"sign.busy", L"签名中…", L"Signing…"},
+    {"sign.scanning", L"病毒查杀中…", L"Scanning for malware…"},
     {"sign.pickFirst", L"请先添加文件", L"Add a file first"},
     {"sign.log", L"日志", L"Log"},
     {"sign.logClear", L"清空", L"Clear"},
@@ -236,6 +239,7 @@ const TextRow kTexts[] = {
     {"details.path", L"文件路径", L"Path"},
     {"details.size", L"文件大小", L"Size"},
     {"details.status", L"签名状态", L"Status"},
+    {"details.error", L"失败原因", L"Failure reason"},
     {"details.verify", L"校验结果", L"Verification"},
     {"details.notVerified", L"尚未校验", L"Not verified"},
     {"details.digests", L"摘要算法", L"Digest algorithms"},
@@ -284,8 +288,8 @@ const TextRow kTexts[] = {
     {"set.saved", L"已保存", L"Saved"},
     {"common.unlimited", L"不限", L"Unlimited"},
     {"keys.perDay", L" 次/天", L" / day"},
-    {"set.version", L"v1.0.0 · 私钥始终在 Certum 云端，本机只发送摘要",
-     L"v1.0.0 · the private key stays in Certum's cloud; only digests leave this machine"},
+    {"set.version", L"v1.2.0 · 私钥始终在 Certum 云端，本机只发送摘要",
+     L"v1.2.0 · the private key stays in Certum's cloud; only digests leave this machine"},
 
     {"lic.title", L"软件许可", L"License"},
     {"lic.sub", L"本程序以 AGPL-3.0 许可发布，许可全文与源码地址见下方",
@@ -337,13 +341,13 @@ const wchar_t *kLicenseNoticeText =
 
 struct FileItem {
     std::string path;
-    int state = 0; // 0 等待 / 1 进行中 / 2 成功 / 3 失败 / 4 已跳过
+    int state = 0; // 0 等待 / 1 进行中 / 2 成功 / 3 失败 / 4 已跳过 / 5 病毒查杀中
     unsigned long long size = 0;
     siginfo::FileSignature signature;
     bool verified = false;
     bool verify_ok = false;
     std::wstring verify_note;
-    std::string error;
+    std::string error; // 失败原因，直接显示在列表行里
 };
 
 struct KeyItem {
@@ -1388,6 +1392,7 @@ void start_batch_sign() {
         std::string error;
         bool ready = signer.prepare(error);
         if (!ready) post_log(window, "错误：" + error);
+        const std::string prepare_error = error;
 
         int ok_count = 0;
         int fail_count = 0;
@@ -1400,9 +1405,23 @@ void start_batch_sign() {
             bool ok = ready;
             bool skipped = false;
             if (ok) {
+                // 查杀阶段单独报给界面：大文件要等几分钟，行内得能看出「查杀中」
+                signer.stage = [window, index](SignStage stage) {
+                    PostMessageW(window, WM_APP_FILE_STATE, static_cast<WPARAM>(index),
+                                 stage == SignStage::Scan ? 5 : 1);
+                };
                 std::string file_error;
                 ok = signer.sign_file(job->paths[i], file_error, &skipped);
-                if (!ok) post_log(window, "错误：" + file_error);
+                signer.stage = nullptr;
+                if (!ok) {
+                    post_log(window, "错误：" + file_error);
+                    PostMessageW(window, WM_APP_FILE_ERROR, static_cast<WPARAM>(index),
+                                 reinterpret_cast<LPARAM>(new std::string(file_error)));
+                }
+            } else if (!prepare_error.empty()) {
+                // 证书都没拿到时每个文件都失败，原因一并挂到行上
+                PostMessageW(window, WM_APP_FILE_ERROR, static_cast<WPARAM>(index),
+                             reinterpret_cast<LPARAM>(new std::string(prepare_error)));
             }
             if (ok) {
                 ++ok_count;
@@ -1755,6 +1774,7 @@ std::wstring state_text(int state) {
     case 2: return tr("st.ok");
     case 3: return tr("st.fail");
     case 4: return tr("st.skip");
+    case 5: return tr("st.scan");
     default: return tr("st.wait");
     }
 }
@@ -1809,6 +1829,7 @@ void show_file_details(size_t index, bool cert_first) {
     if (file.size > 0) size_text += L"  (" + std::to_wstring(file.size) + L" B)";
     detail_add(tr("details.size"), size_text);
     detail_add(tr("details.status"), state_text(file.state));
+    if (!file.error.empty()) detail_add(tr("details.error"), widen(file.error));
     if (file.verified) {
         std::wstring verify = file.verify_ok ? tr("sign.valid") : tr("sign.invalid");
         if (!file.verify_ok && !file.verify_note.empty()) verify += L" · " + file.verify_note;
@@ -1830,11 +1851,13 @@ void show_file_details(size_t index, bool cert_first) {
     std::vector<std::wstring> hashes;
     if (!algorithms.empty() && file.size > 0 && file.size <= 64ull * 1024 * 1024) {
         for (const auto &algorithm : algorithms) {
-            std::string digest_hex;
+            std::string digest_bytes;
             std::string digest_error;
-            if (pe::authentihash(file.path, algorithm, digest_hex, digest_error)) {
+            // authentihash 返回的是原始摘要字节，必须先转十六进制，否则直接当字符显示就是乱码
+            if (pe::authentihash(file.path, algorithm, digest_bytes, digest_error)) {
                 const char *display = digest::display_name(algorithm);
-                hashes.push_back(widen(display ? display : algorithm) + L"  " + group_hex(digest_hex, 16));
+                hashes.push_back(widen(display ? display : algorithm) + L"  " +
+                                 group_hex(to_hex(digest_bytes), 16));
             }
         }
     }
@@ -2755,6 +2778,10 @@ void draw_pill_state(HDC dc, RECT r, int state, HFONT font) {
         label = tr("st.skip");
         fg = p.muted2;
         bg = p.hover;
+    } else if (state == 5) {
+        label = tr("st.scan");
+        fg = p.warn;
+        bg = color_mix(p.warn, p.card);
     }
     draw_pill(dc, r, label, fg, bg, font);
 }
@@ -2867,8 +2894,14 @@ void draw_list_item(const DRAWITEMSTRUCT *item) {
               DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
 
     RECT path_rect{r.left + px(42), r.top + px(32), size_rect.left - px(8), r.top + px(54)};
-    draw_text(dc, widen(dir_name(file.path)), path_rect, a->fontTiny, p.muted2,
-              DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_PATH_ELLIPSIS);
+    if (file.state == 3 && !file.error.empty()) {
+        // 失败时第二行直接显示原因，不用再点进详情
+        draw_text(dc, widen(file.error), path_rect, a->fontTiny, p.bad,
+                  DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
+    } else {
+        draw_text(dc, widen(dir_name(file.path)), path_rect, a->fontTiny, p.muted2,
+                  DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_PATH_ELLIPSIS);
+    }
 }
 
 void draw_key_item(const DRAWITEMSTRUCT *item) {
@@ -3907,11 +3940,28 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
     }
     case WM_APP_FILE_STATE: {
         const size_t index = static_cast<size_t>(wparam);
+        const int state = static_cast<int>(lparam);
         if (a && index < a->files.size()) {
-            a->files[index].state = static_cast<int>(lparam);
+            // 重新开始处理这个文件时清掉上一次的失败原因
+            if (state == 1 || state == 5) a->files[index].error.clear();
+            a->files[index].state = state;
+            if (state == 5) set_status(1, tr("sign.scanning"));
+            else if (state == 1) set_status(1, tr("sign.busy"));
             // 签完（或跳过）之后重新读一遍签名，行里才能显示摘要与证书
-            if (lparam == 2 || lparam == 4) reload_file_signature(index);
+            if (state == 2 || state == 4) reload_file_signature(index);
             InvalidateRect(a->list, nullptr, FALSE);
+        }
+        return 0;
+    }
+    case WM_APP_FILE_ERROR: {
+        auto *text = reinterpret_cast<std::string *>(lparam);
+        const size_t index = static_cast<size_t>(wparam);
+        if (text) {
+            if (a && index < a->files.size()) {
+                a->files[index].error = *text;
+                InvalidateRect(a->list, nullptr, FALSE);
+            }
+            delete text;
         }
         return 0;
     }
@@ -4034,6 +4084,11 @@ int gui_main(int argc, char **argv) {
     klass.lpfnWndProc = window_proc;
     klass.hInstance = instance;
     klass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    // 和 exe 图标同一张（res/app.rc 里的资源 ID 101）
+    klass.hIcon = LoadIconW(instance, MAKEINTRESOURCEW(101));
+    klass.hIconSm = klass.hIcon;
+    if (!klass.hIcon) klass.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
+    if (!klass.hIconSm) klass.hIconSm = klass.hIcon;
     klass.hbrBackground = nullptr;
     klass.lpszClassName = L"CertumSignerWindow";
     if (!RegisterClassExW(&klass)) return 1;

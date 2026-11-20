@@ -28,10 +28,14 @@ std::vector<std::string> effective_algorithms(const std::vector<std::string> &al
 
 using LogFn = std::function<void(const std::string &)>;
 
+/** 单个文件的处理阶段：界面用它显示「病毒查杀中…」这类中间状态 */
+enum class SignStage { Scan, Sign };
+
 class Signer {
 public:
     SignOptions options;
     LogFn log;
+    std::function<void(SignStage)> stage;
 
     /** 拉取并缓存签名证书（每次运行一次即可） */
     bool prepare(std::string &err);
