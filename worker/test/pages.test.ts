@@ -121,3 +121,48 @@ test("用户门户的密钥列表标出证书已撤销分配", () => {
   });
   assert.ok(html.includes("证书已撤销分配"));
 });
+
+test("后台用户详情显示总限额与已用量（扣掉重置基准）", () => {
+  const html = adminUserPage({
+    csrf,
+    prefs,
+    t,
+    self: "/admin/users/user_1",
+    user: { ...makeUser(["cred_a"]), totalQuota: 100, totalUsedBase: 2 },
+    credentials: [credential],
+    keys: [makeKey({ totalSigns: 7 }), makeKey({ id: "key_2", hash: "h2", totalSigns: 5 })],
+    stats: { total: emptyStats },
+  });
+  assert.ok(html.includes("10/100"), "已用 12 减基准 2 应显示 10/100");
+  assert.ok(html.includes("重置总用量"), "要提供重置按钮");
+});
+
+test("没设总限额时显示不限而不是 0", () => {
+  const html = adminUserPage({
+    csrf,
+    prefs,
+    t,
+    self: "/admin/users/user_1",
+    user: makeUser(["cred_a"]),
+    credentials: [credential],
+    keys: [makeKey({ totalSigns: 3 })],
+    stats: { total: emptyStats },
+  });
+  assert.ok(html.includes("3/不限") || html.includes("3/Unlimited"), "不限时不能把上限显示成 0");
+});
+
+test("用户门户展示账号总配额，且不再暴露 Key 级额度输入", () => {
+  const html = userDashboardPage({
+    csrf,
+    prefs,
+    t,
+    self: "/user",
+    user: { ...makeUser(["cred_a"]), totalQuota: 50 },
+    credentials: [credential],
+    keys: [makeKey({ totalSigns: 8 })],
+    usage: {},
+    logs: [],
+  });
+  assert.ok(html.includes("总配额: 8/50"), "门户要能看到总配额进度");
+  assert.ok(!html.includes('name="dailyQuota"'), "用户不能自己设置 Key 级额度");
+});
