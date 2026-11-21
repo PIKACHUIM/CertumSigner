@@ -68,8 +68,8 @@ Certum SimplySign only offers "sign this digest with an RSA key". Normally that 
 - **Digest signing proxy**: `POST /v1/sign` takes one digest or a batch, `algorithm` supports SHA-1 / SHA-256 / SHA-384 / SHA-512, up to 16 digests per cloud call.
 - **Malware scanning (optional, per credential)**: each credential can require `off / manual upload / auto upload` and a maximum risk level. Lookups and uploads are relayed by the Worker, backed by VirusTotal or MetaDefender Cloud, cached by raw-file SHA-256.
 - **Admin console** (`/admin`): request volume, success/failure, algorithm mix, 7-day chart, recent signatures; create/edit/disable users, credentials and keys; a full signing log with time, key, credential, digest prefix, result, duration, IP, UA and error.
-- **User portal** (`/user`): sign in with email + password, create a key from the certificates an admin assigned, rename it or change its daily quota, and inspect your own calls. When a certificate requires scanning, a Virus Scan page lets you upload unknown files manually. A key's plaintext is shown once; lists only ever display its prefix.
-- **Quotas**: key-level and user-level daily quotas apply together (0 = unlimited); `/v1/sign` returns `429 quota_exceeded` before touching Certum.
+- **User portal** (`/user`): sign in with email + password, create a key from the certificates an admin assigned, rename it (key-level quota stays under admin control), and inspect your own calls. When a certificate requires scanning, a Virus Scan page lets you upload unknown files manually. A key's plaintext is shown once; lists only ever display its prefix.
+- **Quotas**: key-level daily quota, user-level daily quota and a user-level **total quota** apply together (0 = unlimited); `/v1/sign` returns `429 quota_exceeded` before touching Certum. The total quota sums every signature made by the account's keys and the console can reset it at any time; each account holds at most 20 keys, and key-level quotas can only be set by an admin.
 - **Registration / password reset** (off by default): registration requires email verification before sign-in; reset sends a one-hour link through Resend.
 - **Sign-in captcha** (off by default): once enabled, user, admin and desktop-client sign-in all need one, either a 4-digit image captcha or Cloudflare Turnstile (falls back to the image captcha when its keys are missing).
 - **UI**: fully server-rendered, no frontend build; fixed six-item sidebar plus language (zh/en), light/dark and four themes in the top bar, stored in cookies.
@@ -274,7 +274,7 @@ Failures are always `{"ok":false,"error":{"code":"...","message":"..."}}` with c
 | Endpoint | Purpose |
 | --- | --- |
 | `GET /v1/certificate` | signing certificate PEM of the current credential, plus optional chain |
-| `GET /v1/whoami` | owner, key quota / user quota, today's usage and bound credential |
+| `GET /v1/whoami` | owner, key quota, user daily and total quota (used / limit), today's usage and bound credential |
 | `GET /v1/stats` | global stats plus your own and the account's usage |
 | `GET /v1/scan/policy` | scan mode, risk limit, provider and manual upload URL for the current certificate |
 | `GET /v1/scan/check?sha256=` | look up a raw-file SHA-256 (`found=false` means unknown) |
@@ -369,7 +369,7 @@ Assign the Finnox certificate to the signing account in the admin console, creat
 <details>
 <summary>What has actually been tested</summary>
 
-- Worker: `npx tsc --noEmit` passes; `npm test` passes 74 tests (TOTP against RFC 6238 vectors, multipart parsing, encoding/hashing, KV storage and password hashing, unique user emails, admin account setup and password change, runtime config round-trips, scan risk thresholds / result caching / upload SHA-256 verification / streaming large-file relay and hash cross-check / direct-upload target and analysis registration / client-generated key hash registration, rotation and deletion / 403 after a certificate assignment is revoked, the unassigned markers in the console and portal, and Certum session/card cache invalidation when a credential's identity changes).
+- Worker: `npx tsc --noEmit` passes; `npm test` passes 87 tests (TOTP against RFC 6238 vectors, multipart parsing, encoding/hashing, KV storage and password hashing, unique user emails, admin account setup and password change, runtime config round-trips, scan risk thresholds / result caching / upload SHA-256 verification / streaming large-file relay and hash cross-check / direct-upload target and analysis registration / client-generated key hash registration, rotation and deletion / 403 after a certificate assignment is revoked, the unassigned markers in the console and portal, Certum session/card cache invalidation when a credential's identity changes, total-quota boundaries and reset baselines, and the key-count cap with upload rate limiting).
 - Real Certum path works end to end (2026-11, Windows x64): email + TOTP sign-in, `/v1/certificate` returns the EV code-signing certificate, `/v1/sign` turns a real SHA-256 digest into a 512-byte signature, and after writing it into a PE `WinVerifyTrust` reports **valid**; still valid with a real Certum timestamp.
 - UI: four themes × light/dark, zh/en switching, dialogs, and mobile widths (390 / 563 px) checked page by page with no horizontal scrolling; captcha refresh and validation, settings persistence, user quotas and self-service key quota edits tested.
 - Client: MSVC 14.44 + Windows SDK 10.0.22621 + static OpenSSL 3.5.9 with `/W4 /permissive-` and no warnings; the Win32 GUI completed sign-in → key rotation → drag-and-drop batch signing → `WinVerifyTrust`, and layout holds at 125% scaling.
