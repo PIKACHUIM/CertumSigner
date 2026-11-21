@@ -158,12 +158,20 @@ jobs:
           CERTUM_SIGNER_SERVER: ${{ secrets.CERTUM_SIGNER_SERVER }}
           CERTUM_SIGNER_API_KEY: ${{ secrets.CERTUM_SIGNER_API_KEY }}
         run: |
+          # Actions 日志要登录才能看，注解（annotation）是公开可读的，所以失败原因同时写成 ::error::
+          function ConvertTo-Annotation([string]$text) {
+            $escaped = $text -replace "`r`n", "%0A" -replace "`n", "%0A" -replace "`r", "%0A"
+            if ($escaped.Length -gt 12000) { $escaped = $escaped.Substring(0, 12000) + "…" }
+            return $escaped
+          }
+
           $server = $env:CERTUM_SIGNER_SERVER
           $key = $env:CERTUM_SIGNER_API_KEY
           $exes = @(Get-ChildItem -Path raw -Recurse -Filter *.exe | Sort-Object FullName)
           if ($exes.Count -eq 0) { throw "没有找到待签名的可执行文件" }
 
           if (-not $server -or -not $key) {
+            Write-Host "::error::缺少仓库 Secret：CERTUM_SIGNER_SERVER=$([bool]$server) CERTUM_SIGNER_API_KEY=$([bool]$key)"
             # beta 是分支 push，允许先出未签名产物；正式版（tag push / 手动 dispatch）必须签名
             $isRelease = "${{ github.event_name }}" -ne "push" -or "${{ github.ref }}".StartsWith("refs/tags/")
             if ($isRelease) {
@@ -172,6 +180,7 @@ jobs:
             Write-Warning "未配置签名 Secret，本次 Windows 产物未签名（仅允许 beta 这样）"
             exit 0
           }
+          Write-Host "签名服务：$server（API Key 长度 $(($key.Trim()).Length)）"
 
           # 用 x64 的 CLI 签所有架构；先复制到临时目录，避免改正在运行的 exe
           $host_cli = (Get-ChildItem -Path raw -Recurse -Filter certumsigner-cli.exe |
@@ -180,12 +189,31 @@ jobs:
           $signer = Join-Path $env:RUNNER_TEMP "certumsigner-signer.exe"
           Copy-Item $host_cli $signer -Force
 
+          # 先取一次证书，把鉴权/证书分配的问题与签名问题分开
+          $certOut = (& $signer cert 2>&1 | Out-String)
+          $certCode = $LASTEXITCODE
+          Write-Host $certOut
+          if ($certCode -ne 0) {
+            Write-Host ("::error::获取签名证书失败（exit $certCode）：" + (ConvertTo-Annotation $certOut))
+            throw "获取签名证书失败（exit $certCode）"
+          }
+
           foreach ($exe in $exes) {
             Write-Host "== 签名 $($exe.FullName)"
-            & $signer sign $exe.FullName --yes
-            if ($LASTEXITCODE -ne 0) { throw "签名失败：$($exe.FullName)" }
-            & $signer verify $exe.FullName
-            if ($LASTEXITCODE -ne 0) { throw "签名校验失败：$($exe.FullName)" }
+            $signOut = (& $signer sign $exe.FullName --yes 2>&1 | Out-String)
+            $signCode = $LASTEXITCODE
+            Write-Host $signOut
+            if ($signCode -ne 0) {
+              Write-Host ("::error::签名失败（exit $signCode）$($exe.Name)：" + (ConvertTo-Annotation $signOut))
+              throw "签名失败：$($exe.FullName)"
+            }
+            $verifyOut = (& $signer verify $exe.FullName 2>&1 | Out-String)
+            $verifyCode = $LASTEXITCODE
+            Write-Host $verifyOut
+            if ($verifyCode -ne 0) {
+              Write-Host ("::error::签名校验失败（exit $verifyCode）$($exe.Name)：" + (ConvertTo-Annotation $verifyOut))
+              throw "签名校验失败：$($exe.FullName)"
+            }
           }
 
       - name: Package (Windows)
