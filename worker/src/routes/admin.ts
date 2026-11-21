@@ -504,7 +504,8 @@ secure.post("/users/:id/update", async (c) => {
       // 管理员改邮箱视为已核验，避免把用户锁在验证邮件之外
       emailVerified: true,
       dailyQuota: Number(one(form, "dailyQuota") || "0") || 0,
-      totalQuota: Number(one(form, "totalQuota") || "0") || 0,
+      // 旧页面没有这个字段时保持原值，别让保存一次就把总限额清零
+      totalQuota: form["totalQuota"] !== undefined ? Number(one(form, "totalQuota") || "0") || 0 : undefined,
     });
     // 撤掉证书后这些 Key 立刻签不了，保存时就把受影响的把数报出来，别等用户来问
     let message = ok ? tr(c)("msg.saved") : tr(c)("msg.notFoundUser");
