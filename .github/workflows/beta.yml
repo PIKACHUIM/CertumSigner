@@ -2,6 +2,7 @@ name: Client beta
 
 # 客户端改动一合进 main 就自动构建，并把结果刷新到 tag 为 beta 的预发布。
 # beta 是 prerelease，不会被 /releases/latest 选中，正式版仍以 v* tag 为准。
+# Windows 产物由 sign-windows 用 Certum 云签名（Finnox Tech Ltd 证书）；缺 Secret 时 beta 只告警，正式版直接失败。
 
 on:
   push:
