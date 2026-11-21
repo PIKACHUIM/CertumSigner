@@ -33,6 +33,8 @@ import {
   uploadForScan,
 } from "../scan";
 import { issueCaptcha, verifyCaptchaFor } from "../lib/captcha";
+import { MAX_KEYS_PER_USER, keyLimitReached } from "../lib/limits";
+import { takeRateLimit } from "../lib/ratelimit";
 import { mailConfigured, mailTemplate, sendMail, siteBase } from "../lib/mail";
 import { createEmailToken, peekEmailToken, consumeEmailToken, RESET_TTL_MS, VERIFY_TTL_MS } from "../store/email-tokens";
 import { readSettings } from "../store/settings";
@@ -663,10 +665,15 @@ secure.post("/keys", async (c) => {
     const credentialId = one(form, "credentialId");
     if (!account.credentialIds.includes(credentialId)) throw new Error(tr(c)("msg.credNotAssigned"));
 
-    const quota = Number(one(form, "dailyQuota") || "0");
+    const owned = await listKeysOfUser(c.env, account.id);
+    if (keyLimitReached(owned.length)) {
+      throw new Error(tr(c)("msg.tooManyKeys", { n: MAX_KEYS_PER_USER }));
+    }
+
+    // Key 级额度由管理员统一设置，用户自建一律不限，避免自己给自己放开额度
     const created = await createApiKey(c.env, {
       name: one(form, "name") || tr(c)("msg.myKeyDefault"),
-      dailyQuota: Number.isFinite(quota) ? quota : 0,
+      dailyQuota: 0,
       createdBy: account.id,
       userId: account.id,
       credentialId,
@@ -705,11 +712,10 @@ secure.post("/keys/:id/update", async (c) => {
 
   const key = await ownKey(c, c.req.param("id"));
   if (!key) return backWith(c, "/user", "error", tr(c)("msg.notFoundKey"));
-  const quota = Number(one(form, "dailyQuota") || "0");
   try {
+    // 只允许改名字：额度是管理员的下发策略，不能由用户自己调大
     await updateApiKey(c.env, key.id, {
       name: one(form, "name") || key.name,
-      dailyQuota: Number.isFinite(quota) ? quota : 0,
     });
     return backWith(c, "/user", "ok", tr(c)("msg.keyUpdated"));
   } catch (error) {
@@ -800,6 +806,10 @@ secure.post("/scan", async (c) => {
   if (Number.isFinite(declared) && declared > SCAN_BUFFER_LIMIT_BYTES + 1048576) {
     return backWith(c, "/user/scan", "error", tr(c)("scan.tooLargePortal"));
   }
+
+  // 上传会消耗查杀服务配额并把样本推到第三方，按账号限流
+  const rate = await takeRateLimit(c.env, `scanportal:${c.get("user").id}`, 10, 60);
+  if (!rate.allowed) return backWith(c, "/user/scan", "error", tr(c)("scan.tooFrequent"));
 
   const form = await c.req.parseBody();
   const csrf = typeof form["csrf"] === "string" ? form["csrf"] : "";

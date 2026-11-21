@@ -2,7 +2,7 @@
  * 用户门户会话：与管理员共用 HMAC cookie 方案，但 cookie 名、KV 前缀、TTL 都独立。
  */
 import type { Env, UserSessionRecord } from "../types";
-import { base64UrlEncode, randomToken } from "../lib/encoding.ts";
+import { base64UrlEncode, constantTimeEqual, randomToken } from "../lib/encoding.ts";
 import { readSessionSecret, requireSessionSecret } from "../lib/session-secret.ts";
 
 export const USER_COOKIE = "cs_user";
@@ -52,7 +52,7 @@ export async function readUserSession(env: Env, cookieValue: string | undefined)
   const secret = await readSessionSecret(env);
   if (!secret) return null;
   const expected = await hmac(sid, secret);
-  if (mac !== expected) return null;
+  if (!constantTimeEqual(mac, expected)) return null;
 
   const record = await env.CERTUM_KV.get<UserSessionRecord>(`${PREFIX}${sid}`, "json");
   if (!record || record.expiresAt < Date.now()) return null;

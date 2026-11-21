@@ -427,6 +427,7 @@ secure.post("/users", async (c) => {
       expiresAt: expiresAt ?? undefined,
       credentialIds: many(form, "credentialIds"),
       dailyQuota: Number(one(form, "dailyQuota") || "0") || 0,
+      totalQuota: Number(one(form, "totalQuota") || "0") || 0,
       createdBy: c.get("adminSession").id,
     });
     return backWith(c, "/admin/users", "ok", tr(c)("msg.userCreated", { name: user.email }));
@@ -466,6 +467,25 @@ secure.post("/users/:id/toggle", async (c) => {
   return backWith(c, `/admin/users/${c.req.param("id")}`, ok ? "ok" : "error", ok ? (enabled ? tr(c)("msg.enabled") : tr(c)("msg.disabled")) : tr(c)("msg.notFoundUser"));
 });
 
+/** 把「累计已用」清零：记下当前总量作为基准，不删除任何日志 */
+secure.post("/users/:id/reset-total", async (c) => {
+  const form = await readForm(c);
+  if (!(await checkCsrf(c, form))) return csrfFail(c);
+  const id = c.req.param("id");
+  const user = await getUser(c.env, id);
+  if (!user) return backWith(c, `/admin/users/${id}`, "error", tr(c)("msg.notFoundUser"));
+
+  const keys = await listKeysOfUser(c.env, id);
+  const used = keys.reduce((sum, key) => sum + (Number.isFinite(key.totalSigns) ? key.totalSigns : 0), 0);
+  const ok = await updateUser(c.env, id, { totalUsedBase: used });
+  return backWith(
+    c,
+    `/admin/users/${id}`,
+    ok ? "ok" : "error",
+    ok ? tr(c)("msg.totalReset", { n: used }) : tr(c)("msg.notFoundUser"),
+  );
+});
+
 secure.post("/users/:id/update", async (c) => {
   const form = await readForm(c);
   if (!(await checkCsrf(c, form))) return csrfFail(c);
@@ -484,6 +504,7 @@ secure.post("/users/:id/update", async (c) => {
       // 管理员改邮箱视为已核验，避免把用户锁在验证邮件之外
       emailVerified: true,
       dailyQuota: Number(one(form, "dailyQuota") || "0") || 0,
+      totalQuota: Number(one(form, "totalQuota") || "0") || 0,
     });
     // 撤掉证书后这些 Key 立刻签不了，保存时就把受影响的把数报出来，别等用户来问
     let message = ok ? tr(c)("msg.saved") : tr(c)("msg.notFoundUser");

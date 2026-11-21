@@ -20,6 +20,8 @@ import {
 } from "../store/keys";
 import { createUserSession, readUserSession, revokeUserSession } from "../store/user-sessions";
 import { captchaAllowed, createCaptcha, verifyCaptcha } from "../lib/captcha";
+import { MAX_KEYS_PER_USER, keyLimitReached } from "../lib/limits";
+import { takeRateLimit } from "../lib/ratelimit";
 import { readSettings } from "../store/settings";
 
 export type ClientEnv = {
@@ -87,7 +89,9 @@ function fail(c: Context<ClientEnv>, status: 400 | 401 | 403 | 404 | 429 | 500, 
 }
 
 function clientIp(c: Context<ClientEnv>): string {
-  return c.req.header("cf-connecting-ip") ?? c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
+  // 只信 Cloudflare 注入的 cf-connecting-ip：x-forwarded-for 的第一跳是请求方能随便写的，
+  // 拿它分桶等于给攻击者一个「换 IP 就重置失败计数」的开关。
+  return c.req.header("cf-connecting-ip") ?? c.req.header("x-real-ip") ?? "unknown";
 }
 
 async function bumpFailure(env: Env, ip: string): Promise<void> {
@@ -286,18 +290,24 @@ secure.post("/keys", async (c) => {
     return fail(c, 403, "credential_not_assigned", "这套证书没有分配给你");
   }
 
+  const owned = await listKeysOfUser(c.env, account.id);
+  if (keyLimitReached(owned.length)) {
+    return fail(c, 429, "too_many_keys", `每个账号最多 ${MAX_KEYS_PER_USER} 把 Key，请先删掉不用的`);
+  }
+  const rate = await takeRateLimit(c.env, `keynew:${account.id}`, 10, 60);
+  if (!rate.allowed) return fail(c, 429, "rate_limited", "创建 Key 过于频繁，请稍后再试");
+
   const name = body.name || "我的 Key";
-  const quota = Number(body.dailyQuota ?? "0");
   const localHash = body.hash ?? "";
   const localPrefix = body.prefix ?? "";
 
   try {
     const label = (await getCredential(c.env, credentialId))?.label ?? "";
-    // 新版客户端自己生成明文，只上传哈希：服务端连“看到一次”的机会都没有
+    // Key 级额度只能由管理员设置：用户自建一律不限，避免自己建把额度限制绕过去
     if (localHash) {
       const record = await createApiKeyFromHash(c.env, {
         name,
-        dailyQuota: Number.isFinite(quota) ? Math.max(0, Math.floor(quota)) : 0,
+        dailyQuota: 0,
         createdBy: account.id,
         userId: account.id,
         credentialId,
@@ -309,7 +319,7 @@ secure.post("/keys", async (c) => {
 
     const created = await createApiKey(c.env, {
       name,
-      dailyQuota: Number.isFinite(quota) ? Math.max(0, Math.floor(quota)) : 0,
+      dailyQuota: 0,
       createdBy: account.id,
       userId: account.id,
       credentialId,

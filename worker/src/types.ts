@@ -95,6 +95,13 @@ export interface UserRecord {
   credentialIds: string[];
   /** 用户级每日签名上限，0 = 不限（Key 级额度仍然各自生效） */
   dailyQuota: number;
+  /**
+   * 用户级累计签名上限，0 / 未设置 = 不限。
+   * 累计值取该用户名下所有 Key 的 totalSigns 之和减去 totalUsedBase。
+   */
+  totalQuota?: number;
+  /** 管理员「重置总用量」时记下的基准，已用 = sum(totalSigns) - totalUsedBase */
+  totalUsedBase?: number;
   createdAt: number;
   createdBy: string;
   lastLoginAt?: number;

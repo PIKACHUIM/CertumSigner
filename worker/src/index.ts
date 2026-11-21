@@ -19,6 +19,51 @@ import type { Env } from "./types";
 
 const app = new Hono<{ Bindings: Env }>();
 
+/**
+ * 统一安全响应头。
+ *
+ * 页面里有内联 <style>/<script>（服务端直出，没有构建步骤），所以 CSP 必须放开
+ * 'unsafe-inline'；除此之外只允许本站与 Cloudflare Turnstile 的资源。
+ * 这里不改响应体，只在 HTML 上补 CSP，避免影响 JSON 接口。
+ */
+const CSP = [
+  "default-src 'self'",
+  "base-uri 'none'",
+  "object-src 'none'",
+  "frame-ancestors 'none'",
+  "form-action 'self'",
+  "img-src 'self' data:",
+  "style-src 'self' 'unsafe-inline'",
+  "script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com",
+  "connect-src 'self' https://challenges.cloudflare.com",
+  "frame-src https://challenges.cloudflare.com",
+  "worker-src 'self' blob:",
+].join("; ");
+
+app.use("*", async (c, next) => {
+  await next();
+
+  const headers = new Headers(c.res.headers);
+  headers.set("x-content-type-options", "nosniff");
+  headers.set("x-frame-options", "DENY");
+  headers.set("referrer-policy", "no-referrer");
+  headers.set("permissions-policy", "camera=(), microphone=(), geolocation=()");
+  headers.set("cross-origin-opener-policy", "same-origin");
+
+  if (new URL(c.req.url).protocol === "https:") {
+    headers.set("strict-transport-security", "max-age=31536000; includeSubDomains");
+  }
+  if ((headers.get("content-type") ?? "").includes("text/html") && !headers.has("content-security-policy")) {
+    headers.set("content-security-policy", CSP);
+  }
+
+  c.res = new Response(c.res.body, {
+    status: c.res.status,
+    statusText: c.res.statusText,
+    headers,
+  });
+});
+
 app.use(
   "/v1/*",
   cors({

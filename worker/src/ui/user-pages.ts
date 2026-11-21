@@ -467,7 +467,6 @@ export function userDashboardPage(data: UserPageData): string {
     cancel: t("common.cancel"),
     body: `<div class="form-grid">
       <label class="field">${escapeHtml(t("keys.name"))}<input type="text" name="name" placeholder="laptop" required></label>
-      <label class="field">${escapeHtml(t("keys.quota"))}<input type="number" name="dailyQuota" min="0" value="0"></label>
       <label class="field wide">${escapeHtml(t("keys.cert"))}
         <select name="credentialId" required>${
           credentialOptions || `<option value="">${escapeHtml(t("me.noCert"))}</option>`
@@ -494,7 +493,10 @@ export function userDashboardPage(data: UserPageData): string {
             <input type="text" name="name" value="${escapeHtml(key.name)}" maxlength="64" required>
           </label>
           <label class="field wide">${escapeHtml(t("keys.quota"))}
-            <input type="number" name="dailyQuota" min="0" value="${key.dailyQuota}">
+            <input type="text" value="${
+              key.dailyQuota ? escapeHtml(t("common.perDay", { n: key.dailyQuota })) : escapeHtml(t("common.unlimited"))
+            }" readonly>
+            <span class="small muted">${escapeHtml(t("me.quotaManaged"))}</span>
           </label>
         </div>`,
       }),
@@ -504,6 +506,8 @@ export function userDashboardPage(data: UserPageData): string {
   const expired = !!data.user.expiresAt && data.user.expiresAt <= Date.now();
   const userQuota = data.user.dailyQuota || 0;
   const userUsed = data.userUsage ?? 0;
+  const totalQuota = data.user.totalQuota ?? 0;
+  const usedTotal = Math.max(0, totalSigns - (data.user.totalUsedBase ?? 0));
 
   return userShell(
     "/user",
@@ -517,7 +521,7 @@ export function userDashboardPage(data: UserPageData): string {
       ${statCard(
         t("me.quotaCard"),
         userQuota ? `${userUsed}/${userQuota}` : t("common.unlimited"),
-        t("me.quotaHint"),
+        totalQuota > 0 ? `${t("me.totalQuotaCard")}: ${usedTotal}/${totalQuota}` : t("me.quotaHint"),
       )}
       ${statCard(
         t("me.accountExpiry"),

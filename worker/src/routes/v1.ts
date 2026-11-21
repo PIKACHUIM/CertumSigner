@@ -20,9 +20,11 @@ import { CertumError } from "../certum/errors";
 import { chainPem, getCardFor, signDigestsFor } from "../certum/session";
 import { base64Decode } from "../lib/pem";
 import { normalizeHex, randomId, toHex } from "../lib/encoding";
-import { bumpDailyUsage, bumpUserDailyUsage, getDailyUsage, getUserDailyUsage, touchApiKey, verifyApiKey } from "../store/keys";
+import { bumpDailyUsage, bumpUserDailyUsage, getDailyUsage, getUserDailyUsage, getUserTotalUsage, touchApiKey, verifyApiKey } from "../store/keys";
 import { getCredential } from "../store/credentials";
 import { assignmentIssue } from "../lib/assignment";
+import { quotaReached } from "../lib/quota";
+import { takeRateLimit } from "../lib/ratelimit";
 import { getUser } from "../store/users";
 import { readStats, recordSign } from "../store/stats";
 import { readConfig } from "../store/config.ts";
@@ -282,23 +284,36 @@ v1.post("/sign", async (c) => {
 
     if (key.dailyQuota > 0) {
       const used = await getDailyUsage(c.env, key.id);
-      if (used + digests.length > key.dailyQuota) {
+      if (quotaReached(used, key.dailyQuota, digests.length)) {
         return jsonError(c, 429, "quota_exceeded", `已超出今日限额（${used}/${key.dailyQuota}）`);
       }
     }
 
-    // 用户级额度：该用户名下所有 Key 共用，0 = 不限
+    // 用户级额度：该用户名下所有 Key 共用当日额度与总限额，0 = 不限
     if (key.userId) {
       const owner = await getUser(c.env, key.userId);
-      if (owner && owner.dailyQuota > 0) {
-        const used = await getUserDailyUsage(c.env, key.userId);
-        if (used + digests.length > owner.dailyQuota) {
+      if (owner) {
+        const usedToday = await getUserDailyUsage(c.env, key.userId);
+        if (quotaReached(usedToday, owner.dailyQuota, digests.length)) {
           return jsonError(
             c,
             429,
             "quota_exceeded",
-            `已超出账号今日限额（${used}/${owner.dailyQuota}）`,
+            `已超出账号今日限额（${usedToday}/${owner.dailyQuota}）`,
           );
+        }
+        // 总限额按名下所有 Key 的累计签名数算，管理员「重置总用量」后从基准重新计。
+        // 没设总限额的账号直接跳过，省掉一次「列出全部 Key」的开销。
+        if (owner.totalQuota && owner.totalQuota > 0) {
+          const usedTotal = await getUserTotalUsage(c.env, key.userId, owner.totalUsedBase ?? 0);
+          if (quotaReached(usedTotal, owner.totalQuota, digests.length)) {
+            return jsonError(
+              c,
+              429,
+              "quota_exceeded",
+              `已超出账号总限额（${usedTotal}/${owner.totalQuota}），请联系管理员调整`,
+            );
+          }
         }
       }
     }
@@ -422,6 +437,7 @@ v1.get("/whoami", async (c) => {
   const used = await getDailyUsage(c.env, key.id);
   const owner = key.userId ? await getUser(c.env, key.userId) : null;
   const userUsed = key.userId ? await getUserDailyUsage(c.env, key.userId) : 0;
+  const userTotal = owner ? await getUserTotalUsage(c.env, owner.id, owner.totalUsedBase ?? 0) : 0;
   return c.json({
     ok: true,
     key: {
@@ -435,7 +451,14 @@ v1.get("/whoami", async (c) => {
       userId: key.userId ?? null,
     },
     user: owner
-      ? { id: owner.id, email: owner.email, dailyQuota: owner.dailyQuota, usedToday: userUsed }
+      ? {
+          id: owner.id,
+          email: owner.email,
+          dailyQuota: owner.dailyQuota,
+          usedToday: userUsed,
+          totalQuota: owner.totalQuota ?? 0,
+          usedTotal: userTotal,
+        }
       : null,
     credential: {
       id: credential.id,
@@ -452,11 +475,19 @@ v1.get("/stats", async (c) => {
   const used = await getDailyUsage(c.env, key.id);
   const owner = key.userId ? await getUser(c.env, key.userId) : null;
   const userUsed = key.userId ? await getUserDailyUsage(c.env, key.userId) : 0;
+  const userTotal = owner ? await getUserTotalUsage(c.env, owner.id, owner.totalUsedBase ?? 0) : 0;
   return c.json({
     ok: true,
     key: { id: key.id, name: key.name, dailyQuota: key.dailyQuota, usedToday: used, totalSigns: key.totalSigns },
     user: owner
-      ? { id: owner.id, email: owner.email, dailyQuota: owner.dailyQuota, usedToday: userUsed }
+      ? {
+          id: owner.id,
+          email: owner.email,
+          dailyQuota: owner.dailyQuota,
+          usedToday: userUsed,
+          totalQuota: owner.totalQuota ?? 0,
+          usedTotal: userTotal,
+        }
       : null,
     today: stats.today,
     total: stats.total,
@@ -540,10 +571,17 @@ v1.get("/scan/check", async (c) => {
  * 请求体是原始文件字节（application/octet-stream），不是 multipart，省一次内存拷贝。
  */
 v1.post("/scan/upload", async (c) => {
+  const key = c.get("apiKey") as ApiKeyRecord;
   const credential = c.get("credential") as CredentialRecord;
   const policy = scanPolicyOf(credential);
   if (policy.mode === "off") {
     return jsonError(c, 403, "scan_disabled", "这套证书没有开启病毒查杀，不需要上传扫描");
+  }
+
+  // 上传会消耗查杀服务的配额，也会把样本推到第三方：按 Key 限流，避免被脚本刷
+  const rate = await takeRateLimit(c.env, `scanup:${key.id}`, 10, 60);
+  if (!rate.allowed) {
+    return jsonError(c, 429, "rate_limited", "上传过于频繁，请稍后再试");
   }
 
   const config = await readConfig(c.env);

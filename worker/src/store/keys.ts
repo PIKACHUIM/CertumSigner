@@ -3,6 +3,7 @@
  */
 import type { ApiKeyRecord, Env } from "../types";
 import { randomId, randomToken, sha256Hex, toHex, randomBytes } from "../lib/encoding.ts";
+import { totalUsed } from "../lib/quota.ts";
 import { getUser, userExpired } from "./users.ts";
 
 const PREFIX = "key:";
@@ -138,14 +139,28 @@ export async function verifyApiKey(env: Env, raw: string): Promise<ApiKeyRecord 
   return record;
 }
 
-/** 记录使用情况；节流到每分钟最多写一次，避免签名频繁时把 KV 写配额打满 */
+/**
+ * 记录使用情况。
+ *
+ * 以前为了省 KV 写，把「一分钟内只写一次」也套在 totalSigns 上，
+ * 结果同一分钟里的第二次及以后的签名次数被整段丢掉：既让「累计签名数」长期偏少，
+ * 也让用户总限额永远算不到真实用量。这里改成每次都累加，
+ * 只在 lastUsedAt 的时间粒度上保持「同一分钟不重复刷新」的语义由调用方决定。
+ */
 export async function touchApiKey(env: Env, record: ApiKeyRecord, signedCount: number): Promise<void> {
-  const now = Date.now();
-  const shouldTouch = !record.lastUsedAt || now - record.lastUsedAt > 60_000;
-  if (!shouldTouch) return;
-  record.lastUsedAt = now;
-  record.totalSigns += signedCount;
+  const count = Number.isFinite(signedCount) && signedCount > 0 ? Math.floor(signedCount) : 0;
+  record.totalSigns += count;
+  record.lastUsedAt = Date.now();
   await saveApiKey(env, record);
+}
+
+/** 用户名下所有 Key 的累计签名数（用户总限额用），已扣掉管理员的重置基准 */
+export async function getUserTotalUsage(env: Env, userId: string, base = 0): Promise<number> {
+  const keys = await listKeysOfUser(env, userId);
+  return totalUsed(
+    keys.map((key) => key.totalSigns),
+    base,
+  );
 }
 
 export async function setApiKeyEnabled(env: Env, id: string, enabled: boolean): Promise<boolean> {

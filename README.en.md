@@ -171,10 +171,11 @@ The same code can run several fully isolated instances (different Worker, KV and
 ```bash
 cd worker
 npx wrangler kv namespace create signui-kvdb       # put the new id in the new config
-npx wrangler deploy --config wrangler.signui.jsonc
+npx wrangler deploy --config wrangler.signuiworker.jsonc
 ```
 
 KV is not shared: admin account, credentials and keys are separate, and the new domain starts at `/admin/setup` too.
+The two live instances are `certum-signer` (`certum.524228.xyz`, primary) and `signui-worker` (no custom route). Do not redeploy retired instance names, or old domains and old KV will come back.
 
 </details>
 

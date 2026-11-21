@@ -21,6 +21,7 @@ import {
 } from "./layout.ts";
 import type { SystemSettings } from "../store/settings";
 import type { RuntimeConfig } from "../store/config";
+import { totalUsed } from "../lib/quota.ts";
 
 export interface CredentialStatus {
   sessionExpiresAt?: number;
@@ -302,7 +303,11 @@ export function adminUsersPage(data: UsersPageData): string {
         <td>${status}</td>
         <td class="small">${user.expiresAt ? fmtTime(user.expiresAt) : escapeHtml(t("common.forever"))}</td>
         <td class="small hide-xs">${escapeHtml(t("common.items", { n: user.credentialIds.length }))}</td>
-        <td class="small hide-xs">${user.dailyQuota ? escapeHtml(t("common.perDay", { n: user.dailyQuota })) : escapeHtml(t("common.unlimited"))}</td>
+        <td class="small hide-xs">${user.dailyQuota ? escapeHtml(t("common.perDay", { n: user.dailyQuota })) : escapeHtml(t("common.unlimited"))}${
+          user.totalQuota
+            ? `<div class="small muted">${escapeHtml(t("users.totalQuota"))}: ${user.totalQuota}</div>`
+            : ""
+        }</td>
         <td class="small">${data.keyCounts[user.id] ?? 0}</td>
         <td class="small muted hide-xs">${user.lastLoginAt ? fmtTime(user.lastLoginAt) : escapeHtml(t("common.never"))}</td>
         <td><div class="row">
@@ -339,6 +344,9 @@ export function adminUsersPage(data: UsersPageData): string {
       </label>
       <label class="field">${escapeHtml(t("users.quotaField"))}
         <input type="number" name="dailyQuota" min="0" value="0">
+      </label>
+      <label class="field">${escapeHtml(t("users.totalQuotaField"))}
+        <input type="number" name="totalQuota" min="0" value="0">
       </label>
       <div class="field wide">${escapeHtml(t("users.assign"))}
         <div class="checks">${credentialChecks(data.credentials, [], t) || `<span class="small muted">${escapeHtml(
@@ -386,6 +394,11 @@ export interface UserDetailData extends AdminNavData {
 export function adminUserPage(data: UserDetailData): string {
   const { t, user } = data;
   const expired = !!user.expiresAt && user.expiresAt <= Date.now();
+  const usedTotal = totalUsed(
+    data.keys.map((key) => key.totalSigns),
+    user.totalUsedBase ?? 0,
+  );
+  const totalQuota = user.totalQuota ?? 0;
 
   const keyRows = data.keys
     .map(
@@ -443,6 +456,12 @@ export function adminUserPage(data: UserDetailData): string {
       </label>
       <label class="field wide">${escapeHtml(t("users.quotaField"))}
         <input type="number" name="dailyQuota" min="0" value="${user.dailyQuota}">
+      </label>
+      <label class="field wide">${escapeHtml(t("users.totalQuotaField"))}
+        <input type="number" name="totalQuota" min="0" value="${totalQuota}">
+        <span class="small muted">${escapeHtml(t("users.usedTotal", { n: usedTotal }))} · ${escapeHtml(
+          t("users.totalQuotaHint"),
+        )}</span>
       </label>
       <label class="field wide">${escapeHtml(t("users.resetPassword"))}
         <input type="password" name="password" autocomplete="new-password" placeholder="${escapeHtml(
@@ -539,6 +558,11 @@ export function adminUserPage(data: UserDetailData): string {
           <dt>${escapeHtml(t("users.quota"))}</dt><dd>${
             user.dailyQuota ? escapeHtml(t("common.perDay", { n: user.dailyQuota })) : escapeHtml(t("common.unlimited"))
           }</dd>
+          <dt>${escapeHtml(t("users.totalQuota"))}</dt><dd>${
+            totalQuota > 0
+              ? `${usedTotal}/${totalQuota}`
+              : `${usedTotal}/${escapeHtml(t("common.unlimited"))}`
+          }</dd>
           <dt>${escapeHtml(t("common.status"))}</dt><dd>${
             !user.enabled
               ? pill(t("common.disabled"), "bad")
@@ -561,6 +585,11 @@ export function adminUserPage(data: UserDetailData): string {
           }</dd>
         </dl>
         <div class="row" style="margin-top:16px">
+          <form class="inline" method="post" action="/admin/users/${escapeHtml(user.id)}/reset-total"
+            onsubmit="return confirm('${escapeHtml(t("confirm.resetTotal"))}')">
+            <input type="hidden" name="csrf" value="${escapeHtml(data.csrf)}">
+            <button class="btn btn--sm btn--ghost" type="submit">${escapeHtml(t("users.resetTotal"))}</button>
+          </form>
           <form class="inline" method="post" action="/admin/users/${escapeHtml(user.id)}/toggle">
             <input type="hidden" name="csrf" value="${escapeHtml(data.csrf)}">
             <input type="hidden" name="enabled" value="${user.enabled ? "0" : "1"}">

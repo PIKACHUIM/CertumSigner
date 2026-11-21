@@ -173,10 +173,11 @@ npx wrangler deploy
 ```bash
 cd worker
 npx wrangler kv namespace create signui-kvdb       # 新 id 填进新配置
-npx wrangler deploy --config wrangler.signui.jsonc
+npx wrangler deploy --config wrangler.signuiworker.jsonc
 ```
 
 两套实例的 KV 完全隔离，管理员账号、凭据、Key 都不共享；首次访问新域名同样会进 `/admin/setup`。
+当前部署的两套是 `certum-signer`（`certum.524228.xyz`，主实例）与 `signui-worker`（无自定义路由）；已经下线的实例名请勿再部署，避免把旧域名和旧 KV 又挂回来。
 
 </details>
 

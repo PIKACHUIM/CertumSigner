@@ -3,6 +3,7 @@
  */
 import type { Env, UserRecord } from "../types";
 import { randomId } from "../lib/encoding.ts";
+import { normalizeQuota } from "../lib/quota.ts";
 import { DUMMY_PASSWORD_HASH, hashPassword, verifyPassword } from "../lib/passwords.ts";
 
 const PREFIX = "user:";
@@ -24,6 +25,8 @@ export interface CreateUserInput {
   expiresAt?: number;
   credentialIds?: string[];
   dailyQuota?: number;
+  /** 累计签名上限，0 = 不限 */
+  totalQuota?: number;
   createdBy: string;
 }
 
@@ -40,7 +43,8 @@ export async function createUser(env: Env, input: CreateUserInput): Promise<User
     enabled: true,
     expiresAt: input.expiresAt,
     credentialIds: input.credentialIds ?? [],
-    dailyQuota: Math.max(0, Math.floor(input.dailyQuota ?? 0)),
+    dailyQuota: normalizeQuota(input.dailyQuota ?? 0),
+    totalQuota: normalizeQuota(input.totalQuota ?? 0),
     createdAt: Date.now(),
     createdBy: input.createdBy,
   };
@@ -131,6 +135,10 @@ export async function updateUser(
     email?: string;
     emailVerified?: boolean;
     dailyQuota?: number;
+    /** 累计签名上限，0 = 不限 */
+    totalQuota?: number;
+    /** 「重置总用量」写入的基准：已用 = sum(totalSigns) - totalUsedBase */
+    totalUsedBase?: number;
   },
 ): Promise<boolean> {
   const user = await getUser(env, id);
@@ -139,7 +147,9 @@ export async function updateUser(
   if (patch.expiresAt !== undefined) user.expiresAt = patch.expiresAt ?? undefined;
   if (patch.credentialIds) user.credentialIds = [...new Set(patch.credentialIds)];
   if (patch.password) user.passwordHash = await hashPassword(patch.password);
-  if (patch.dailyQuota !== undefined) user.dailyQuota = Math.max(0, Math.floor(patch.dailyQuota));
+  if (patch.dailyQuota !== undefined) user.dailyQuota = normalizeQuota(patch.dailyQuota);
+  if (patch.totalQuota !== undefined) user.totalQuota = normalizeQuota(patch.totalQuota);
+  if (patch.totalUsedBase !== undefined) user.totalUsedBase = normalizeQuota(patch.totalUsedBase);
 
   if (patch.email !== undefined) {
     const email = validEmail(patch.email);

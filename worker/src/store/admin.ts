@@ -3,7 +3,7 @@
  * 真正的会话记录（含 CSRF token）放 KV，可以随时吊销。
  */
 import type { AdminSessionRecord, Env } from "../types";
-import { base64UrlEncode, randomToken } from "../lib/encoding.ts";
+import { base64UrlEncode, constantTimeEqual, randomToken } from "../lib/encoding.ts";
 import { readSessionSecret, requireSessionSecret } from "../lib/session-secret.ts";
 
 export const ADMIN_COOKIE = "cs_admin";
@@ -50,7 +50,7 @@ export async function readAdminSession(env: Env, cookieValue: string | undefined
   const secret = await readSessionSecret(env);
   if (!secret) return null;
   const expected = await hmac(sid, secret);
-  if (mac !== expected) return null;
+  if (!constantTimeEqual(mac, expected)) return null;
 
   const record = await env.CERTUM_KV.get<AdminSessionRecord>(`${ADMIN_KEY_PREFIX}${sid}`, "json");
   if (!record || record.expiresAt < Date.now()) return null;
