@@ -196,6 +196,8 @@ Runtime settings exposed in the admin UI:
 | Email delivery | Base URL used in email links, sender, Resend API key, email captcha switch, delivery status |
 | Services and addresses | Certum API base, TSA upstream, intermediate certificate PEM, signing-log switch |
 
+> Put the intermediate certificate(s) issued by your CA into that PEM box (certificates issued for this project chain to `Certum Extended Validation Code Signing 2021 CA`, available from the leaf's AIA URL `http://repository.certum.pl/cevcsca2021.cer`). When it is empty, `/v1/sign` returns the leaf only and embeds no intermediate, so Windows `WinVerifyTrust` fails with `0x800b010a` (chain could not be built) and the verification step in `.github/workflows/build-clients.yml` fails the same way.
+
 ## Architecture
 
 | Layer | Implementation |

@@ -198,6 +198,8 @@ Worker 只认一个可选 secret，其余全部在后台「系统设置」里改
 | 邮箱与发信 | 基础地址（邮件链接用）、发件人、Resend API Key、发信前是否需要验证码、邮件服务状态 |
 | 服务与地址 | Certum API 根地址、TSA 上游、中间证书 PEM、是否记录签名明细 |
 
+> 中间证书 PEM 要填 CA 下发的中间证书（本仓库签发的证书是 `Certum Extended Validation Code Signing 2021 CA`，可从叶子证书的 AIA 地址 `http://repository.certum.pl/cevcsca2021.cer` 取）。留空时 `/v1/sign` 只返回叶子证书，签名里不带中间证书，Windows 上 `WinVerifyTrust` 会报 `0x800b010a`（证书链构建失败，缺中间证书），`.github/workflows/build-clients.yml` 的签名校验步骤也会因此失败。
+
 ## 技术架构
 
 | 层 | 实现 |
